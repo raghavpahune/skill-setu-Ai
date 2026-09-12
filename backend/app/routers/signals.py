@@ -68,13 +68,13 @@ def _normalize_signal_output(sig: dict[str, Any], skills_map: dict[str, str]) ->
         "signal_date": published_at[:10] if published_at else "2026-01-01",
         "impact_level": sig.get("impact_level", "high"),
         "validation_status": val_status,
-        "is_active": is_active,
-        "is_demo": sig.get("is_demo", sig.get("source_label") == "DEMO_SYNTHETIC"),
-        "data_provenance": sig.get("data_provenance") or ("DEMO_SYNTHETIC" if sig.get("source_label") == "DEMO_SYNTHETIC" else "VERIFIED_EXTERNAL_FEED"),
+        "is_demo": bool(sig.get("is_demo") or sig.get("source_label") == "DEMO_SYNTHETIC" or sig.get("source_type") == "DEMO_SYNTHETIC" or sig.get("source") == "DEMO_SYNTHETIC"),
+        "data_provenance": sig.get("data_provenance") or ("DEMO_SYNTHETIC" if (sig.get("is_demo") or sig.get("source_label") == "DEMO_SYNTHETIC" or sig.get("source_type") == "DEMO_SYNTHETIC" or sig.get("source") == "DEMO_SYNTHETIC") else "UNVERIFIED_EXTERNAL_SOURCE"),
         "freshness": freshness,
         "affected_skills": affected_legacy,
         "is_ai_processed": sig.get("is_ai_processed", False),
         "ai_metadata": sig.get("ai_metadata"),
+        "is_active": is_active,
     }
 
 
@@ -96,7 +96,7 @@ async def list_industry_signals(
     else:
         try:
             repo_signals = list_industry_signals_repo() or []
-            raw_signals = [s for s in repo_signals if not s.get("is_demo") and s.get("source") != "DEMO_SYNTHETIC"]
+            raw_signals = [s for s in repo_signals if not s.get("is_demo") and s.get("source") != "DEMO_SYNTHETIC" and s.get("source_label") != "DEMO_SYNTHETIC" and s.get("source_type") != "DEMO_SYNTHETIC" and s.get("data_provenance") != "DEMO_SYNTHETIC"]
         except SupabaseRepositoryError as e:
             logger.exception("[Signals] Failed listing industry signals from Supabase: %s", e)
             raise HTTPException(
@@ -160,7 +160,13 @@ async def get_industry_signal(
     else:
         try:
             matched = get_industry_signal_repo(signal_id)
-            if matched and (matched.get("is_demo") is True or matched.get("source") == "DEMO_SYNTHETIC"):
+            if matched and (
+                matched.get("is_demo") is True
+                or matched.get("source") == "DEMO_SYNTHETIC"
+                or matched.get("source_label") == "DEMO_SYNTHETIC"
+                or matched.get("source_type") == "DEMO_SYNTHETIC"
+                or matched.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
                 matched = None
         except SupabaseRepositoryError as e:
             logger.exception("[Signals] Failed fetching industry signal '%s' from Supabase: %s", signal_id, e)
@@ -187,18 +193,8 @@ async def legacy_list_signals(
         raw_signals = get_demo("industry_signals")
     else:
         try:
-            loop = asyncio.get_running_loop()
             repo_signals = list_industry_signals_repo() or []
-            if not repo_signals:
-                from app.ingestion.industry_intelligence import industry_ingestor
-                await loop.run_in_executor(None, industry_ingestor.ingest_from_feeds)
-                repo_signals = list_industry_signals_repo() or []
-            raw_signals = [s for s in repo_signals if not s.get("is_demo") and s.get("source") != "DEMO_SYNTHETIC"]
-            if not raw_signals:
-                from app.ingestion.industry_intelligence import industry_ingestor
-                await loop.run_in_executor(None, industry_ingestor.ingest_from_feeds)
-                repo_signals = list_industry_signals_repo() or []
-                raw_signals = [s for s in repo_signals if not s.get("is_demo") and s.get("source") != "DEMO_SYNTHETIC"]
+            raw_signals = [s for s in repo_signals if not s.get("is_demo") and s.get("source") != "DEMO_SYNTHETIC" and s.get("source_label") != "DEMO_SYNTHETIC" and s.get("source_type") != "DEMO_SYNTHETIC" and s.get("data_provenance") != "DEMO_SYNTHETIC"]
         except SupabaseRepositoryError as e:
             logger.exception("[Signals] Failed listing signals: %s", e)
             raise HTTPException(

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Layout from '../components/Layout';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -26,7 +26,10 @@ const INDUSTRIES = [
 
 export default function EmployeeProfile() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
+  const [passport, setPassport] = useState(null);
+  const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState(null);
@@ -48,6 +51,22 @@ export default function EmployeeProfile() {
   const [newSkill, setNewSkill] = useState({ name: '', proficiency: 'advanced' });
   const [newCert, setNewCert] = useState({ name: '', issuer: '', issue_date: '', url: '' });
 
+  const loadIntelligence = useCallback(async () => {
+    try {
+      const [passRes, alertRes] = await Promise.allSettled([
+        api.getMySkillPassport(),
+        api.getStudentIndustryAlerts({ student_id: user?.id }),
+      ]);
+      if (passRes.status === 'fulfilled' && passRes.value) {
+        setPassport(passRes.value);
+      }
+      if (alertRes.status === 'fulfilled' && alertRes.value?.alerts) {
+        setAlerts(alertRes.value.alerts.slice(0, 3));
+      }
+    } catch {
+    }
+  }, [user?.id]);
+
   const loadProfile = useCallback(async () => {
     setLoading(true);
     setApiError(null);
@@ -67,6 +86,7 @@ export default function EmployeeProfile() {
           skills: res.profile.skills || [],
           certifications: res.profile.certifications || [],
         });
+        loadIntelligence();
       }
     } catch (err) {
       if (err.message && err.message.includes('404')) {
@@ -79,7 +99,7 @@ export default function EmployeeProfile() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadIntelligence]);
 
   useEffect(() => {
     loadProfile();
@@ -170,6 +190,7 @@ export default function EmployeeProfile() {
       }
       if (saved && saved.profile) {
         setProfile(saved.profile);
+        loadIntelligence();
       }
       setSuccessMsg('Employee Profile & Skill Passport successfully updated.');
     } catch (err) {
@@ -477,6 +498,103 @@ export default function EmployeeProfile() {
             </button>
           </div>
         </form>
+
+        {profile && passport && (
+          <div className="mt-8 space-y-6">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+                    <span>🚀</span> Target Transition Readiness: {passport.target_role || form.target_role || 'Target Role'}
+                  </h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Live alignment of current competencies against verified Maharashtra job market specifications.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/student/copilot?role=employee&q=${encodeURIComponent(`How can I transition from ${form.current_role || 'my current role'} to ${passport.target_role || form.target_role || 'my target role'}?`)}`)}
+                  className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <span>🤖</span> Consult AI Copilot →
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 mb-4">
+                <div className="flex justify-between items-center mb-1.5">
+                  <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Transition Skill Match</span>
+                  <span className="text-xs font-black text-teal-600 dark:text-teal-400">{passport.skill_match_pct || 0}%</span>
+                </div>
+                <div className="w-full h-2.5 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-teal-500 to-emerald-500 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min(100, Math.max(0, passport.skill_match_pct || 0))}%` }}
+                  />
+                </div>
+              </div>
+
+              {passport.missing_skills && passport.missing_skills.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-1.5">
+                    <span>⚡</span> High-Priority Bridge Competencies:
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {passport.missing_skills.map((ms) => (
+                      <span
+                        key={ms.skill_id || ms.skill_name}
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-900/60"
+                      >
+                        {ms.skill_name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {alerts && alerts.length > 0 && (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+                <h2 className="text-sm font-black text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                  <span>📊</span> Industry Intelligence & Technology Signals ({form.industry})
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {alerts.map((al) => (
+                    <div
+                      key={al.signal_id || al.title}
+                      className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1.5">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+                            {al.domain_name || 'Market Signal'}
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300">
+                            {al.impact_level || 'HIGH'}
+                          </span>
+                        </div>
+                        <p className="text-xs font-bold text-slate-900 dark:text-white mb-1">
+                          {al.headline || al.title}
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2">
+                          {al.summary}
+                        </p>
+                      </div>
+                      {al.top_affected_skills && al.top_affected_skills.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-slate-200/60 dark:border-slate-800/60 flex flex-wrap gap-1">
+                          {al.top_affected_skills.slice(0, 2).map((sk) => (
+                            <span key={sk.name || sk} className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                              {sk.name || sk}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Layout>
   );

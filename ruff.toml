@@ -1,0 +1,34 @@
+target-version = "py311"
+line-length = 120
+
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    "node_modules",
+    "dist",
+    "data",
+    "scripts",
+    "scratch",
+]
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E501",
+    "E402",
+    "E741",
+    "E712",
+    "E722",
+    "F401",
+    "F811",
+    "F841",
+    "W291",
+    "W292",
+    "W293",
+    "F541",
+]
+
+[lint.per-file-ignores]
+"backend/test_*.py" = ["E731", "F821"]
+"backend/conftest.py" = ["E731", "F821"]

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../services/api';
 
 const MAHA_DISTRICTS = [
   {
@@ -145,19 +146,49 @@ const MAHA_DISTRICTS = [
 ];
 
 export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDistrict }) {
-  const [viewMode, setViewMode] = useState('both'); // 'both' | 'map' | 'grid'
+  const [viewMode, setViewMode] = useState('both');
   const [hoveredDistrict, setHoveredDistrict] = useState(null);
+  const [districtsData, setDistrictsData] = useState(MAHA_DISTRICTS);
+  const [isLiveDynamic, setIsLiveDynamic] = useState(false);
+
+  useEffect(() => {
+    let activeSub = true;
+    api.getDistricts()
+      .then((res) => {
+        if (!activeSub || !Array.isArray(res) || res.length === 0) return;
+        const countMap = new Map(res.map((r) => [r.name?.toLowerCase(), r]));
+        const updated = MAHA_DISTRICTS.map((d) => {
+          const match = countMap.get(d.name.toLowerCase());
+          if (match) {
+            return {
+              ...d,
+              jobs: typeof match.job_count === 'number' ? match.job_count : d.jobs,
+              institutes: typeof match.course_count === 'number' && match.course_count > 0 ? match.course_count : d.institutes,
+            };
+          }
+          return d;
+        });
+        setDistrictsData(updated);
+        setIsLiveDynamic(true);
+      })
+      .catch(() => {});
+    return () => {
+      activeSub = false;
+    };
+  }, []);
+
+  const totalVacancies = districtsData.reduce((acc, d) => acc + (d.jobs || 0), 0);
 
   const active =
-    MAHA_DISTRICTS.find(
+    districtsData.find(
       (d) => d.name.toLowerCase() === selectedDistrict?.toLowerCase()
-    ) || MAHA_DISTRICTS[0];
+    ) || districtsData[0];
 
   const displayed = hoveredDistrict || active;
+  const demandShare = totalVacancies > 0 ? Math.round((displayed.jobs / totalVacancies) * 100) : null;
 
   return (
     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs transition-colors">
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-3 border-b border-slate-100 dark:border-slate-800">
         <div>
           <div className="flex items-center gap-2">
@@ -165,7 +196,7 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
               Maharashtra District Workforce Capacity & Demand Map
             </h3>
             <span className="text-[10px] font-mono px-2 py-0.5 bg-teal-50 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-semibold rounded border border-teal-200 dark:border-teal-800">
-              Interactive Hub
+              Regional Workforce Explorer
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -224,9 +255,8 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
               </span>
             </div>
 
-            {/* District Pins Container */}
             <div className="relative w-full h-[260px] sm:h-[300px] my-auto">
-              {MAHA_DISTRICTS.map((d) => {
+              {districtsData.map((d) => {
                 const isSelected = selectedDistrict?.toLowerCase() === d.name.toLowerCase();
                 const isHovered = hoveredDistrict?.name === d.name;
 
@@ -312,17 +342,20 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
                 <h4 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">
                   {displayed.name} District
                 </h4>
-                {hoveredDistrict && (
+                {hoveredDistrict ? (
                   <span className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold font-mono">
                     [Hover Preview]
                   </span>
-                )}
+                ) : !isLiveDynamic ? (
+                  <span className="text-[10px] text-slate-500 font-semibold font-mono">
+                    [Benchmark Baseline]
+                  </span>
+                ) : null}
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
                 Workforce Demographics & Capacity Status
               </p>
 
-              {/* Specialization Card */}
               <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 mb-3 text-xs">
                 <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
                   Primary Hiring Clusters:
@@ -332,12 +365,11 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
                 </p>
               </div>
 
-              {/* In-depth Telemetry Snapshot */}
               <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
                 <div className="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-700/60">
                   <span>Statewide Demand Share:</span>
                   <span className="font-bold text-slate-900 dark:text-white">
-                    {Math.round((displayed.jobs / 550) * 100)}% of Maharashtra
+                    {demandShare != null ? `${demandShare}% of Maharashtra` : 'Calculating...'}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-700/60">
@@ -355,7 +387,7 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-200/60 dark:border-slate-700/60">
-                  <span>Registered Capacity:</span>
+                  <span>Registered Capacity (Est. ITI Baseline):</span>
                   <span className="font-bold text-slate-900 dark:text-white font-mono">
                     {displayed.institutes} ITIs ({displayed.enrolment} seats)
                   </span>
@@ -382,10 +414,9 @@ export default function MaharashtraMap({ selectedDistrict = 'Pune', onSelectDist
         </div>
       )}
 
-      {/* Interactive District Grid */}
       {(viewMode === 'both' || viewMode === 'grid') && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          {MAHA_DISTRICTS.map((d) => {
+          {districtsData.map((d) => {
             const isSelected = selectedDistrict?.toLowerCase() === d.name.toLowerCase();
             return (
               <div

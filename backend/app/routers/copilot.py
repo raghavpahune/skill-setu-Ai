@@ -56,7 +56,7 @@ async def ask_copilot(
         question=query.question,
         role=query.role,
         district=query.district,
-        student_id=query.student_id,
+        student_id=effective_student_id,
         context_data=ctx_data,
         current_user=current_user,
         is_demo=query.is_demo,

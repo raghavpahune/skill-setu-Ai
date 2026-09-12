@@ -310,7 +310,7 @@ export default function DemoTour() {
             {/* Continuous Feedback Loop Infographic */}
             <div className="mt-5 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80">
               <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-3 text-center">
-                The Complete SkillSetu Intelligence Feedback Loop
+                The Complete SkillSetuAI Intelligence Feedback Loop
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
                 <div className="p-2.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">

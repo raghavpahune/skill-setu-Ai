@@ -18,7 +18,7 @@ export default function CopilotPage({ roleOverride }) {
     roleOverride,
   });
 
-  const initialPrompt = searchParams.get('q') || '';
+  const initialPrompt = searchParams.get('q') || searchParams.get('prompt') || '';
   const urlDistrict = searchParams.get('district') || '';
   const urlStudentId = searchParams.get('student_id') || searchParams.get('student') || '';
   const urlTopic = searchParams.get('topic') || '';
@@ -34,7 +34,7 @@ export default function CopilotPage({ roleOverride }) {
             Multi-Stakeholder Conversational Decision Support
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-            SkillSetu Intelligence Copilot
+            SkillSetuAI Intelligence Copilot
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-xl mx-auto">
             Query labour-market intelligence, verify district skill supply gaps, assess curriculum alignment, and guide career choices.

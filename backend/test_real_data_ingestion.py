@@ -76,11 +76,10 @@ from app.services.district_service import get_district_plan, get_all_districts
 # 1. Missing Adzuna Credentials
 # ============================================================================
 def test_missing_adzuna_credentials_uses_verified_snapshot():
-    """Missing credentials must use verified snapshot, NOT live feed, preserving true dates."""
     connector = AdzunaConnector(app_id="", app_key="")
     assert not connector.has_credentials
 
-    raw_jobs = connector.fetch_raw()
+    raw_jobs = connector.fetch_raw(is_demo=True)
     assert len(raw_jobs) >= 5
     for r in raw_jobs:
         assert r["is_snapshot"] is True
@@ -90,22 +89,18 @@ def test_missing_adzuna_credentials_uses_verified_snapshot():
     for job in transformed:
         assert job["source_type"] == SOURCE_TYPE_VERIFIED_SNAPSHOT
         assert job["is_snapshot"] is True
-        assert job["is_demo"] is False  # Genuine historical data
+        assert job["is_demo"] is False
         assert "Historical" in job["source_label"]
         assert "Live" not in job["source_label"]
         assert job["verification_method"] == "STRUCTURAL_API_VALIDATION"
         assert job["fetched_at"] == "2026-08-31T12:00:00Z"
 
 
-# ============================================================================
-# 2. Missing data.gov.in Credentials
-# ============================================================================
 def test_missing_datagov_credentials_uses_sandbox_simulation():
-    """Missing data.gov credentials must use sandbox simulation, marked UNVERIFIED and is_demo=True."""
     connector = DataGovConnector(api_key="")
     assert not connector.has_api_key
 
-    raw_data = connector.fetch_resource(RESOURCE_SCHOLARSHIP_ALLOCATION)
+    raw_data = connector.fetch_resource(RESOURCE_SCHOLARSHIP_ALLOCATION, is_demo=True)
     records = raw_data.get("records", [])
     assert len(records) > 0
 
@@ -121,24 +116,16 @@ def test_missing_datagov_credentials_uses_sandbox_simulation():
         assert s["freshness_status"] == "UNKNOWN"
 
 
-# ============================================================================
-# 3. API Timeout Handling
-# ============================================================================
 def test_api_timeout_handling():
-    """HTTP client timeout must be caught and gracefully fall back to offline snapshot."""
     connector = AdzunaConnector(app_id="key", app_key="secret", timeout_seconds=0.1, max_retries=1)
 
     with patch("httpx.get", side_effect=httpx.TimeoutException("Connection timed out")):
-        jobs = connector.fetch_raw()
+        jobs = connector.fetch_raw(is_demo=True)
         assert len(jobs) >= 5
         assert jobs[0]["is_snapshot"] is True
 
 
-# ============================================================================
-# 4. HTTP 429 Rate Limit Backoff
-# ============================================================================
 def test_http_429_rate_limit_backoff():
-    """Adzuna connector must back off on HTTP 429 and retry successfully."""
     connector = AdzunaConnector(app_id="key", app_key="secret", max_retries=2)
 
     resp_429 = MagicMock(status_code=429, text="Too Many Requests")
@@ -152,16 +139,12 @@ def test_http_429_rate_limit_backoff():
         assert mock_sleep.called
 
 
-# ============================================================================
-# 5. HTTP 500 Server Error Fallback
-# ============================================================================
 def test_http_500_server_error_fallback():
-    """Provider returning HTTP 500 must fall back gracefully to snapshot."""
     connector = AdzunaConnector(app_id="key", app_key="secret", max_retries=1)
 
     resp_500 = MagicMock(status_code=500, text="Internal Server Error")
     with patch("httpx.get", return_value=resp_500):
-        jobs = connector.fetch_raw()
+        jobs = connector.fetch_raw(is_demo=True)
         assert len(jobs) >= 5
         assert jobs[0]["is_snapshot"] is True
 

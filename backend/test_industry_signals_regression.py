@@ -7,6 +7,11 @@ from app.repositories import supabase_repository
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def setup_demo_mode(monkeypatch):
+    monkeypatch.setenv("SKILLSETU_DATA_MODE", "demo")
+
+
 def test_industry_signals_endpoint_returns_signals():
     res = client.get("/api/industry/signals?limit=10")
     assert res.status_code == 200

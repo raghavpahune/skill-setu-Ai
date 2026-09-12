@@ -522,3 +522,57 @@ def test_invalid_skill_match_pct_fails_closed():
 
     fetched = get_student_profile(user_id)
     assert fetched["skill_match_pct"] == 50
+
+
+def test_migration_and_schema_delete_filters_null_resolved_skill_id():
+    migration_file = _get_project_root() / "data" / "migrations" / "20260910_consolidated_production_fix.sql"
+    assert migration_file.is_file()
+    mig_content = migration_file.read_text(encoding="utf-8")
+    assert "WHERE resolved_skill_id IS NOT NULL" in mig_content
+
+    schema_file = _get_project_root() / "data" / "schema.sql"
+    schema_content = schema_file.read_text(encoding="utf-8")
+    assert "WHERE resolved_skill_id IS NOT NULL" in schema_content
+
+
+def test_sync_removes_stale_skills_when_unresolved_skill_present():
+    client = get_client()
+    user_id = f"usr-stale-cleanup-{uuid.uuid4().hex[:8]}"
+    skill_a_id = str(uuid.uuid4())
+    skill_b_id = str(uuid.uuid4())
+
+    client.table("skills").rows.extend([
+        {"id": skill_a_id, "name": f"SkillA-{user_id}", "synonyms": []},
+        {"id": skill_b_id, "name": f"SkillB-{user_id}", "synonyms": []},
+    ])
+
+    upsert_student_profile({
+        "user_id": user_id,
+        "full_name": "Testing Stale Cleanup",
+        "target_role": "Backend Engineer",
+        "skills": [
+            {"skill_id": skill_a_id, "skill_name": f"SkillA-{user_id}", "proficiency": "advanced"},
+            {"skill_id": skill_b_id, "skill_name": f"SkillB-{user_id}", "proficiency": "intermediate"},
+        ],
+        "is_demo": False,
+    })
+
+    initial_skills = [r for r in client.table("student_skills").rows if r.get("user_id") == user_id]
+    assert len(initial_skills) == 2
+
+    upsert_student_profile({
+        "user_id": user_id,
+        "full_name": "Testing Stale Cleanup",
+        "target_role": "Backend Engineer",
+        "skills": [
+            {"skill_id": skill_a_id, "skill_name": f"SkillA-{user_id}", "proficiency": "expert"},
+            {"skill_name": "UnresolvableCustomSkillXYZ", "proficiency": "beginner"},
+        ],
+        "is_demo": False,
+    })
+
+    updated_skills = [r for r in client.table("student_skills").rows if r.get("user_id") == user_id]
+    assert len(updated_skills) == 1
+    assert updated_skills[0]["skill_id"] == skill_a_id
+    assert updated_skills[0]["proficiency"] == "expert"
+

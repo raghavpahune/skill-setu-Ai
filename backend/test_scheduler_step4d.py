@@ -19,10 +19,17 @@ from app.db import _cache
 
 @pytest.fixture(scope="module", autouse=True)
 def isolate_scheduler_step4d_cache():
+    import os
     snapshot = deepcopy(_cache)
+    old_mode = os.environ.get("SKILLSETU_DATA_MODE")
+    os.environ["SKILLSETU_DATA_MODE"] = "demo"
     yield
     _cache.clear()
     _cache.update(snapshot)
+    if old_mode is None:
+        os.environ.pop("SKILLSETU_DATA_MODE", None)
+    else:
+        os.environ["SKILLSETU_DATA_MODE"] = old_mode
 
 load_demo_data()
 

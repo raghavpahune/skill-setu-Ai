@@ -211,6 +211,8 @@ class MockSupabaseClient:
         feedback_rows=None,
         demands_rows=None,
         profiles_rows=None,
+        employee_profiles_rows=None,
+        student_roadmaps_rows=None,
         assessments_rows=None,
         courses_rows=None,
         industry_signals_rows=None,
@@ -231,7 +233,8 @@ class MockSupabaseClient:
             "employer_feedback": MockSupabaseTable(feedback_rows),
             "employer_demands": MockSupabaseTable(demands_rows),
             "student_profiles": MockSupabaseTable(profiles_rows),
-            "employee_profiles": MockSupabaseTable(getattr(self, "_employee_profiles_rows", None)),
+            "employee_profiles": MockSupabaseTable(employee_profiles_rows),
+            "student_roadmaps": MockSupabaseTable(student_roadmaps_rows),
             "student_assessments": MockSupabaseTable(assessments_rows),
             "courses": MockSupabaseTable(courses_rows),
             "industry_signals": MockSupabaseTable(industry_signals_rows),
@@ -310,6 +313,15 @@ class MockSupabaseRpc:
                     for sk in req_skills:
                         if isinstance(sk, dict):
                             sid = str(sk.get("skill_id") or sk.get("id") or "").strip()
+                            if not sid:
+                                s_name = str(sk.get("skill_name") or sk.get("name") or "").strip().lower()
+                                if s_name:
+                                    for srow in self.client.table("skills").rows:
+                                        r_name = str(srow.get("name") or "").strip().lower()
+                                        syns = [str(x).strip().lower() for x in (srow.get("synonyms") or [])]
+                                        if r_name == s_name or s_name in syns:
+                                            sid = str(srow.get("id") or "").strip()
+                                            break
                             raw_prof = str(sk.get("proficiency") or "intermediate").strip().lower()
                             prof = raw_prof if raw_prof in ("beginner", "intermediate", "advanced", "expert") else "intermediate"
                             if sid:
@@ -585,6 +597,8 @@ def mock_supabase_for_tests():
     _cache["employer_feedback"] = deepcopy(_PRISTINE_FEEDBACK)
     _cache["employer_demands"] = deepcopy(_PRISTINE_DEMANDS)
     _cache["student_profiles"] = deepcopy(_PRISTINE_PROFILES)
+    _cache["employee_profiles"] = deepcopy(_PRISTINE_CACHE.get("employee_profiles", []))
+    _cache["student_roadmaps"] = deepcopy(_PRISTINE_CACHE.get("student_roadmaps", []))
     _cache["student_assessments"] = deepcopy(_PRISTINE_ASSESSMENTS)
     _cache["courses"] = deepcopy(_PRISTINE_COURSES)
     _cache["industry_signals"] = deepcopy(_PRISTINE_SIGNALS)
@@ -597,6 +611,8 @@ def mock_supabase_for_tests():
         feedback_rows=deepcopy(_PRISTINE_FEEDBACK),
         demands_rows=deepcopy(_PRISTINE_DEMANDS),
         profiles_rows=deepcopy(_PRISTINE_PROFILES),
+        employee_profiles_rows=deepcopy(_cache.get("employee_profiles", [])),
+        student_roadmaps_rows=deepcopy(_cache.get("student_roadmaps", [])),
         assessments_rows=deepcopy(_PRISTINE_ASSESSMENTS),
         courses_rows=deepcopy(_PRISTINE_COURSES),
         industry_signals_rows=deepcopy(_PRISTINE_SIGNALS),

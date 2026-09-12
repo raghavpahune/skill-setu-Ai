@@ -146,7 +146,7 @@ export default function CopilotChat({
     {
       id: 'welcome-1',
       sender: 'copilot',
-      text: `### Namaste! Welcome to SkillSetu Intelligence Copilot
+      text: `### Namaste! Welcome to SkillSetuAI Intelligence Copilot
 
 I am your official **Maharashtra Labour-Market Intelligence & Evidence-Based Decision Assistant**, directly grounded in verified state datasets:
 
@@ -157,7 +157,7 @@ I am your official **Maharashtra Labour-Market Intelligence & Evidence-Based Dec
 
 Select your stakeholder role above or explore one of the verified inquiries below to begin.`,
       isGrounded: true,
-      model: 'SkillSetu Intelligence / RAG Grounded',
+      model: 'SkillSetuAI Intelligence / RAG Grounded',
       demoMode: false,
       time: 'Just now',
     },
@@ -186,7 +186,7 @@ Select your stakeholder role above or explore one of the verified inquiries belo
           sender: 'copilot',
           text: `### 📍 District Workforce Intelligence Context: **${initialDistrict}**\n\nI am configured with verified district-level telemetry for **${initialDistrict}** (industrial clusters, active job openings, local ITI/polytechnic capacity, and skill gap deficits).\n\nAsk any question regarding **${initialDistrict}**'s labour market, seat allocations, or training priorities below.`,
           isGrounded: true,
-          model: 'SkillSetu Intelligence / RAG Grounded',
+          model: 'SkillSetuAI Intelligence / RAG Grounded',
           demoMode: false,
           time: 'Just now',
         },
@@ -237,7 +237,7 @@ Select your stakeholder role above or explore one of the verified inquiries belo
       (students.find((s) => s.user_id === (initialStudentId || studentId))?.target_role) ||
       'AI Engineer';
 
-    const contextualQuery = `Explain why I should learn ${topic} based on my SkillSetu profile and current Maharashtra labour-market intelligence. My target role is ${targetRole}. Show the relevant demand signals, required competencies, my missing prerequisites, relevant SkillSetu courses/training, and a practical learning path.`;
+    const contextualQuery = `Explain why I should learn ${topic} based on my SkillSetuAI profile and current Maharashtra labour-market intelligence. My target role is ${targetRole}. Show the relevant demand signals, required competencies, my missing prerequisites, relevant SkillSetuAI courses/training, and a practical learning path.`;
 
     setQuestion(contextualQuery);
 
@@ -348,7 +348,7 @@ Select your stakeholder role above or explore one of the verified inquiries belo
           {
             id: `cop-${Date.now()}`,
             sender: 'copilot',
-            text: `⚠️ **Service Unavailable**: Unable to reach the SkillSetu AI Copilot service (${errMsg}). In Real Data mode, synthetic factual fallbacks are disabled to prevent inaccurate labour market intelligence.`,
+            text: `⚠️ **Service Unavailable**: Unable to reach the SkillSetuAI Copilot service (${errMsg}). In Real Data mode, synthetic factual fallbacks are disabled to prevent inaccurate labour market intelligence.`,
             isGrounded: false,
             isFallback: false,
             isError: true,
@@ -386,7 +386,7 @@ Select your stakeholder role above or explore one of the verified inquiries belo
 
 Ready for a new inquiry. You are currently consulting as **${activeRoleDef.label}** (${activeRoleDef.badge}). How can I assist you?`,
         isGrounded: true,
-        model: 'SkillSetu Intelligence / RAG Grounded',
+        model: 'SkillSetuAI Intelligence / RAG Grounded',
         demoMode: false,
         time: 'Just now',
       },
@@ -405,7 +405,7 @@ Ready for a new inquiry. You are currently consulting as **${activeRoleDef.label
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="font-extrabold text-sm sm:text-base tracking-tight text-white flex items-center gap-1.5">
-                SkillSetu Intelligence Copilot
+                SkillSetuAI Intelligence Copilot
               </h3>
               <span className="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-[10px] font-mono border border-teal-500/30 font-semibold">
                 RAG Grounded
@@ -596,7 +596,7 @@ Ready for a new inquiry. You are currently consulting as **${activeRoleDef.label
               <div className="flex items-center justify-between gap-3 mb-2.5 pb-1.5 border-b border-slate-100 dark:border-slate-700/50 opacity-75 text-[11px]">
                 <div className="flex items-center gap-1.5 font-bold uppercase tracking-wider">
                   <span>{m.sender === 'user' ? '👤' : '✨'}</span>
-                  <span>{m.sender === 'user' ? `You (${m.role || role})` : 'SkillSetu Intelligence Copilot'}</span>
+                  <span>{m.sender === 'user' ? `You (${m.role || role})` : 'SkillSetuAI Intelligence Copilot'}</span>
                   {m.provenanceLabel && (
                     <span className={`text-[9px] font-mono font-semibold px-1.5 py-0.2 rounded normal-case ml-1 ${
                       m.isFallback

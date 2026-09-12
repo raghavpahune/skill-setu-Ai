@@ -116,13 +116,14 @@ def test_schemes_and_gov_opps_recommendation_by_user_id():
     user_info = client.get("/api/auth/me", headers=headers).json()["user"]
     uid = user_info["id"]
 
-    # Test schemes recommended
-    res_schemes = client.get(f"/api/schemes/recommended/{uid}")
+    assert client.get(f"/api/schemes/recommended/{uid}").status_code == 401
+    assert client.get(f"/api/gov/opportunities/recommended/{uid}").status_code == 401
+
+    res_schemes = client.get(f"/api/schemes/recommended/{uid}", headers=headers)
     assert res_schemes.status_code == 200
     assert "schemes" in res_schemes.json()
 
-    # Test gov opps recommended
-    res_gov = client.get(f"/api/gov/opportunities/recommended/{uid}")
+    res_gov = client.get(f"/api/gov/opportunities/recommended/{uid}", headers=headers)
     assert res_gov.status_code == 200
     assert "opportunities" in res_gov.json()
 

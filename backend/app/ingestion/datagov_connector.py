@@ -17,6 +17,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.core.data_mode import is_explicit_demo_mode
 from app.ingestion.base_adapter import (
     BaseSourceAdapter,
     SOURCE_TYPE_LIVE_API,
@@ -158,17 +159,27 @@ class DataGovConnector(BaseSourceAdapter):
     def has_api_key(self) -> bool:
         return bool(self.api_key and self.api_key != "your_key_here")
 
-    def fetch_raw(self, limit: int = 50, offset: int = 0, **kwargs: Any) -> list[dict[str, Any]]:
-        """Fetch raw records for a given resource_id with retries."""
+    def fetch_raw(self, limit: int = 50, offset: int = 0, is_demo: bool | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         resource_id = kwargs.get("resource_id", RESOURCE_SCHOLARSHIP_ALLOCATION)
-        res_data = self.fetch_resource(resource_id=resource_id, limit=limit, offset=offset)
+        res_data = self.fetch_resource(resource_id=resource_id, limit=limit, offset=offset, is_demo=is_demo)
         return res_data.get("records", [])
 
-    def fetch_resource(self, resource_id: str, limit: int = 50, offset: int = 0) -> dict[str, Any]:
-        """Fetch records for a given resource_id with retries and exponential backoff."""
+    def fetch_resource(self, resource_id: str, limit: int = 50, offset: int = 0, is_demo: bool | None = None) -> dict[str, Any]:
+        if is_explicit_demo_mode(is_demo):
+            res = self._get_sandbox_resource_data(resource_id)
+            res["status"] = "ok" if res.get("records") else "NO_DATA"
+            res["source_available"] = True
+            res["error"] = None
+            return res
+
         if not self.has_api_key:
-            logger.info("DATA_GOV_API_KEY not configured or placeholder. Using offline sandbox simulation for %s", resource_id)
-            return self._get_sandbox_resource_data(resource_id)
+            logger.warning("DATA_GOV_API_KEY is not configured for resource %s", resource_id)
+            return {
+                "records": [],
+                "status": "NOT_CONFIGURED",
+                "source_available": False,
+                "error": "DATA_GOV_API_KEY is not configured in production environment.",
+            }
 
         url = f"{DATAGOV_BASE_URL}/{resource_id}"
         params = {
@@ -185,26 +196,37 @@ class DataGovConnector(BaseSourceAdapter):
                 response = httpx.get(url, params=params, headers=self.headers, timeout=self.timeout_seconds)
                 if response.status_code == 200:
                     data = response.json()
-                    # Mark genuine live records
-                    for r in data.get("records", []):
+                    records = data.get("records", [])
+                    for r in records:
                         r["is_sandbox"] = False
+                    data["records"] = records
+                    data["status"] = "ok" if records else "NO_DATA"
+                    data["source_available"] = True
+                    data["error"] = None
                     return data
                 elif response.status_code in (401, 403):
-                    logger.warning("data.gov.in authentication failed (HTTP %d). Check DATA_GOV_API_KEY.", response.status_code)
+                    last_error = f"data.gov.in authentication failed (HTTP {response.status_code}). Check DATA_GOV_API_KEY."
+                    logger.warning("%s", last_error)
                     break
                 else:
-                    logger.warning("data.gov.in returned HTTP %d for %s", response.status_code, resource_id)
+                    last_error = f"data.gov.in returned HTTP {response.status_code} for {resource_id}"
+                    logger.warning("%s", last_error)
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_error = exc
-                logger.warning("Network issue fetching %s on attempt %d: %s", resource_id, attempt, exc)
+                last_error = f"Network issue fetching {resource_id} on attempt {attempt}: {exc}"
+                logger.warning("%s", last_error)
                 time.sleep(1.5 * attempt)
             except Exception as exc:
-                last_error = exc
-                logger.error("Unexpected error querying %s: %s", resource_id, exc)
+                last_error = f"Unexpected error querying {resource_id}: {exc}"
+                logger.error("%s", last_error)
                 break
 
-        logger.warning("Failed to fetch live data for %s (%s). Falling back to offline sandbox simulation.", resource_id, last_error)
-        return self._get_sandbox_resource_data(resource_id)
+        logger.warning("Failed to fetch live data for %s: %s", resource_id, last_error)
+        return {
+            "records": [],
+            "status": "FAILED",
+            "source_available": False,
+            "error": str(last_error),
+        }
 
     def validate_and_transform(
         self,

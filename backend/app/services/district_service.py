@@ -10,11 +10,11 @@ from app.services.curriculum_engine import audit_all_courses, EQUIPMENT_CATALOG,
 
 
 def get_all_districts(is_demo: bool | None = None) -> list[dict]:
-    """List all districts with job counts and course counts."""
-    if is_demo is True:
+    from app.core.data_mode import is_explicit_demo_mode
+    if is_explicit_demo_mode(is_demo):
         jobs = get_demo("jobs")
         courses = get_demo("courses")
-    elif is_demo is False:
+    else:
         try:
             from app.repositories.supabase_repository import list_jobs, list_courses
             jobs = list_jobs(limit=10000) or []
@@ -22,20 +22,6 @@ def get_all_districts(is_demo: bool | None = None) -> list[dict]:
         except Exception:
             jobs = []
             courses = []
-    else:
-        try:
-            from app.repositories.supabase_repository import list_jobs, list_courses
-            repo_jobs = list_jobs(limit=10000)
-            repo_courses = list_courses()
-            if repo_jobs or repo_courses:
-                jobs = repo_jobs or []
-                courses = repo_courses or []
-            else:
-                jobs = get_demo("jobs")
-                courses = get_demo("courses")
-        except Exception:
-            jobs = get_demo("jobs")
-            courses = get_demo("courses")
     
     job_counts = Counter(j["district"] for j in jobs if j.get("district"))
     course_counts = Counter(c["district"] for c in courses if c.get("district"))

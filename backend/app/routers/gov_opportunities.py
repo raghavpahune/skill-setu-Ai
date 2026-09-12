@@ -127,12 +127,11 @@ def _match_student_to_opportunities(opportunities: list[dict], profile: dict) ->
             student_skills.add(str(s).lower())
 
 
-    student_district = (profile.get("district") or "").lower()
-    student_career = (profile.get("target_role") or profile.get("career_goal") or "").lower()
-    student_education = (profile.get("education") or "").lower()
-
-    # Interests from assessment records
-    student_interests = {i.lower() for i in profile.get("interests", []) if i}
+    student_district = (profile.get("district") or profile.get("preferred_location") or "").lower()
+    student_career = (profile.get("target_role") or profile.get("desired_role") or profile.get("career_goal") or "").lower()
+    student_education = (profile.get("education") or profile.get("degree") or profile.get("education_level") or "").lower()
+    student_interests_list = profile.get("career_interests") or profile.get("interests") or []
+    student_interests = {str(i).lower() for i in student_interests_list if i}
 
     scored = []
     for opp in opportunities:
@@ -328,11 +327,23 @@ async def recommended_gov_opportunities(
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id") or "me"
 
-    # Query Supabase repository (authoritative system of record)
+    from app.routers.student import _verify_student_recommendations_access
+    _verify_student_recommendations_access(resolved_id, current_user)
+
     profile = None
     try:
-        from app.repositories.supabase_repository import get_student_profile, get_student_assessment, get_student_assessment_by_user
-        profile = get_student_profile(resolved_id) or get_student_assessment(resolved_id) or get_student_assessment_by_user(resolved_id)
+        from app.repositories.supabase_repository import get_student_profile, get_student_assessment_by_user
+        from app.core.time import parse_iso_timestamp
+        p = get_student_profile(resolved_id)
+        a = get_student_assessment_by_user(resolved_id)
+        p_time = parse_iso_timestamp((p.get("updated_at") or p.get("created_at") or "") if p else "")
+        a_time = parse_iso_timestamp((a.get("updated_at") or a.get("created_at") or "") if a else "")
+        if p and (p.get("skills") or not a or p_time >= a_time):
+            profile = p
+        elif a:
+            profile = a
+        else:
+            profile = None
     except Exception as e:
         logger.exception("[RecommendedGovOpps] Supabase error for %s: %s", resolved_id, e)
         raise HTTPException(

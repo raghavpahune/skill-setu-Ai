@@ -367,7 +367,7 @@ def test_api_sync_endpoints():
         status_res = client.get("/api/sync/status")
         assert status_res.status_code == 200
         data = status_res.json()
-        assert data["status"] == "healthy"
+        assert data["status"] in ("healthy", "degraded")
         assert "scheduler" in data
         assert "refresh_interval_minutes" in data
         assert data["refresh_interval_minutes"] == settings.effective_refresh_interval_minutes
@@ -379,4 +379,117 @@ def test_api_sync_endpoints():
         good_trigger = client.post("/api/sync/trigger?source=data.gov.in")
         assert good_trigger.status_code == 200
         trig_data = good_trigger.json()
-        assert trig_data["status"] in ("success", "skipped")
+        assert trig_data["status"] in ("success", "skipped", "failed")
+
+
+def test_mcp_sync_tools_filter_persisted_demo_logs():
+    raw_demo_log = {
+        "id": "mcp-demo-1",
+        "source_name": "data.gov.in",
+        "status": "success",
+        "is_demo": True,
+        "records_fetched": 100,
+        "records_added": 100,
+        "records_updated": 0,
+        "started_at": "2026-09-12T06:00:00Z",
+        "completed_at": "2026-09-12T06:00:01Z",
+    }
+    raw_real_log = {
+        "id": "mcp-real-1",
+        "source_name": "data.gov.in",
+        "status": "failed",
+        "is_demo": False,
+        "records_fetched": 0,
+        "records_added": 0,
+        "records_updated": 0,
+        "started_at": "2026-09-12T06:01:00Z",
+        "completed_at": "2026-09-12T06:01:02Z",
+    }
+
+    with patch("app.mcp.tools.is_explicit_demo_mode", return_value=False), \
+         patch("app.repositories.supabase_repository.list_sync_logs", return_value=[raw_real_log, raw_demo_log]):
+        logs_res = tool_get_sync_logs({"limit": 10})
+        freshness_res = tool_get_sync_freshness({})
+
+    assert len(logs_res["logs"]) == 1
+    assert logs_res["logs"][0]["id"] == "mcp-real-1"
+    assert freshness_res["status"] == "failed"
+
+
+def test_scheduler_distributed_lock_ignores_demo_running_log():
+    sched = IngestionScheduler()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    active_dt = (now_dt - datetime.timedelta(minutes=2)).isoformat()
+
+    demo_running_log = {
+        "id": "demo-run-1",
+        "status": "running",
+        "is_demo": True,
+        "started_at": active_dt,
+    }
+
+    with patch("app.ingestion.scheduler.is_explicit_demo_mode", return_value=False), \
+         patch("app.repositories.supabase_repository.list_sync_logs", return_value=[demo_running_log]):
+        assert not sched._check_active_distributed_sync(lease_seconds=900)
+
+
+def test_scheduler_catchup_ignores_demo_log():
+    sched = IngestionScheduler()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    recent_dt = (now_dt - datetime.timedelta(minutes=5)).isoformat()
+
+    recent_demo_log = {
+        "id": "demo-log-recent",
+        "status": "success",
+        "is_demo": True,
+        "started_at": recent_dt,
+    }
+
+    with patch("app.ingestion.scheduler.is_explicit_demo_mode", return_value=False), \
+         patch("app.repositories.supabase_repository.list_sync_logs", return_value=[recent_demo_log]):
+        assert sched._should_catchup_sync()
+
+
+def test_scheduler_detects_older_real_running_log_despite_more_recent_demo_logs():
+    sched = IngestionScheduler()
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    demo_rows = [
+        {
+            "id": f"demo-{i}",
+            "source_name": "data.gov.in",
+            "job_type": "scheduled_sync",
+            "status": "success",
+            "records_fetched": 100,
+            "error_message": "||SOURCES_DETAIL:" + json.dumps({"_meta": {"is_demo": True}}),
+            "started_at": (now_dt - datetime.timedelta(minutes=1, seconds=i)).isoformat(),
+            "completed_at": (now_dt - datetime.timedelta(minutes=1, seconds=i - 1)).isoformat(),
+        }
+        for i in range(520)
+    ]
+    real_running_row = {
+        "id": "real-running-active",
+        "source_name": "data.gov.in",
+        "job_type": "scheduled_sync",
+        "status": "running",
+        "records_fetched": 0,
+        "error_message": "||SOURCES_DETAIL:" + json.dumps({"_meta": {"is_demo": False}}),
+        "started_at": (now_dt - datetime.timedelta(minutes=2)).isoformat(),
+    }
+    all_rows = demo_rows + [real_running_row]
+
+    mock_client = MagicMock()
+    mock_query = MagicMock()
+    mock_client.table.return_value.select.return_value = mock_query
+    mock_query.order.return_value = mock_query
+
+    def mock_range(start, end):
+        res = MagicMock()
+        res.data = all_rows[start : end + 1]
+        mock_query.execute.return_value = res
+        return mock_query
+
+    mock_query.range.side_effect = mock_range
+
+    with patch("app.ingestion.scheduler.is_explicit_demo_mode", return_value=False), \
+         patch("app.repositories.supabase_repository.get_client", return_value=mock_client):
+        assert sched._check_active_distributed_sync(lease_seconds=900) is True

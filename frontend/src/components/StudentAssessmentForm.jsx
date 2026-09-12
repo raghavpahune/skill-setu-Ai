@@ -115,18 +115,49 @@ export default function StudentAssessmentForm({ onOpenExplainability, onAssessme
   };
 
   useEffect(() => {
+    api.getStudentProfile()
+      .then((res) => {
+        if (res?.profile) {
+          const p = res.profile;
+          setForm((prev) => {
+            const loadedSkills = Array.isArray(p.skills) && p.skills.length > 0
+              ? p.skills.map((s) => ({
+                  skill_name: s.skill_name || s.name || '',
+                  proficiency: s.proficiency || 'intermediate',
+                })).filter((s) => s.skill_name)
+              : prev.current_skills;
+
+            return {
+              ...prev,
+              name: p.full_name || prev.name,
+              education: p.degree || p.education_level || prev.education,
+              district: p.preferred_location || prev.district,
+              career_goal: p.target_role || p.desired_role || prev.career_goal,
+              interests: Array.isArray(p.career_interests) && p.career_interests.length > 0
+                ? p.career_interests
+                : prev.interests,
+              current_skills: loadedSkills,
+            };
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     api.getAssessmentQuizQuestions()
       .then((res) => {
-        if (res?.status === 'profile_incomplete') {
+        if (res?.status === 'profile_incomplete' && (!res.questions || res.questions.length === 0)) {
           setProfileIncomplete(true);
           setIncompleteMessage(res.message || 'Please complete your Skill Passport before taking your personalized assessment.');
           setLoadingQuestions(false);
           return;
         }
+        setProfileIncomplete(false);
         if (res?.domain) {
           setAssessmentDomain(res.domain);
         }
-        if (res?.questions) {
+        if (res?.questions && res.questions.length > 0) {
           setQuizQuestions(res.questions);
           const initialAnswers = {};
           res.questions.forEach((q) => {
@@ -714,7 +745,7 @@ export default function StudentAssessmentForm({ onOpenExplainability, onAssessme
             </div>
           ) : loadingQuestions ? (
             <div className="py-12 text-center text-xs text-slate-500 animate-pulse">
-              Loading diagnostic questions from SkillSetu intelligence engine...
+              Loading diagnostic questions from SkillSetuAI intelligence engine...
             </div>
           ) : (
             <div className="space-y-6">
@@ -794,7 +825,7 @@ export default function StudentAssessmentForm({ onOpenExplainability, onAssessme
             </button>
             <button
               onClick={handleSubmit}
-              disabled={submitting || profileIncomplete}
+              disabled={submitting || (profileIncomplete && quizQuestions.length === 0)}
               className="px-8 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white text-xs font-bold rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
             >
               {submitting ? (

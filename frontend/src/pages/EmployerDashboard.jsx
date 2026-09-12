@@ -87,6 +87,7 @@ export default function EmployerDashboard() {
   const [signals, setSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('all');
@@ -132,12 +133,16 @@ export default function EmployerDashboard() {
     setLoading(true);
     setApiError(null);
     try {
-      const [valsRes, demandsRes, diffRes, sigsRes] = await Promise.all([
+      const [valsRes, demandsRes, diffRes, sigsRes, healthRes] = await Promise.all([
         api.getEmployerValidations(),
         api.getEmployerDemands(),
         api.getDifficultSkills(),
         api.getSignals(),
+        api.getHealth().catch(() => null),
       ]);
+      if (healthRes) {
+        setIsDemoMode(Boolean(healthRes.demo_mode ?? healthRes.is_demo));
+      }
       if (Array.isArray(valsRes)) setValidations(valsRes);
       if (Array.isArray(demandsRes)) setDemands(demandsRes);
       if (Array.isArray(diffRes)) setDifficultSkills(diffRes);
@@ -1402,7 +1407,7 @@ export default function EmployerDashboard() {
                     Deficit score (0-100) indexed against duration positions remain vacant in Maharashtra
                   </p>
                 </div>
-                <span className="text-xs font-mono text-rose-600 font-bold">State Benchmark: 28d</span>
+                <span className="text-xs font-mono text-rose-600 font-bold">{isDemoMode ? 'Benchmark Baseline: 28d' : 'Deficit Indices'}</span>
               </div>
 
               <div className="h-64 w-full">
@@ -1456,35 +1461,49 @@ export default function EmployerDashboard() {
                 </p>
 
                 <div className="space-y-3">
-                  <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs">
-                    <div className="flex justify-between items-center font-bold text-rose-950 dark:text-rose-200">
-                      <span>🤖 AI & Machine Learning</span>
-                      <span className="font-mono">64 Days Avg</span>
-                    </div>
-                    <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-1">
-                      Critical shortage of RAG, Vector Search, and LLMOps engineers across Pune and Mumbai.
-                    </p>
-                  </div>
+                  {isDemoMode ? (
+                    <>
+                      <div className="p-3 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-xs">
+                        <div className="flex justify-between items-center font-bold text-rose-950 dark:text-rose-200">
+                          <span>🤖 AI & Machine Learning</span>
+                          <span className="font-mono">64 Days Avg [Demo Reference]</span>
+                        </div>
+                        <p className="text-[11px] text-rose-800 dark:text-rose-300 mt-1">
+                          Critical shortage of RAG, Vector Search, and LLMOps engineers across Pune and Mumbai.
+                        </p>
+                      </div>
 
-                  <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-xs">
-                    <div className="flex justify-between items-center font-bold text-amber-950 dark:text-amber-200">
-                      <span>⚡ Electric Vehicles & Batteries</span>
-                      <span className="font-mono">58 Days Avg</span>
-                    </div>
-                    <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-1">
-                      Automotive hubs in Chakan & Sambhajinagar report high vacancy rates for BMS technicians.
-                    </p>
-                  </div>
+                      <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-xs">
+                        <div className="flex justify-between items-center font-bold text-amber-950 dark:text-amber-200">
+                          <span>⚡ Electric Vehicles & Batteries</span>
+                          <span className="font-mono">58 Days Avg [Demo Reference]</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800 dark:text-amber-300 mt-1">
+                          Automotive hubs in Chakan & Sambhajinagar report high vacancy rates for BMS technicians.
+                        </p>
+                      </div>
 
-                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-xs">
-                    <div className="flex justify-between items-center font-bold text-blue-950 dark:text-blue-200">
-                      <span>🏭 Smart Manufacturing (IIoT)</span>
-                      <span className="font-mono">47 Days Avg</span>
+                      <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-xs">
+                        <div className="flex justify-between items-center font-bold text-blue-950 dark:text-blue-200">
+                          <span>🏭 Smart Manufacturing (IIoT)</span>
+                          <span className="font-mono">47 Days Avg [Demo Reference]</span>
+                        </div>
+                        <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-1">
+                          SCADA, PLC, and industrial automation engineers required for Industry 4.0 plant retrofits.
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
+                      <div className="flex justify-between items-center font-bold text-slate-900 dark:text-white">
+                        <span>Live Hiring Latency Indexing</span>
+                        <span className="font-mono text-teal-600 dark:text-teal-400">Telemetry Pending</span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 leading-relaxed">
+                        Sector time-to-fill averages require employer-recorded position closure timestamps. As vacancies are fulfilled through SkillSetuAI, real duration telemetry will be indexed here.
+                      </p>
                     </div>
-                    <p className="text-[11px] text-blue-800 dark:text-blue-300 mt-1">
-                      SCADA, PLC, and industrial automation engineers required for Industry 4.0 plant retrofits.
-                    </p>
-                  </div>
+                  )}
                 </div>
               </div>
 

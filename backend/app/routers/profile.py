@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 import logging
 from typing import Any
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.security import get_current_user
 from app.repositories import supabase_repository
-from app.repositories.supabase_repository import SupabaseRepositoryError
+from app.repositories.supabase_repository import SupabaseRepositoryError, _is_valid_uuid
 
 logger = logging.getLogger("skillsetu.profile")
 router = APIRouter()
@@ -186,21 +187,40 @@ class EmployeeProfilePatchPayload(BaseModel):
 
 def resolve_taxonomy_skill_ids(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
     tax_skills = supabase_repository.list_skills(limit=2000) or []
+    if not tax_skills:
+        from app.db import _cache
+        tax_skills = _cache.get("skills", []) or []
     name_map = {}
+    is_authoritative = {}
     for s in tax_skills:
         sname = s.get("name")
         sid = s.get("id")
-        if sname and sid:
-            name_map[sname.strip().lower()] = str(sid)
-            for syn in s.get("synonyms", []):
-                if syn and isinstance(syn, str):
-                    name_map[syn.strip().lower()] = str(sid)
+        if not sname or not sid:
+            continue
+        canon_key = sname.strip().lower()
+        if _is_valid_uuid(sid):
+            valid_id = str(sid)
+            auth_flag = True
+        else:
+            valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"skill.{canon_key}"))
+            auth_flag = False
+
+        keys_to_set = [canon_key]
+        for syn in s.get("synonyms", []) or []:
+            if syn and isinstance(syn, str) and syn.strip():
+                keys_to_set.append(syn.strip().lower())
+
+        for k in keys_to_set:
+            if k not in name_map or (auth_flag and not is_authoritative.get(k, False)):
+                name_map[k] = valid_id
+                is_authoritative[k] = auth_flag
 
     resolved = []
     for sk in skills:
-        sname = sk.get("skill_name", "")
+        sname = sk.get("skill_name", "") or sk.get("name", "")
         clean_key = sname.strip().lower()
-        sid = sk.get("skill_id") or name_map.get(clean_key)
+        existing_sid = sk.get("skill_id") or sk.get("id")
+        sid = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else name_map.get(clean_key)
         resolved.append({
             **sk,
             "skill_id": str(sid) if sid is not None else None,
@@ -698,6 +718,7 @@ async def create_employee_profile(
             detail="Forbidden: Employee profile creation requires EMPLOYEE, EMPLOYER, or ADMIN role.",
         )
     user_id = current_user["id"]
+    ensure_user_in_supabase(user_id, current_user, role)
     now_iso = datetime.now(timezone.utc).isoformat()
     raw_skills = [s.model_dump() for s in payload.skills]
     deduped_skills = deduplicate_skills(raw_skills)
@@ -747,6 +768,7 @@ async def update_employee_profile(
             detail="Forbidden: Employee profile update requires EMPLOYEE, EMPLOYER, or ADMIN role.",
         )
     user_id = current_user["id"]
+    ensure_user_in_supabase(user_id, current_user, role)
     now_iso = datetime.now(timezone.utc).isoformat()
     raw_skills = [s.model_dump() for s in payload.skills]
     deduped_skills = deduplicate_skills(raw_skills)
@@ -795,6 +817,7 @@ async def patch_employee_profile(
             detail="Forbidden: Employee profile patch requires EMPLOYEE, EMPLOYER, or ADMIN role.",
         )
     user_id = current_user["id"]
+    ensure_user_in_supabase(user_id, current_user, role)
     try:
         existing = supabase_repository.get_employee_profile(user_id)
     except SupabaseRepositoryError as e:

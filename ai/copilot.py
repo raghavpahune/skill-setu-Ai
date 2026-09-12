@@ -241,9 +241,9 @@ def _build_context(
 
         if queried_skill_info:
             if queried_skill_info["type"] == "indexed" and (is_demo or (skills_ok and jobs_ok and job_skills_ok and course_skills_ok)):
-                skill_obj = queried_skill_info["skill"]
-                sid = skill_obj["id"]
-                sname = skill_obj["name"]
+                skill_obj = queried_skill_info.get("skill", {})
+                sid = skill_obj.get("id", "")
+                sname = skill_obj.get("name", "")
 
                 matching_js = [js for js in job_skills if js["skill_id"] == sid]
                 matching_job_ids = {js["job_id"] for js in matching_js}
@@ -287,7 +287,7 @@ def _build_context(
                     "sample_courses": teaching_courses,
                 }
             else:
-                tech_name = queried_skill_info["skill"]["name"] if queried_skill_info.get("skill") else queried_skill_info.get("name", "")
+                tech_name = queried_skill_info.get("skill", {}).get("name", "") if queried_skill_info.get("skill") else queried_skill_info.get("name", "")
                 context["query_type"] = "skill_specific"
                 context["data_available_for_skill"] = False
                 dataset_label = "Maharashtra 10-district demo dataset" if is_demo else "authoritative database"
@@ -323,7 +323,7 @@ def _build_context(
 
         # Phase 17 & 18: Grounded Student Recommendation Context
         effective_student_id = student_id or (context_data.get("student_id") if context_data and isinstance(context_data, dict) else None)
-        if effective_student_id:
+        if effective_student_id and role == "student":
             # SECURITY CRITICAL: Authorize effective student ID before compute_career_recommendations()
             from app.routers.student import _verify_student_recommendations_access
             _verify_student_recommendations_access(effective_student_id, current_user)
@@ -389,8 +389,13 @@ def _build_context(
             if is_demo:
                 from app.db import get_demo
                 context["student_profiles"] = [
-                    {"name": p["name"], "target_role": p["target_role"], "match": p["skill_match_pct"]}
+                    {
+                        "name": p.get("name") or p.get("full_name", ""),
+                        "target_role": p.get("target_role", ""),
+                        "match": p.get("skill_match_pct", 0),
+                    }
                     for p in get_demo("student_profiles")
+                    if isinstance(p, dict)
                 ]
             else:
                 caller_id = (current_user and current_user.get("id")) or student_id
@@ -408,6 +413,37 @@ def _build_context(
                         context["student_profiles"] = []
                 else:
                     context["student_profiles"] = []
+        elif role == "employee":
+            caller_id = (current_user and current_user.get("id")) or student_id
+            if caller_id:
+                from app.repositories import supabase_repository
+                try:
+                    ep = supabase_repository.get_employee_profile(caller_id)
+                    if ep:
+                        context["employee_profile"] = {
+                            "name": ep.get("full_name") or ep.get("name", ""),
+                            "current_role": ep.get("current_role", ""),
+                            "years_of_experience": ep.get("years_of_experience", 0),
+                            "industry": ep.get("industry", ""),
+                            "target_role": ep.get("target_role", ""),
+                            "preferred_location": ep.get("preferred_location", ""),
+                            "skills": [
+                                (s.get("skill_name") or s.get("name", ""))
+                                for s in ep.get("skills", [])
+                                if isinstance(s, dict)
+                            ],
+                            "certifications": [
+                                (c.get("name") or "")
+                                for c in ep.get("certifications", [])
+                                if isinstance(c, dict)
+                            ],
+                        }
+                    else:
+                        context["employee_profile"] = None
+                except Exception:
+                    context["employee_profile"] = None
+            else:
+                context["employee_profile"] = None
         elif role == "government":
             from app.services.district_service import get_all_districts
             context["districts"] = get_all_districts(is_demo=is_demo)
@@ -440,7 +476,7 @@ def _build_context(
             for p in student_profiles_list:
                 target = p.get("target_role", "")
                 if target and target.lower() in q_lower:
-                    skills_map = {s["id"]: s.get("name", "") for s in skills}
+                    skills_map = {s.get("id"): s.get("name", "") for s in skills if isinstance(s, dict) and s.get("id")}
                     context["focused_career_role"] = {
                         "role": target,
                         "required_skills": [skills_map.get(sid, sid) for sid in p.get("required_skills", [])],
@@ -478,7 +514,18 @@ async def handle_question(
     logger.info(f"[Copilot] Request role={role}, district={district}, provider={provider.__class__.__name__ if provider else 'None'}, is_live={is_live_ai}, is_demo={is_demo_mode}")
 
     if not is_demo_mode:
-        if context.get("authoritative_data_status") == "empty_or_unindexed" and not context.get("student_profiles") and not context.get("student_recommendation_context"):
+        is_empty_or_unindexed = context.get("authoritative_data_status") == "empty_or_unindexed"
+        has_profile_context = bool(
+            context.get("student_recommendation_context")
+            or context.get("employee_profile")
+        )
+        is_market_intelligence_claim = bool(
+            context.get("queried_skill")
+            or context.get("focused_district")
+            or not has_profile_context
+        )
+
+        if is_empty_or_unindexed and is_market_intelligence_claim:
             return {
                 "answer": "Authoritative labour market intelligence is currently unavailable or unindexed in Real Data mode. Live AI generation without verified data is restricted to prevent inaccurate guidance.",
                 "role": role,
@@ -500,14 +547,20 @@ async def handle_question(
             }
         try:
             answer = await provider.generate(question, context)
+            if is_empty_or_unindexed:
+                prov_label = "✨ Generated by Gemini AI (Profile-Only Guidance)"
+                is_grounded = False
+            else:
+                prov_label = "✨ Generated by Gemini AI (Grounded in Authoritative Data)"
+                is_grounded = bool(context)
             return {
                 "answer": answer,
                 "role": role,
                 "student_id": student_id,
                 "demo_mode": False,
-                "data_grounded": bool(context),
+                "data_grounded": is_grounded,
                 "model": getattr(provider, "model", "gemini-3.6-flash"),
-                "provenance_label": "✨ Generated by Gemini AI (Grounded in Authoritative Data)",
+                "provenance_label": prov_label,
             }
         except Exception as e:
             err_msg = str(e)

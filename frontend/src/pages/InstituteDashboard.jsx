@@ -427,7 +427,7 @@ export default function InstituteDashboard() {
               </p>
             </div>
             <span className="text-[11px] font-mono px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded font-semibold self-start sm:self-auto">
-              Real-time Telemetry
+              Accredited Course Metrics
             </span>
           </div>
 
@@ -617,7 +617,7 @@ export default function InstituteDashboard() {
         {loading ? (
           <div className="py-12 text-center text-slate-400 text-xs space-y-2">
             <div className="inline-block w-6 h-6 border-2 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
-            <p>Loading accredited vocational courses telemetry...</p>
+            <p>Loading accredited vocational course data...</p>
           </div>
         ) : filteredCourses.length === 0 ? (
           <div className="py-12 text-center text-slate-500 dark:text-slate-400 text-xs bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">

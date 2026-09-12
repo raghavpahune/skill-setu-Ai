@@ -9,14 +9,14 @@
     "tools": [],
     "source_url": "https://nasscom.in",
     "source_name": "NASSCOM",
-    "source_type": "INDUSTRY_ANNOUNCEMENT",
+    "source_type": "DEMO_SYNTHETIC",
     "published_at": "2026-09-01T16:21:19.077747+00:00",
     "collected_at": "2026-09-01T16:21:19.077797+00:00",
     "updated_at": "2026-09-01T16:21:19.077831+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
-    "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
+    "is_demo": true,
+    "data_provenance": "DEMO_SYNTHETIC",
     "freshness": "NEW",
     "signature": "cd806a1d22556c4d",
     "is_ai_processed": false,
@@ -26,7 +26,8 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "NASSCOM",
-    "created_at": "2026-09-01T16:21:19.077831+00:00"
+    "created_at": "2026-09-01T16:21:19.077831+00:00",
+    "source_label": "DEMO_SYNTHETIC"
   },
   {
     "id": "nasscom-genai-2026-q3",
@@ -53,10 +54,10 @@
     "published_at": "2026-09-01T16:20:01.990910+00:00",
     "collected_at": "2026-09-01T16:21:17.326579+00:00",
     "updated_at": "2026-09-01T16:21:31.240339+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
     "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
     "freshness": "NEW",
     "signature": "918861899ee443c7",
     "is_ai_processed": false,
@@ -66,7 +67,9 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "NASSCOM Strategic Review & FutureSkills Prime",
-    "created_at": "2026-09-01T16:21:17.326679+00:00"
+    "created_at": "2026-09-01T16:21:17.326679+00:00",
+    "verification_result": "SOURCE_URL_UNREACHABLE_HTTP_404_OR_TIMEOUT",
+    "verification_checked_at": "2026-09-10T08:28:15Z"
   },
   {
     "id": "siam-ev-chakan-2026",
@@ -91,10 +94,10 @@
     "published_at": "2026-09-01T16:20:01.990918+00:00",
     "collected_at": "2026-09-01T16:21:17.327801+00:00",
     "updated_at": "2026-09-01T16:21:31.241674+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
     "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
     "freshness": "NEW",
     "signature": "678578f83d0282b1",
     "is_ai_processed": false,
@@ -104,7 +107,9 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "Society of Indian Automobile Manufacturers (SIAM)",
-    "created_at": "2026-09-01T16:21:17.327862+00:00"
+    "created_at": "2026-09-01T16:21:17.327862+00:00",
+    "verification_result": "SOURCE_URL_UNREACHABLE_HTTP_404_OR_TIMEOUT",
+    "verification_checked_at": "2026-09-10T08:28:15Z"
   },
   {
     "id": "dvet-circ-2026-108",
@@ -129,10 +134,10 @@
     "published_at": "2026-09-01T16:20:01.990920+00:00",
     "collected_at": "2026-09-01T16:21:17.328628+00:00",
     "updated_at": "2026-09-01T16:21:31.242658+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
     "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
     "freshness": "NEW",
     "signature": "dc7464171dc3dde4",
     "is_ai_processed": false,
@@ -142,7 +147,9 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "Directorate of Vocational Education & Training (DVET) Maharashtra",
-    "created_at": "2026-09-01T16:21:17.328659+00:00"
+    "created_at": "2026-09-01T16:21:17.328659+00:00",
+    "verification_result": "SOURCE_URL_UNREACHABLE_HTTP_404_OR_TIMEOUT",
+    "verification_checked_at": "2026-09-10T08:28:15Z"
   },
   {
     "id": "cncf-landscape-2026",
@@ -169,10 +176,10 @@
     "published_at": "2026-09-01T16:20:01.990922+00:00",
     "collected_at": "2026-09-01T16:21:17.329467+00:00",
     "updated_at": "2026-09-01T16:21:31.243430+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
     "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
     "freshness": "NEW",
     "signature": "2906a66d21d4ee5e",
     "is_ai_processed": false,
@@ -182,7 +189,9 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "Cloud Native Computing Foundation (CNCF) & Linux Foundation",
-    "created_at": "2026-09-01T16:21:17.329494+00:00"
+    "created_at": "2026-09-01T16:21:17.329494+00:00",
+    "verification_result": "SOURCE_URL_UNREACHABLE_HTTP_404_OR_TIMEOUT",
+    "verification_checked_at": "2026-09-10T08:28:15Z"
   },
   {
     "id": "msbte-curric-cyber-2026",
@@ -208,10 +217,10 @@
     "published_at": "2026-09-01T16:20:01.990924+00:00",
     "collected_at": "2026-09-01T16:21:17.330091+00:00",
     "updated_at": "2026-09-01T16:21:31.244534+00:00",
-    "validation_status": "APPROVED",
-    "is_active": true,
+    "validation_status": "UNVERIFIED",
+    "is_active": false,
     "is_demo": false,
-    "data_provenance": "VERIFIED_EXTERNAL_FEED",
+    "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
     "freshness": "NEW",
     "signature": "415f00c8d335c6fb",
     "is_ai_processed": false,
@@ -221,6 +230,8 @@
     "impact_level": "high",
     "signal_date": "2026-09-01",
     "source": "Maharashtra State Board of Technical Education (MSBTE)",
-    "created_at": "2026-09-01T16:21:17.330120+00:00"
+    "created_at": "2026-09-01T16:21:17.330120+00:00",
+    "verification_result": "SOURCE_URL_UNREACHABLE_HTTP_404_OR_TIMEOUT",
+    "verification_checked_at": "2026-09-10T08:28:15Z"
   }
 ]

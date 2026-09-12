@@ -43,7 +43,7 @@ export function generateClientFallback(question = '', role = 'student', district
       return {
         answer: `### Data Availability Notice: ${label}
 
-The current SkillSetu Maharashtra dataset does not contain sufficient **${label}**-specific job records or accredited curriculum mappings to provide verified state-level demand metrics.
+The current SkillSetuAI Maharashtra dataset does not contain sufficient **${label}**-specific job records or accredited curriculum mappings to provide verified state-level demand metrics.
 
 #### Verified Dataset Status:
 * **State Job Postings Tracked:** **0** verified ${label} job postings in the current 10-district Maharashtra index.
@@ -51,7 +51,7 @@ The current SkillSetu Maharashtra dataset does not contain sufficient **${label}
 * **State Deficit Status:** Cannot compute a verified demand percentage or deficit gap for ${label} due to lack of local job telemetry.
 
 #### General Industry Context:
-**${label}** is recognized in modern software engineering for high-concurrency microservices, cloud-native backend infrastructure, and systems tooling. Related programming and cloud competencies with active verified employer demand in Maharashtra include **Python** (26% demand, 146 active roles), **Java**, **React**, and **Cloud Computing (AWS/Kubernetes)**.
+**${label}** is recognized in modern software engineering for high-concurrency microservices, cloud-native backend infrastructure, and systems tooling. Related programming and cloud competencies in the reference benchmark index include **Python**, **Java**, **React**, and **Cloud Computing (AWS/Kubernetes)**.
 
 #### Recommendation:
 To track ${label} demand systematically, submit candidate skill feedback via the Employer Dashboard or configure specialized tech job ingestion feeds.`,
@@ -69,7 +69,7 @@ To track ${label} demand systematically, submit candidate skill feedback via the
     return {
       answer: `### Career Recommendation Intelligence: Why Learn Generative AI? (Offline Static Fallback)
 
-> ⚠️ **Notice:** The live SkillSetu backend service is temporarily reconnecting. This response is an offline static fallback for demonstration purposes.
+> ⚠️ **Notice:** The live SkillSetuAI backend service is temporarily reconnecting. This response is an offline static fallback for demonstration purposes.
 
 #### 🎯 A. Why This Skill Matters
 **Generative AI** is a primary technical competency for modern **AI Engineer** roles, driving autonomous agents, retrieval-augmented generation (RAG), and enterprise workflow automation.
@@ -82,7 +82,7 @@ To track ${label} demand systematically, submit candidate skill feedback via the
 * **Target Role:** AI Engineer (NSQF Level 7-8).
 * **Prerequisites:** Python programming, linear algebra, vector embeddings, and API integration.
 
-#### 🏫 D. Accredited SkillSetu Courses
+#### 🏫 D. Accredited SkillSetuAI Courses
 * **Generative AI & LLM Applications** (COEP Technological University, Pune)
 * **Advanced AI & Machine Learning** (COEP Technological University, Pune)
 
@@ -96,7 +96,7 @@ To track ${label} demand systematically, submit candidate skill feedback via the
 7. **Target Employment Role:** AI Engineer hiring tracks
 
 #### ⚡ F. Next Action
-Connect to the live SkillSetu backend to load your verified real-time district demand metrics and personalized candidate gap analysis.`,
+Connect to the live SkillSetuAI backend to load your verified real-time district demand metrics and personalized candidate gap analysis.`,
       data_grounded: false,
       demo_mode: true,
       is_fallback: true,
@@ -109,9 +109,9 @@ Connect to the live SkillSetu backend to load your verified real-time district d
   if (q.includes('python')) {
     const isPune = q.includes('pune') || dLower === 'pune';
     return {
-      answer: `### Verified Skill Intelligence: Python
+      answer: `**Reference Skill Intelligence: Python (Offline Demo Benchmark)**
 
-Based on indexed SkillSetu labour-market records across Maharashtra:
+Based on indexed SkillSetuAI benchmark demo records across Maharashtra:
 
 * **Category / Domain:** Programming (NSQF Level 5)
 * **Active Hiring Demand:** Appears in **26%** of tracked job postings (**146** active postings out of 556 total).
@@ -149,7 +149,7 @@ Expand industry-aligned practical training in **Python** at regional technical i
     return {
       answer: `### ${dName} District Workforce Intelligence Briefing
 
-Here is the current SkillSetu intelligence briefing for **${dName}**, grounded in verified state labour-market records:
+Here is the current SkillSetuAI intelligence briefing for **${dName}**, grounded in verified state labour-market records:
 
 #### 1. Labour & Industrial Demand:
 * **Active Job Openings:** Verified job postings tracked across regional industrial corridors.
@@ -182,7 +182,7 @@ Here is the current SkillSetu intelligence briefing for **${dName}**, grounded i
     return {
       answer: `### Grounded Career Copilot Intelligence
 
-Based on verified SkillSetu assessment data and Maharashtra industrial hiring trends:
+Based on verified SkillSetuAI assessment data and Maharashtra industrial hiring trends:
 
 #### 🎯 Benchmark Career Pathways:
 * **AI Engineer (NSQF Level 7):** High demand in Pune & Mumbai (45+ validated employer openings in RAG, Agentic AI, and Python pipelines).
@@ -208,9 +208,9 @@ Bridge top priority technical deficits through hands-on capstone projects and ap
   // 5. Gaps / Deficit query
   if (q.includes('gap') || q.includes('deficit')) {
     return {
-      answer: `### Identified Skill Deficit Analysis
+      answer: `**Reference Skill Deficit Analysis (Offline Demo Benchmark)**
 
-Comparison of employer job specifications against accredited vocational curricula in Maharashtra:
+Comparison of sample employer job specifications against vocational curricula in the benchmark index:
 
 | Skill Name | Domain | Priority | Demand % | Coverage % | Deficit |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -230,9 +230,9 @@ Comparison of employer job specifications against accredited vocational curricul
 
   // Default Maharashtra overview
   return {
-    answer: `### SkillSetu Labour-Market Intelligence
+    answer: `**SkillSetuAI Labour-Market Intelligence (Offline Reference)**
 
-SkillSetu continuously indexes 55+ skills, 560+ job postings, and 27 accredited training courses across 10 Maharashtra districts.
+SkillSetuAI provides workforce intelligence across Maharashtra districts. Connect to the live service for real-time indexed vacancies and verified training records.
 
 **Suggested inquiries:**
 * *'Tell me about requirement for Python developer in Pune'*

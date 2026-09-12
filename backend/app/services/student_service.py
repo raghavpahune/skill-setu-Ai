@@ -10,6 +10,7 @@ from typing import Any
 from app.core.security import is_demo_student_id
 from app.db import get_demo
 from app.services.gap_engine import compute_gaps
+from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ def get_personalized_industry_alerts(
     domain_id: str | None = None,
     student_id: str | None = None,
     is_demo: bool | None = None,
+    current_user: dict | None = None,
 ) -> dict[str, Any]:
     """Retrieve personalized technology and labour-market signals for a domain."""
     from app.core.data_mode import is_explicit_demo_mode
@@ -155,21 +157,54 @@ def get_personalized_industry_alerts(
     student_profile = None
     student_acquired_ids = set()
     if student_id:
+        is_demo_id = is_demo_student_id(student_id)
+        is_demo_fixture = False
+        if not is_demo_id:
+            demo_profiles = get_demo("student_profiles") or []
+            is_demo_fixture = any((p.get("user_id") or p.get("id")) == student_id for p in demo_profiles)
+        is_demo_req = is_demo_id or is_demo_fixture
+        if not is_demo_req and current_user is not None:
+            user_id = current_user.get("id")
+            user_role = (current_user.get("role") or "").upper()
+            if user_id != student_id and user_role != "ADMIN":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Forbidden: You cannot access industry alerts for another user.",
+                )
+
         try:
-            from app.repositories.supabase_repository import get_student_profile, get_student_assessment, get_student_assessment_by_user
-            student_profile = get_student_profile(student_id) or get_student_assessment(student_id) or get_student_assessment_by_user(student_id)
+            from app.repositories.supabase_repository import get_student_profile, get_student_assessment, get_student_assessment_by_user, get_employee_profile
+            student_profile = (
+                get_student_profile(student_id)
+                or get_student_assessment(student_id)
+                or get_student_assessment_by_user(student_id)
+                or get_employee_profile(student_id)
+            )
         except Exception as e:
             logger.error("[StudentService] Supabase error resolving student %s: %s", student_id, e)
             student_profile = None
 
-        if not student_profile and is_demo_student_id(student_id):
+        if not student_profile and is_demo_req:
             profiles = get_demo("student_profiles")
             for p in profiles:
                 if p["user_id"] == student_id:
                     student_profile = p
                     break
+        student_acquired_ids = set()
         if student_profile:
-            student_acquired_ids = {sk["skill_id"] for sk in student_profile.get("skills", []) if isinstance(sk, dict) and "skill_id" in sk}
+            name_to_sids: dict[str, list[str]] = {}
+            for s_id, s_obj in skills_map.items():
+                s_n = (s_obj.get("name") or "").strip().lower()
+                if s_n:
+                    name_to_sids.setdefault(s_n, []).append(s_id)
+
+            for sk in student_profile.get("skills", []):
+                if isinstance(sk, dict):
+                    if "skill_id" in sk and sk["skill_id"]:
+                        student_acquired_ids.add(sk["skill_id"])
+                    s_name = (sk.get("skill_name") or sk.get("name") or "").strip().lower()
+                    if s_name in name_to_sids:
+                        student_acquired_ids.update(name_to_sids[s_name])
 
     # Determine domains to evaluate
     domains_to_process = []

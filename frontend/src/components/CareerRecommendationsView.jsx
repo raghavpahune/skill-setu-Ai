@@ -204,7 +204,7 @@ export default function CareerRecommendationsView({ studentId, onOpenExplainabil
               <span>{aiProvenance.includes('Gemini') ? '✨' : '🛡️'}</span>
               <span>{aiProvenance}</span>
             </span>
-            <span className="text-[10px] text-slate-400 font-mono">100% Grounded in SkillSetu Data</span>
+            <span className="text-[10px] text-slate-400 font-mono">100% Grounded in SkillSetuAI Data</span>
           </div>
 
           {aiLoading ? (
