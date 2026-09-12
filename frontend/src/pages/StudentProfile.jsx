@@ -191,14 +191,14 @@ export default function StudentProfile() {
 
   const handleAddCert = (e) => {
     e.preventDefault();
-    if (!newCert.name.trim() || !newCert.issuer.trim()) return;
+    if (!newCert.name.trim()) return;
     setForm((prev) => ({
       ...prev,
       certifications: [
         ...prev.certifications,
         {
           name: newCert.name.trim(),
-          issuer: newCert.issuer.trim(),
+          issuer: newCert.issuer.trim() || 'Self-Certified / Industry',
           issue_date: newCert.issue_date || null,
           url: newCert.url.trim() || null,
         },
@@ -264,7 +264,9 @@ export default function StudentProfile() {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
     setApiError(null);
     setIsLoadError(false);
     setSuccessMsg(null);
@@ -286,13 +288,44 @@ export default function StudentProfile() {
       } else {
         saved = await api.updateStudentProfile(payload);
       }
-      if (saved && saved.profile) {
-        setProfile(saved.profile);
+
+      if (!saved || !saved.profile) {
+        throw new Error('Server did not return authoritative saved profile.');
       }
-      setSuccessMsg('Skill Passport & Student Profile successfully updated.');
+
+      const authoritativeProfile = saved.profile;
+      setProfile(authoritativeProfile);
+      setForm({
+        full_name: authoritativeProfile.full_name || (user?.full_name || user?.name || ''),
+        institution: authoritativeProfile.institution || '',
+        degree: authoritativeProfile.degree || '',
+        education_level: authoritativeProfile.education_level || 'Undergraduate (B.Tech / B.E / B.Sc)',
+        academic_year: authoritativeProfile.academic_year || 'Final Year',
+        graduation_year: authoritativeProfile.graduation_year || new Date().getFullYear(),
+        desired_role: authoritativeProfile.desired_role || authoritativeProfile.target_role || '',
+        target_role: authoritativeProfile.target_role || authoritativeProfile.desired_role || '',
+        preferred_location: authoritativeProfile.preferred_location || '',
+        career_interests: authoritativeProfile.career_interests || [],
+        skills: authoritativeProfile.skills || [],
+        projects: authoritativeProfile.projects || [],
+        certifications: authoritativeProfile.certifications || [],
+        courses: authoritativeProfile.courses || [],
+        experience: authoritativeProfile.experience || [],
+      });
+      setSuccessMsg('Skill Passport saved successfully! Authoritative record updated in Supabase.');
     } catch (err) {
       setIsLoadError(false);
-      setApiError(err.message || 'Failed saving profile. Please check inputs.');
+      if (err.isTimeout) {
+        setApiError('Request timed out after 25 seconds. Please check your network connection and retry.');
+      } else if (err.status === 401 || err.status === 403) {
+        setApiError(err.message || 'Authorization failed. Please log in again.');
+      } else if (err.status >= 500) {
+        setApiError(err.message || 'Database persistence failed. Please try again.');
+      } else if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setApiError('Network connection unavailable. Please check your internet connection.');
+      } else {
+        setApiError(err.message || 'Failed saving profile. Please check inputs.');
+      }
     } finally {
       setSaving(false);
     }

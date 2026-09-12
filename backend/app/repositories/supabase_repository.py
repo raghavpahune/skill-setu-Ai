@@ -503,6 +503,7 @@ def upsert_student_profile(profile_data: dict[str, Any]) -> dict[str, Any]:
     clean_profile = {k: v for k, v in profile_data.items() if k in VALID_STUDENT_PROFILE_COLUMNS}
     uid = profile_data.get("user_id")
 
+    saved_db = None
     try:
         res = client.rpc("sync_student_profile_atomic", {"p_profile": clean_profile}).execute()
         data = getattr(res, "data", None)
@@ -510,8 +511,81 @@ def upsert_student_profile(profile_data: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError(f"Database atomic sync returned empty response for user_id '{uid}'")
         saved_db = data if isinstance(data, dict) else data[0]
     except Exception as e:
-        logger.error("[SupabaseRepo] Failed syncing student profile and skills atomically for user_id='%s': %s", uid, e)
-        raise SupabaseRepositoryError(f"Database atomic sync failed for student profile: {e}") from e
+        err_str = str(e)
+        err_code = getattr(e, "code", None)
+        is_rpc_missing = False
+        if err_code in ("PGRST202", "42883") or "PGRST202" in err_str or "42883" in err_str:
+            is_rpc_missing = True
+        elif "could not find the function" in err_str.lower() and "sync_student_profile_atomic" in err_str.lower():
+            is_rpc_missing = True
+        elif "function public.sync_student_profile_atomic" in err_str.lower() and "does not exist" in err_str.lower():
+            is_rpc_missing = True
+
+        if not is_rpc_missing:
+            logger.error("[SupabaseRepo] Failed syncing student profile and skills atomically for user_id='%s': %s", uid, e)
+            raise SupabaseRepositoryError(f"Database atomic sync failed for student profile: {e}") from e
+
+        prev_prof_res = client.table("student_profiles").select("*").eq("user_id", uid).execute()
+        prev_prof = prev_prof_res.data[0] if getattr(prev_prof_res, "data", None) else None
+        prev_skills_res = client.table("student_skills").select("*").eq("user_id", uid).execute()
+        prev_skills = getattr(prev_skills_res, "data", None) or []
+
+        prof_res = client.table("student_profiles").upsert(clean_profile, on_conflict="user_id").execute()
+        saved_db = prof_res.data[0] if getattr(prof_res, "data", None) else clean_profile
+
+        if "skills" in clean_profile and isinstance(clean_profile["skills"], list):
+            try:
+                tax_skills = []
+                try:
+                    tax_skills = list_skills(limit=2000) or []
+                except Exception:
+                    tax_skills = []
+                tax_map = {}
+                for ts in tax_skills:
+                    tname = ts.get("name")
+                    tid = ts.get("id")
+                    if tname and tid and _is_valid_uuid(tid):
+                        tax_map[tname.strip().lower()] = str(tid)
+                        for syn in ts.get("synonyms") or []:
+                            if syn and isinstance(syn, str):
+                                tax_map[syn.strip().lower()] = str(tid)
+
+                new_rel_skills = []
+                for sk in clean_profile["skills"]:
+                    if not isinstance(sk, dict):
+                        continue
+                    sname = (sk.get("skill_name") or sk.get("name") or "").strip()
+                    existing_sid = sk.get("skill_id") or sk.get("id")
+                    sid = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else tax_map.get(sname.lower())
+                    if not sid:
+                        continue
+                    raw_prof = str(sk.get("proficiency") or "intermediate").strip().lower()
+                    prof = raw_prof if raw_prof in ("beginner", "intermediate", "advanced", "expert") else "intermediate"
+                    new_rel_skills.append({
+                        "user_id": uid,
+                        "skill_id": sid,
+                        "proficiency": prof,
+                    })
+
+                client.table("student_skills").delete().eq("user_id", uid).execute()
+                for nrs in new_rel_skills:
+                    client.table("student_skills").upsert(nrs, on_conflict="user_id,skill_id").execute()
+            except Exception as skill_sync_err:
+                if prev_prof is not None:
+                    try:
+                        client.table("student_profiles").upsert(prev_prof, on_conflict="user_id").execute()
+                        client.table("student_skills").delete().eq("user_id", uid).execute()
+                        for ps in prev_skills:
+                            client.table("student_skills").upsert(ps, on_conflict="user_id,skill_id").execute()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        client.table("student_profiles").delete().eq("user_id", uid).execute()
+                        client.table("student_skills").delete().eq("user_id", uid).execute()
+                    except Exception:
+                        pass
+                raise SupabaseRepositoryError(f"Relational skills synchronization failed during direct fallback: {skill_sync_err}") from skill_sync_err
 
     from app.db import _cache, _flush_real_table
     profiles = _cache.setdefault("student_profiles", [])
@@ -1664,10 +1738,11 @@ def upsert_skills(skills_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "nsqf_level": s.get("nsqf_level", 5),
                 "synonyms": s.get("synonyms", []),
             }
-            if s.get("id"):
-                clean["id"] = s["id"]
+            sid = s.get("id")
+            if sid and _is_valid_uuid(sid):
+                clean["id"] = str(sid)
             else:
-                clean["id"] = str(uuid.uuid4())
+                clean["id"] = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"skill.{s['name'].strip().lower()}"))
             clean_skills.append(clean)
         res = client.table("skills").upsert(clean_skills, on_conflict="name").execute()
         return getattr(res, "data", []) or clean_skills

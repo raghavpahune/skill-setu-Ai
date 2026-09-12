@@ -53,10 +53,10 @@ export function formatStudentProfilePayload(form) {
   const certifications = Array.isArray(form.certifications)
     ? form.certifications.map((c) => ({
         name: (c.name || '').trim(),
-        issuer: (c.issuer || '').trim(),
+        issuer: (c.issuer && typeof c.issuer === 'string' && c.issuer.trim()) ? c.issuer.trim() : 'Self-Certified / Industry',
         issue_date: c.issue_date && typeof c.issue_date === 'string' && c.issue_date.trim() ? c.issue_date.trim() : null,
         url: c.url && typeof c.url === 'string' && c.url.trim() ? c.url.trim() : null,
-      })).filter((c) => c.name && c.issuer)
+      })).filter((c) => c.name)
     : [];
 
   const courses = Array.isArray(form.courses)
@@ -109,10 +109,10 @@ export function formatEmployeeProfilePayload(form) {
   const certifications = Array.isArray(form.certifications)
     ? form.certifications.map((c) => ({
         name: (c.name || '').trim(),
-        issuer: (c.issuer || '').trim(),
+        issuer: (c.issuer && typeof c.issuer === 'string' && c.issuer.trim()) ? c.issuer.trim() : 'Self-Certified / Industry',
         issue_date: c.issue_date && typeof c.issue_date === 'string' && c.issue_date.trim() ? c.issue_date.trim() : null,
         url: c.url && typeof c.url === 'string' && c.url.trim() ? c.url.trim() : null,
-      })).filter((c) => c.name && c.issuer)
+      })).filter((c) => c.name)
     : [];
 
   const yoe = form.years_of_experience !== undefined && form.years_of_experience !== null && form.years_of_experience !== ''

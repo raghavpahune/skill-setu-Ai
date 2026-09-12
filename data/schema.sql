@@ -599,24 +599,12 @@ BEGIN
     IF p_profile ? 'skills' AND jsonb_typeof(p_profile->'skills') = 'array' THEN
         SELECT elem INTO v_invalid_skill
         FROM jsonb_array_elements(p_profile->'skills') AS elem
-        WHERE COALESCE(
-            CASE
-                WHEN (elem->>'skill_id') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                THEN (elem->>'skill_id')::uuid
-                WHEN (elem->>'id') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                THEN (elem->>'id')::uuid
-                ELSE NULL
-            END,
-            (SELECT s.id FROM public.skills s WHERE lower(s.name) = lower(COALESCE(elem->>'skill_name', elem->>'name', '')) LIMIT 1)
-        ) IS NULL
-        OR (
-            elem ? 'proficiency'
-            AND lower(elem->>'proficiency') NOT IN ('beginner', 'intermediate', 'advanced', 'expert')
-        )
+        WHERE elem ? 'proficiency'
+          AND lower(elem->>'proficiency') NOT IN ('beginner', 'intermediate', 'advanced', 'expert')
         LIMIT 1;
 
         IF v_invalid_skill IS NOT NULL THEN
-            RAISE EXCEPTION 'Invalid or unresolvable skill: %', v_invalid_skill;
+            RAISE EXCEPTION 'Invalid skill proficiency: %', v_invalid_skill;
         END IF;
     END IF;
 

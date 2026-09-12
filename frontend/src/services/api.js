@@ -30,7 +30,6 @@ async function fetchJSON(endpoint, options = {}) {
   const base = getApiBase();
   const url = `${base}${endpoint}`;
   
-  // Attach Bearer token from localStorage if present
   const token = typeof window !== 'undefined' ? window.localStorage?.getItem('skillsetu_auth_token') : null;
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -46,7 +45,6 @@ async function fetchJSON(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
-  // If body is a plain JS object (not a string, not FormData/Blob), serialize it safely
   let finalBody = options.body;
   if (
     finalBody !== undefined &&
@@ -58,11 +56,27 @@ async function fetchJSON(endpoint, options = {}) {
     finalBody = JSON.stringify(finalBody);
   }
 
+  const controller = new AbortController();
+  let isTimedOut = false;
+  const timeoutId = setTimeout(() => {
+    isTimedOut = true;
+    controller.abort();
+  }, 25000);
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      controller.abort();
+    } else {
+      options.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
   try {
     const res = await fetch(url, {
       ...options,
       headers: mergedHeaders,
       body: finalBody,
+      signal: controller.signal,
     });
 
     if (!res.ok) {
@@ -80,7 +94,9 @@ async function fetchJSON(endpoint, options = {}) {
       if (errText && (errText.includes('<!DOCTYPE') || errText.includes('<html'))) {
         errMsg = `Backend API at "${base}" returned HTTP ${res.status} HTML. Verify VITE_API_URL or backend service status.`;
       }
-      throw new Error(errMsg);
+      const apiErr = new Error(errMsg);
+      apiErr.status = res.status;
+      throw apiErr;
     }
 
     const contentType = res.headers.get('content-type') || '';
@@ -100,8 +116,14 @@ async function fetchJSON(endpoint, options = {}) {
 
     return await res.json();
   } catch (err) {
-    console.warn(`[SkillSetu API] Failed to fetch from ${url}:`, err.message || err);
+    if (isTimedOut || (err && err.name === 'AbortError' && isTimedOut)) {
+      const timeoutErr = new Error('Request timed out after 25 seconds. Please check your network connection and backend availability.');
+      timeoutErr.isTimeout = true;
+      throw timeoutErr;
+    }
     throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

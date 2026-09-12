@@ -766,6 +766,7 @@ async def submit_student_assessment(
     if current_user:
         try:
             from app.repositories.supabase_repository import get_student_profile, upsert_student_profile
+            from app.routers.profile import resolve_taxonomy_skill_ids
             user_id = current_user.get("id")
             existing_prof = get_student_profile(user_id) or {}
             merged_skills = list(existing_prof.get("skills") or [])
@@ -786,6 +787,7 @@ async def submit_student_assessment(
                         "proficiency": sk.get("proficiency", "intermediate"),
                     })
             candidate_name = submission.name or existing_prof.get("name") or existing_prof.get("full_name") or current_user.get("full_name") or current_user.get("name")
+            resolved_skills = resolve_taxonomy_skill_ids(merged_skills)
             profile_sync_payload = {
                 "user_id": user_id,
                 "name": candidate_name,
@@ -797,7 +799,7 @@ async def submit_student_assessment(
                 "education_level": existing_prof.get("education_level") or "Undergraduate",
                 "institution": existing_prof.get("institution") or "Not Specified",
                 "career_interests": list(dict.fromkeys((existing_prof.get("career_interests") or []) + (submission.interests or []))),
-                "skills": merged_skills,
+                "skills": resolved_skills,
                 "skill_match_pct": assessment_record.get("skill_match_pct", existing_prof.get("skill_match_pct", 50)),
                 "source": "USER_SUBMITTED",
                 "is_demo": False,
@@ -807,7 +809,7 @@ async def submit_student_assessment(
                 profile_sync_payload["created_at"] = now_iso
             upsert_student_profile(profile_sync_payload)
         except Exception as e:
-            logger.warning("[StudentRouter] Profile sync error: %s", e)
+            logger.exception("[StudentRouter] Profile sync failed during assessment submission: %s", e)
 
     try:
         if "student_assessments" in _cache:
