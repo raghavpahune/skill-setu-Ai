@@ -121,8 +121,10 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
     forecast_results = []
 
     for sk in skills:
-        sid = sk["id"]
-        s_name = sk["name"]
+        sid = sk.get("id")
+        s_name = sk.get("name")
+        if not sid or not s_name:
+            continue
         s_name_lower = s_name.lower().strip()
         category = sk.get("category", "General")
         nsqf = sk.get("nsqf_level", 5)
@@ -308,7 +310,10 @@ def persist_computed_forecasts(forecasts: list[dict[str, Any]] | None = None) ->
                 "trend": trend_val,
                 "confidence": conf_val,
             }
-            saved = create_skill_forecast(record)
-            persisted.append(saved)
+            try:
+                saved = create_skill_forecast(record)
+                persisted.append(saved)
+            except Exception as e:
+                logger.warning("[ForecastEngine] Skipped skill forecast persistence for %s (%s): %s", sid, period, e)
 
     return persisted

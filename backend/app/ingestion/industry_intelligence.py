@@ -244,7 +244,11 @@ SAMPLE_VERIFIED_FEEDS = [
         "tools": ["Qdrant", "PostgreSQL pgvector", "Hugging Face", "Docker"],
         "source_url": "https://nasscom.in/research/genai-talent-index-2026",
         "source_name": "NASSCOM Strategic Review & FutureSkills Prime",
-        "source_type": SOURCE_TYPE_INDUSTRY_ANNOUNCEMENT,
+        "source_type": "DEMO_SYNTHETIC",
+        "source_label": "DEMO_SYNTHETIC",
+        "data_provenance": "DEMO_SYNTHETIC",
+        "validation_status": STATUS_APPROVED,
+        "is_demo": True,
         "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "external_id": "nasscom-genai-2026-q3",
     },
@@ -257,7 +261,11 @@ SAMPLE_VERIFIED_FEEDS = [
         "tools": ["Hardware-in-the-Loop Dyno", "Vector CANalyzer", "Thermal Imaging Scanners"],
         "source_url": "https://siam.in/reports/maharashtra-ev-workforce-2026",
         "source_name": "Society of Indian Automobile Manufacturers (SIAM)",
-        "source_type": SOURCE_TYPE_INDUSTRY_ANNOUNCEMENT,
+        "source_type": "DEMO_SYNTHETIC",
+        "source_label": "DEMO_SYNTHETIC",
+        "data_provenance": "DEMO_SYNTHETIC",
+        "validation_status": STATUS_APPROVED,
+        "is_demo": True,
         "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "external_id": "siam-ev-chakan-2026",
     },
@@ -270,7 +278,11 @@ SAMPLE_VERIFIED_FEEDS = [
         "tools": ["Siemens S7-1200", "Allen Bradley RSLogix", "Fanuc Robot Controller"],
         "source_url": "https://dvet.gov.in/notifications/iti-industry40-modernization",
         "source_name": "Directorate of Vocational Education & Training (DVET) Maharashtra",
-        "source_type": SOURCE_TYPE_OFFICIAL_GOV,
+        "source_type": "DEMO_SYNTHETIC",
+        "source_label": "DEMO_SYNTHETIC",
+        "data_provenance": "DEMO_SYNTHETIC",
+        "validation_status": STATUS_APPROVED,
+        "is_demo": True,
         "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "external_id": "dvet-circ-2026-108",
     },
@@ -283,7 +295,11 @@ SAMPLE_VERIFIED_FEEDS = [
         "tools": ["Kubernetes", "Prometheus", "Jaeger", "Terraform", "GitHub Actions"],
         "source_url": "https://cncf.io/reports/cloud-native-standards-2026",
         "source_name": "Cloud Native Computing Foundation (CNCF) & Linux Foundation",
-        "source_type": SOURCE_TYPE_TECH_DOCUMENTATION,
+        "source_type": "DEMO_SYNTHETIC",
+        "source_label": "DEMO_SYNTHETIC",
+        "data_provenance": "DEMO_SYNTHETIC",
+        "validation_status": STATUS_APPROVED,
+        "is_demo": True,
         "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "external_id": "cncf-landscape-2026",
     },
@@ -296,7 +312,11 @@ SAMPLE_VERIFIED_FEEDS = [
         "tools": ["Wireshark", "Splunk SIEM", "Suricata IDS", "Kali Linux"],
         "source_url": "https://msbte.org.in/curriculum/cybersecurity-elective-2026",
         "source_name": "Maharashtra State Board of Technical Education (MSBTE)",
-        "source_type": SOURCE_TYPE_OFFICIAL_GOV,
+        "source_type": "DEMO_SYNTHETIC",
+        "source_label": "DEMO_SYNTHETIC",
+        "data_provenance": "DEMO_SYNTHETIC",
+        "validation_status": STATUS_APPROVED,
+        "is_demo": True,
         "published_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "external_id": "msbte-curric-cyber-2026",
     },
@@ -341,7 +361,8 @@ class IndustryIntelligenceIngestor:
         pending = sum(1 for s in signals if s.get("validation_status") == STATUS_PENDING)
         rejected = sum(1 for s in signals if s.get("validation_status") == STATUS_REJECTED)
         active = sum(1 for s in signals if s.get("is_active") is True)
-        user_sub = sum(1 for s in signals if s.get("source") == "USER_SUBMITTED" or s.get("data_provenance") == "VERIFIED_EXTERNAL_FEED")
+        user_sub = sum(1 for s in signals if s.get("source") == "USER_SUBMITTED" or s.get("data_provenance") == "USER_SUBMITTED")
+        verified_ext = sum(1 for s in signals if s.get("data_provenance") == "VERIFIED_EXTERNAL_FEED" and not s.get("is_demo") and s.get("source_label") != "DEMO_SYNTHETIC")
         demo_count = sum(1 for s in signals if s.get("is_demo") is True or s.get("source_label") == "DEMO_SYNTHETIC")
 
         return {
@@ -351,15 +372,25 @@ class IndustryIntelligenceIngestor:
             "pending_count": pending,
             "rejected_count": rejected,
             "active_count": active,
-            "verified_ingested_count": user_sub,
+            "verified_ingested_count": verified_ext,
+            "user_submitted_count": user_sub,
             "demo_synthetic_count": demo_count,
             "registered_sources_count": len(self.sources),
             "sources": self.sources,
             "last_ingestion": self._last_ingest_summary,
         }
 
-    def validate_and_normalize(self, raw_data: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-        """Validate raw incoming payload against IndustrySignal specification."""
+    def validate_and_normalize(self, raw_data: dict[str, Any], is_demo: bool | None = None) -> tuple[dict[str, Any] | None, str | None]:
+        if is_demo is False:
+            is_demo_rec = bool(
+                raw_data.get("is_demo")
+                or raw_data.get("source_label") == "DEMO_SYNTHETIC"
+                or raw_data.get("source_type") == "DEMO_SYNTHETIC"
+                or raw_data.get("data_provenance") == "DEMO_SYNTHETIC"
+            )
+            if is_demo_rec:
+                return None, "Synthetic demo records cannot be ingested in real mode"
+
         try:
             submission = IndustrySignalSubmission(**raw_data)
         except Exception as e:
@@ -369,7 +400,11 @@ class IndustryIntelligenceIngestor:
         published_at = submission.published_at or datetime.datetime.now(datetime.timezone.utc).isoformat()
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        freshness = calculate_freshness(published_at, submission.is_active, submission.validation_status)
+        is_demo = bool(raw_data.get("is_demo") or raw_data.get("source_label") == "DEMO_SYNTHETIC" or raw_data.get("source_type") == "DEMO_SYNTHETIC" or raw_data.get("data_provenance") == "DEMO_SYNTHETIC")
+        data_provenance = str(raw_data.get("data_provenance") or ("DEMO_SYNTHETIC" if is_demo else "UNVERIFIED_EXTERNAL_SOURCE"))
+        val_status = str(raw_data.get("validation_status") or submission.validation_status)
+
+        freshness = calculate_freshness(published_at, submission.is_active, val_status)
 
         normalized_record: dict[str, Any] = {
             "id": sig_id,
@@ -385,15 +420,14 @@ class IndustryIntelligenceIngestor:
             "published_at": published_at,
             "collected_at": raw_data.get("collected_at") or now_iso,
             "updated_at": now_iso,
-            "validation_status": submission.validation_status,
+            "validation_status": val_status,
             "is_active": submission.is_active,
-            "is_demo": False,
-            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "is_demo": is_demo,
+            "data_provenance": data_provenance,
             "freshness": freshness,
             "signature": generate_signal_signature(submission.title, submission.source_url, submission.source_name),
             "is_ai_processed": False,
             "ai_metadata": None,
-            # Backward compatibility fields
             "technology": submission.industry,
             "summary": submission.description,
             "impact_level": "high",
@@ -415,23 +449,68 @@ class IndustryIntelligenceIngestor:
 
         return normalized_record, None
 
-    def ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        """Execute automated batch ingestion with strict validation, deduplication, and persistence."""
+    def ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None, is_demo: bool | None = None) -> dict[str, Any]:
         from app.db import (
             get_demo,
             save_industry_signal,
             update_industry_signal,
             save_sync_log,
         )
+        from app.core.data_mode import is_explicit_demo_mode
 
-        feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if is_demo is None:
+            is_demo = is_explicit_demo_mode()
+        if is_demo is False and feeds is None:
+            feed_data = []
+        else:
+            feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
+
+        if not feed_data:
+            summary = {
+                "status": "NO_DATA",
+                "last_run": now_iso,
+                "records_fetched": 0,
+                "records_added": 0,
+                "records_updated": 0,
+                "records_duplicated": 0,
+                "records_rejected": 0,
+                "errors": [],
+            }
+            self._last_ingest_summary = summary
+            save_sync_log({
+                "id": str(uuid.uuid4()),
+                "source_name": "industry_signals",
+                "job_type": "automated_industry_signal_ingestion",
+                "status": "NO_DATA",
+                "records_fetched": 0,
+                "records_added": 0,
+                "records_updated": 0,
+                "records_skipped": 0,
+                "error_message": None,
+                "started_at": now_iso,
+                "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "duration_ms": 0,
+                "is_demo": False if is_demo is False else True,
+                "sources_detail": {
+                    "industry_signals": {
+                        "status": "NO_DATA",
+                        "error": None,
+                        "records_fetched": 0,
+                        "records_added": 0,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                    }
+                },
+            })
+            return summary
+
         try:
             from app.repositories.supabase_repository import list_industry_signals as list_industry_signals_repo
             existing_signals = list_industry_signals_repo()
         except Exception:
-            existing_signals = []  # ponytail: dedup from empty baseline if Supabase down
+            existing_signals = []
 
-        # Map existing signatures and IDs
         existing_signatures = {
             s.get("signature") or generate_signal_signature(s.get("title", ""), s.get("source_url", ""), s.get("source_name", s.get("source", ""))): s
             for s in existing_signals
@@ -444,10 +523,8 @@ class IndustryIntelligenceIngestor:
         rejected = 0
         errors = []
 
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
         for raw_item in feed_data:
-            normalized, err = self.validate_and_normalize(raw_item)
+            normalized, err = self.validate_and_normalize(raw_item, is_demo=is_demo)
             if err:
                 rejected += 1
                 errors.append(f"Rejected item '{raw_item.get('title', 'Unknown')}': {err}")
@@ -458,9 +535,7 @@ class IndustryIntelligenceIngestor:
 
             if sig in existing_signatures or record_id in existing_ids:
                 matched = existing_signatures.get(sig) or existing_ids.get(record_id)
-                # Check if meaningful update is needed
                 if matched:
-                    # Update fields while preserving original creation timestamp
                     matched.update({
                         "description": normalized["description"],
                         "skills": normalized["skills"],
@@ -491,10 +566,9 @@ class IndustryIntelligenceIngestor:
 
         self._last_ingest_summary = summary
 
-        # Log to sync_logs
         save_sync_log({
-            "id": f"sync-ind-{uuid.uuid4().hex[:8]}",
-            "source_name": "industry_intelligence_feed",
+            "id": str(uuid.uuid4()),
+            "source_name": "industry_signals",
             "job_type": "automated_industry_signal_ingestion",
             "status": summary["status"],
             "records_fetched": summary["records_fetched"],
@@ -505,10 +579,20 @@ class IndustryIntelligenceIngestor:
             "started_at": now_iso,
             "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "duration_ms": 15,
+            "is_demo": False if is_demo is False else True,
+            "sources_detail": {
+                "industry_signals": {
+                    "status": "SUCCESS" if summary["status"] == "success" else "PARTIAL",
+                    "error": "; ".join(errors) if errors else None,
+                    "records_fetched": summary["records_fetched"],
+                    "records_added": added,
+                    "records_updated": updated,
+                    "records_skipped": duplicated,
+                }
+            },
         })
 
         return summary
 
 
-# Global Singleton Instance
 industry_ingestor = IndustryIntelligenceIngestor()

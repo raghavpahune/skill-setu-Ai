@@ -147,8 +147,20 @@ def test_list_student_assessments_with_source_filter():
 
 
 def test_get_student_assessment_by_id():
-    """GET /api/student/assessment/{id} retrieves specific record or 404."""
-    # Submit a record
+    from app.core.security import create_access_token
+    from app.db import save_user
+
+    user_id = "usr-p12-test-std"
+    save_user({
+        "id": user_id,
+        "email": "tanmay@test.gov.in",
+        "role": "STUDENT",
+        "full_name": "Tanmay Joshi",
+        "is_active": True,
+    })
+    token = create_access_token({"sub": user_id, "role": "STUDENT", "email": "tanmay@test.gov.in"})
+    headers = {"Authorization": f"Bearer {token}"}
+
     sub_res = client.post("/api/student/assessment", json={
         "name": "Tanmay Joshi",
         "education": "B.Sc Computer Science",
@@ -156,16 +168,16 @@ def test_get_student_assessment_by_id():
         "interests": ["Web Development"],
         "current_skills": [{"skill_name": "React", "proficiency": "intermediate"}],
         "quiz_answers": {"q1": "b"},
-    })
+    }, headers=headers)
     ast_id = sub_res.json()["assessment"]["id"]
 
-    # Fetch by ID
-    get_res = client.get(f"/api/student/assessment/{ast_id}")
+    assert client.get(f"/api/student/assessment/{ast_id}").status_code == 401
+
+    get_res = client.get(f"/api/student/assessment/{ast_id}", headers=headers)
     assert get_res.status_code == 200
     data = get_res.json()
     assert data["assessment"]["id"] == ast_id
     assert data["assessment"]["name"] == "Tanmay Joshi"
 
-    # Non-existent ID returns 404
     bad_res = client.get("/api/student/assessment/ast-nonexistent-999")
     assert bad_res.status_code == 404

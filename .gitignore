@@ -39,3 +39,4 @@ data/real/users_runtime.json
 
 # Scratch scripts
 scratch/
+.ruff_cache/

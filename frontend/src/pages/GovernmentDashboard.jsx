@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Component } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Component } from 'react';
 import { Link } from 'react-router-dom';
 import {
   BarChart,
@@ -367,16 +367,20 @@ export default function GovernmentDashboard() {
 
       if (gapsRes.status === 'fulfilled') {
         const gapsArr = extractArray(gapsRes.value, ['gaps', 'items', 'data']);
-        const normalizedGaps = gapsArr.map((g, idx) => ({
-          skill_id: g.skill_id || `gap-${idx}`,
-          skill_name: g.skill_name || g.name || 'Technical Competency',
-          category: g.category || 'Engineering & Technology',
-          demand_pct: typeof g.demand_pct === 'number' ? g.demand_pct : (g.demand || 50),
-          coverage_pct: typeof g.coverage_pct === 'number' ? g.coverage_pct : (g.coverage || 30),
-          gap_pct: typeof g.gap_pct === 'number' ? g.gap_pct : Math.max(0, (g.demand_pct || 50) - (g.coverage_pct || 30)),
-          priority: (g.priority || 'HIGH').toUpperCase(),
-          demand_count: g.demand_count || g.count || 20,
-        }));
+        const normalizedGaps = gapsArr.map((g, idx) => {
+          const dPct = typeof g.demand_pct === 'number' ? g.demand_pct : (typeof g.demand === 'number' ? g.demand : 0);
+          const cPct = typeof g.coverage_pct === 'number' ? g.coverage_pct : (typeof g.coverage === 'number' ? g.coverage : 0);
+          return {
+            skill_id: g.skill_id || `gap-${idx}`,
+            skill_name: g.skill_name || g.name || 'Technical Competency',
+            category: g.category || 'Engineering & Technology',
+            demand_pct: dPct,
+            coverage_pct: cPct,
+            gap_pct: typeof g.gap_pct === 'number' ? g.gap_pct : Math.max(0, dPct - cPct),
+            priority: (g.priority || 'HIGH').toUpperCase(),
+            demand_count: typeof g.demand_count === 'number' ? g.demand_count : (typeof g.count === 'number' ? g.count : 0),
+          };
+        });
         setGaps(normalizedGaps);
       } else if (gapsRes.status === 'rejected') {
         setErrors((prev) => ({ ...prev, gaps: true }));
@@ -386,11 +390,11 @@ export default function GovernmentDashboard() {
         const sigArr = extractArray(sigRes.value, ['signals', 'data', 'items']);
         const normalizedSignals = sigArr.map((s, idx) => ({
           id: s.id || `sig-${idx}`,
-          title: s.title || 'Industrial Market Telemetry',
-          source: s.source || s.source_name || 'State Industry Monitoring',
+          title: s.title || 'Market Signal',
+          source: s.source || s.source_name || 'Market Signal Pipeline',
           signal_date: s.signal_date || s.collected_at || s.published_at || 'Recent',
           impact_level: (s.impact_level || 'medium').toLowerCase(),
-          summary: s.summary || s.description || 'Verified industrial development and talent requirement signal.',
+          summary: s.summary || s.description || '',
           affected_skills: Array.isArray(s.affected_skills) ? s.affected_skills : (s.skills || []),
         }));
         setSignals(normalizedSignals.slice(0, 4));
@@ -406,7 +410,7 @@ export default function GovernmentDashboard() {
           period: f.period || '12M',
           future_demand: (f.future_demand || 'high_growth').replace('_', ' '),
           trend: (f.trend || 'rising').toLowerCase(),
-          confidence: typeof f.confidence === 'number' ? f.confidence : 85,
+          confidence: typeof f.confidence === 'number' ? f.confidence : (typeof f.confidence_pct === 'number' ? f.confidence_pct : 0),
         }));
         setForecasts(normalizedForecasts.slice(0, 6));
       } else if (fcRes.status === 'rejected') {
@@ -417,11 +421,11 @@ export default function GovernmentDashboard() {
         const recArr = extractArray(recRes.value, ['recommendations', 'data', 'items']);
         const normalizedRecs = recArr.map((r, idx) => ({
           id: r.id || `rec-${idx}`,
-          recommendation: r.recommendation || r.title || 'Curriculum Modernization Directive',
-          reason: r.reason || r.description || 'Formulated based on verified employer vacancy telemetry.',
+          recommendation: r.recommendation || r.title || 'Curriculum Recommendation',
+          reason: r.reason || r.description || '',
           priority: r.priority || 'High',
-          confidence: typeof r.confidence === 'number' ? r.confidence : 90,
-          gap_pct: typeof r.gap_pct === 'number' ? r.gap_pct : 35,
+          confidence: typeof r.confidence === 'number' ? r.confidence : 0,
+          gap_pct: typeof r.gap_pct === 'number' ? r.gap_pct : 0,
           future_demand: r.future_demand || 'Rising',
           trend: r.trend || 'rising',
           related_signals: Array.isArray(r.related_signals) ? r.related_signals : (r.signals || []),
@@ -461,11 +465,32 @@ export default function GovernmentDashboard() {
 
   const avgDeficit = Array.isArray(gaps) && gaps.length > 0
     ? `${Math.round(gaps.reduce((acc, g) => acc + (Number(g.gap_pct) || 0), 0) / gaps.length)}%`
-    : '0%';
+    : 'No Data';
 
   const actionsCount = Array.isArray(recommendations) && recommendations.length > 0
     ? `${recommendations.length} Actions`
     : '0 Actions';
+
+  const topEmerging = useMemo(() => {
+    if (Array.isArray(forecasts) && forecasts.length > 0) {
+      const top = forecasts[0];
+      return {
+        value: top.skill_name || 'AI & EV',
+        subtitle: `↑ ${top.future_demand || 'Rising'} ${top.period || '24M'} projection`,
+      };
+    }
+    if (Array.isArray(signals) && signals.length > 0) {
+      const topSig = signals[0];
+      return {
+        value: topSig.title ? (topSig.title.length > 20 ? `${topSig.title.slice(0, 18)}…` : topSig.title) : 'Active Signal',
+        subtitle: topSig.source || 'Industry Signal',
+      };
+    }
+    return {
+      value: 'No Data',
+      subtitle: 'No authoritative projections available',
+    };
+  }, [forecasts, signals]);
 
   const userRole = (role || user?.role || '').toUpperCase();
   const canPublish = userRole === 'GOVERNMENT' || userRole === 'ADMIN';
@@ -484,7 +509,7 @@ export default function GovernmentDashboard() {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1">
-            Real-time telemetry bridging employer vacancies, district training capacity, and curriculum modernization across Maharashtra
+            Labour market intelligence connecting employer vacancies, district training capacity, and curriculum modernization across Maharashtra
           </p>
         </div>
 
@@ -593,8 +618,8 @@ export default function GovernmentDashboard() {
               {/* Supporting Metric 4 */}
               <StatCard
                 title="Top Emerging Field"
-                value="AI & EV"
-                subtitle="↑ 82% 24M projected growth"
+                value={topEmerging.value}
+                subtitle={topEmerging.subtitle}
                 icon="🚀"
                 color="teal"
               />
@@ -623,14 +648,14 @@ export default function GovernmentDashboard() {
                 title="Statewide Employer Skill Demand"
                 subtitle="Aggregated frequency of technical proficiencies parsed from active Maharashtra job listings."
                 decisionNote="Guides state vocational seat intake expansion for high-growth sectors."
-                badge="Live NCO-2015"
+                badge="Active Job Postings"
               />
 
               {loading ? (
                 <SkeletonChart />
               ) : errors.demand ? (
                 <ErrorState
-                  title="Failed to Load Skill Demand Telemetry"
+                  title="Failed to Load Skill Demand Analytics"
                   message="The job demand analytics service did not respond."
                   onRetry={fetchData}
                 />
@@ -677,8 +702,8 @@ export default function GovernmentDashboard() {
                 </div>
               ) : (
                 <EmptyState
-                  title="No In-Demand Skills Recorded"
-                  message="No active skill frequency data was returned by the demand sensing pipeline."
+                  title="No Authoritative Demand Data Available"
+                  message="Statewide employer skill demand requires active job listings. No vacancies are currently indexed."
                 />
               )}
             </div>
@@ -699,7 +724,7 @@ export default function GovernmentDashboard() {
                 <SkeletonGaps />
               ) : errors.gaps ? (
                 <ErrorState
-                  title="Failed to Load Skill Gap Telemetry"
+                  title="Failed to Load Skill Gap Analytics"
                   message="The curriculum gap engine is currently unavailable."
                   onRetry={fetchData}
                 />
@@ -720,8 +745,8 @@ export default function GovernmentDashboard() {
                 </div>
               ) : (
                 <EmptyState
-                  title="No Deficits Detected"
-                  message="All evaluated trades meet baseline curriculum coverage for current employer demand."
+                  title="No Authoritative Deficits Detected"
+                  message="No active employer-linked skill deficit records available. Ingest real labour-market data to compute statewide deficits."
                 />
               )}
             </div>
@@ -774,7 +799,7 @@ export default function GovernmentDashboard() {
                 </div>
               ) : errors.forecasts ? (
                 <ErrorState
-                  title="Failed to Load Forecast Telemetry"
+                  title="Failed to Load Forecast Analytics"
                   message="The predictive horizon forecasting model did not return data."
                   onRetry={fetchData}
                 />
@@ -834,8 +859,8 @@ export default function GovernmentDashboard() {
                 </div>
               ) : (
                 <EmptyState
-                  title="No Forecasting Projections"
-                  message="Predictive horizon models have not published active forecasts for this timeframe."
+                  title="No Authoritative Forecasts Available"
+                  message="Predictive horizon models require live employer demand and market intelligence."
                 />
               )}
             </div>
@@ -848,7 +873,7 @@ export default function GovernmentDashboard() {
                 title="Macro-Industrial & Policy Signals"
                 subtitle="Verified plant investments, technological transitions, and policy developments."
                 decisionNote="Provides qualitative ground-truth to validate quantitative statistical models."
-                badge="Automated Telemetry"
+                badge="Market Signals"
               />
 
               {loading ? (

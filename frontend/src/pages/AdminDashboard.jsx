@@ -894,7 +894,7 @@ export default function AdminDashboard() {
                       Data Governance & Hybrid Provenance Architecture
                     </h3>
                     <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                      Live Telemetry Active
+                      Governance Active
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
@@ -953,7 +953,7 @@ export default function AdminDashboard() {
                     Recent Candidate Submissions & Diagnostic Results
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    Latest telemetry received across all Maharashtra districts
+                    Latest submissions received across all Maharashtra districts
                   </p>
                 </div>
                 <button
@@ -1237,7 +1237,7 @@ export default function AdminDashboard() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
               <div>
                 <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                  Assessment Registry & Telemetry
+                  Assessment Registry & Submissions
                 </h2>
                 <p className="text-xs text-slate-500">
                   Filtering {assessments.length} matching candidate assessment records
@@ -1369,7 +1369,7 @@ export default function AdminDashboard() {
                   {loading && (
                     <tr>
                       <td colSpan="8" className="py-12 text-center text-slate-400 font-mono">
-                        Loading assessment registry telemetry...
+                        Loading assessment registry data...
                       </td>
                     </tr>
                   )}
@@ -2656,7 +2656,7 @@ export default function AdminDashboard() {
               <div className="mb-6 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-700">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-800 dark:text-slate-200">Ingestion Telemetry Status:</span>
+                    <span className="font-bold text-slate-800 dark:text-slate-200">Ingestion Status:</span>
                     <span className="font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold uppercase text-[10px]">
                       {ingestionStatus.last_ingestion.status}
                     </span>

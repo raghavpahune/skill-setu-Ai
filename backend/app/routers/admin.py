@@ -780,7 +780,8 @@ class IndustrySignalAdminUpdate(BaseModel):
 @router.post("/admin/industry/ingest", dependencies=[Depends(verify_admin_key)])
 async def trigger_admin_industry_ingestion(feeds: list[dict[str, Any]] | None = None):
     """Admin endpoint to manually trigger automated ingestion across trusted industry feeds."""
-    result = industry_ingestor.ingest_from_feeds(feeds)
+    from app.core.data_mode import is_explicit_demo_mode
+    result = industry_ingestor.ingest_from_feeds(feeds, is_demo=is_explicit_demo_mode())
     return {
         "status": "success",
         "message": f"Industry ingestion run finished: {result['records_added']} added, {result['records_updated']} updated, {result['records_duplicated']} duplicated, {result['records_rejected']} rejected.",
@@ -845,7 +846,7 @@ async def list_admin_industry_signals(
             "validation_status": val_st,
             "is_active": is_act,
             "is_demo": s.get("is_demo", s.get("source_label") == "DEMO_SYNTHETIC"),
-            "data_provenance": s.get("data_provenance") or ("DEMO_SYNTHETIC" if s.get("source_label") == "DEMO_SYNTHETIC" else "VERIFIED_EXTERNAL_FEED"),
+            "data_provenance": s.get("data_provenance") or ("DEMO_SYNTHETIC" if s.get("source_label") == "DEMO_SYNTHETIC" else "UNVERIFIED_EXTERNAL_SOURCE"),
             "freshness": fresh,
             "admin_notes": s.get("admin_notes"),
             "is_ai_processed": s.get("is_ai_processed", False),

@@ -160,6 +160,8 @@ export default function Layout({ children }) {
           col3Title: 'Workforce Intelligence',
           col3Links: [
             { path: '/student/copilot?role=employee', label: 'Skill Intelligence' },
+            { path: '/employee/profile', label: 'Industry & Technology Alerts' },
+            { path: '/student/copilot?role=employee&q=What+is+the+12-to-24+month+skill+forecast+for+emerging+roles+in+Maharashtra%3F', label: 'Future Skill Forecasts' },
           ],
         };
       case 'EMPLOYER':
@@ -283,7 +285,7 @@ export default function Layout({ children }) {
               </div>
               <div>
                 <span className="font-bold text-lg tracking-tight text-slate-900 dark:text-white flex items-center gap-1.5">
-                  SkillSetu
+                  SkillSetuAI
                   <span className="text-[10px] uppercase px-1.5 py-0.5 bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-400 font-semibold rounded border border-teal-200 dark:border-teal-800">
                     Maha-Intel
                   </span>
@@ -457,7 +459,7 @@ export default function Layout({ children }) {
                   S
                 </div>
                 <span className="font-bold text-sm text-slate-900 dark:text-white">
-                  SkillSetu Maha-Intel
+                  SkillSetuAI Maha-Intel
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
@@ -525,7 +527,7 @@ export default function Layout({ children }) {
           {/* Bottom Bar */}
           <div className="pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] text-slate-400 dark:text-slate-500">
             <div>
-              © {new Date().getFullYear()} SkillSetu. Continuous evidence-based feedback loop: Labour Market → Gaps → Curriculum → Validation.
+              © {new Date().getFullYear()} SkillSetuAI. Continuous evidence-based feedback loop: Labour Market → Gaps → Curriculum → Validation.
             </div>
             <div className="flex items-center gap-4">
               <span>District Micro-Plans</span>

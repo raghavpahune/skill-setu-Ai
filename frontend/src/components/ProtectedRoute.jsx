@@ -13,7 +13,7 @@ export default function ProtectedRoute({ allowedRoles, children }) {
         <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center">
           <div className="w-12 h-12 rounded-full border-4 border-teal-500/20 border-t-teal-600 animate-spin mb-4"></div>
           <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            Verifying SkillSetu security credentials...
+            Verifying SkillSetuAI security credentials...
           </p>
         </div>
       </Layout>

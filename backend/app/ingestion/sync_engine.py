@@ -66,6 +66,7 @@ class SyncEngine:
             "started_at": started_at,
             "completed_at": None,
             "duration_ms": 0,
+            "is_demo": is_explicit_demo_mode(),
         }
         save_sync_log(log_entry)
 
@@ -93,88 +94,222 @@ class SyncEngine:
 
             source_errors = []
             source_successes = []
+            sources_detail: dict[str, Any] = {}
 
             if src_norm in ("all", "data.gov.in", "schemes", "ogd"):
                 try:
                     logger.info("[SyncEngine] Ingesting government datasets from data.gov.in...")
-                    raw_sch = self.datagov_connector.fetch_resource(RESOURCE_SCHOLARSHIP_ALLOCATION)
-                    sch_records = raw_sch.get("records", [])
-                    total_fetched += len(sch_records)
-                    transformed_schemes = self.datagov_connector.transform_scholarship_schemes(sch_records)
-                    total_skipped += max(0, len(sch_records) - len(transformed_schemes))
+                    dg_fetched = 0
+                    dg_added = 0
+                    dg_updated = 0
+                    dg_skipped = 0
+                    dg_errors = []
 
-                    raw_cts = self.datagov_connector.fetch_resource(RESOURCE_ITI_CRAFTSMEN)
-                    cts_records = raw_cts.get("records", [])
-                    total_fetched += len(cts_records)
-                    cts_schemes = self.datagov_connector.transform_cts_schemes(cts_records)
-                    total_skipped += max(0, len(cts_records) - len(cts_schemes))
-                    transformed_schemes.extend(cts_schemes)
+                    res_list = [
+                        (RESOURCE_SCHOLARSHIP_ALLOCATION, "scholarship"),
+                        (RESOURCE_ITI_CRAFTSMEN, "cts"),
+                        (RESOURCE_NAPS_APPRENTICESHIP, "naps"),
+                        (RESOURCE_PMKVY_SKILL, "pmkvy"),
+                    ]
+                    all_transformed_schemes = []
+                    all_transformed_opps = []
 
-                    added_s, updated_s = self._upsert_schemes(transformed_schemes)
-                    total_added += added_s
-                    total_updated += updated_s
+                    for r_id, r_type in res_list:
+                        raw_res = self.datagov_connector.fetch_resource(r_id)
+                        res_status = raw_res.get("status")
+                        if res_status in ("NOT_CONFIGURED", "FAILED"):
+                            dg_errors.append(f"{r_id}: {raw_res.get('error')}")
+                            continue
+                        recs = raw_res.get("records", [])
+                        dg_fetched += len(recs)
+                        if r_type in ("scholarship", "cts"):
+                            if r_type == "scholarship":
+                                trans = self.datagov_connector.transform_scholarship_schemes(recs)
+                            else:
+                                trans = self.datagov_connector.transform_cts_schemes(recs)
+                            dg_skipped += max(0, len(recs) - len(trans))
+                            all_transformed_schemes.extend(trans)
+                        else:
+                            if r_type == "naps":
+                                trans = self.datagov_connector.transform_naps_opportunities(recs)
+                            else:
+                                trans = self.datagov_connector.transform_pmkvy_opportunities(recs)
+                            dg_skipped += max(0, len(recs) - len(trans))
+                            all_transformed_opps.extend(trans)
 
-                    raw_naps = self.datagov_connector.fetch_resource(RESOURCE_NAPS_APPRENTICESHIP)
-                    naps_records = raw_naps.get("records", [])
-                    total_fetched += len(naps_records)
-                    transformed_opps = self.datagov_connector.transform_naps_opportunities(naps_records)
-                    total_skipped += max(0, len(naps_records) - len(transformed_opps))
+                    if all_transformed_schemes:
+                        added_s, updated_s = self._upsert_schemes(all_transformed_schemes)
+                        dg_added += added_s
+                        dg_updated += updated_s
 
-                    raw_pmkvy = self.datagov_connector.fetch_resource(RESOURCE_PMKVY_SKILL)
-                    pmkvy_records = raw_pmkvy.get("records", [])
-                    total_fetched += len(pmkvy_records)
-                    pmkvy_opps = self.datagov_connector.transform_pmkvy_opportunities(pmkvy_records)
-                    total_skipped += max(0, len(pmkvy_records) - len(pmkvy_opps))
-                    transformed_opps.extend(pmkvy_opps)
+                    if all_transformed_opps:
+                        added_o, updated_o = self._upsert_jobs(all_transformed_opps)
+                        dg_added += added_o
+                        dg_updated += updated_o
 
-                    added_o, updated_o = self._upsert_jobs(transformed_opps)
-                    total_added += added_o
-                    total_updated += updated_o
-                    source_successes.append("data.gov.in")
+                    total_fetched += dg_fetched
+                    total_added += dg_added
+                    total_updated += dg_updated
+                    total_skipped += dg_skipped
+
+                    if not self.datagov_connector.has_api_key and not is_explicit_demo_mode():
+                        dg_status = "NOT_CONFIGURED"
+                        err_text = "DATA_GOV_API_KEY is not configured in production environment."
+                        source_errors.append(f"data.gov.in: {dg_status} - {err_text}")
+                    elif dg_errors:
+                        dg_status = "FAILED" if dg_fetched == 0 else "PARTIAL"
+                        err_text = "; ".join(dg_errors)
+                        source_errors.append(f"data.gov.in: {dg_status} - {err_text}")
+                    elif dg_fetched == 0:
+                        dg_status = "NO_DATA"
+                        source_successes.append("data.gov.in")
+                        err_text = None
+                    else:
+                        dg_status = "SUCCESS"
+                        source_successes.append("data.gov.in")
+                        err_text = None
+
+                    sources_detail["data.gov.in"] = {
+                        "status": dg_status,
+                        "error": err_text,
+                        "records_fetched": dg_fetched,
+                        "records_added": dg_added,
+                        "records_updated": dg_updated,
+                        "records_skipped": dg_skipped,
+                    }
                 except Exception as err:
                     logger.warning("[SyncEngine] Datagov ingestion failed: %s", err)
-                    source_errors.append(f"data.gov.in: {err}")
+                    source_errors.append(f"data.gov.in: FAILED - {err}")
+                    sources_detail["data.gov.in"] = {
+                        "status": "FAILED",
+                        "error": str(err),
+                        "records_fetched": 0,
+                        "records_added": 0,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                    }
 
             if src_norm in ("all", "adzuna", "jobs"):
                 try:
                     logger.info("[SyncEngine] Ingesting live job vacancies from Adzuna India...")
                     adzuna_raw = self.adzuna_connector.fetch_raw(page=1, results_per_page=25, where="Maharashtra")
-                    total_fetched += len(adzuna_raw)
+                    adz_fetched = len(adzuna_raw)
+                    adz_added = 0
+                    adz_updated = 0
+                    adz_skipped = 0
 
-                    adzuna_jobs = self.adzuna_connector.validate_and_transform(adzuna_raw)
-                    total_skipped += max(0, len(adzuna_raw) - len(adzuna_jobs))
-                    added_j, updated_j = self._upsert_jobs(adzuna_jobs)
-                    total_added += added_j
-                    total_updated += updated_j
+                    if adzuna_raw:
+                        adzuna_jobs = self.adzuna_connector.validate_and_transform(adzuna_raw)
+                        adz_skipped = max(0, adz_fetched - len(adzuna_jobs))
+                        added_j, updated_j = self._upsert_jobs(adzuna_jobs)
+                        adz_added += added_j
+                        adz_updated += updated_j
+                        self._upsert_job_skills(adzuna_jobs)
 
-                    self._upsert_job_skills(adzuna_jobs)
-                    source_successes.append("adzuna")
+                    total_fetched += adz_fetched
+                    total_added += adz_added
+                    total_updated += adz_updated
+                    total_skipped += adz_skipped
+
+                    adz_status = self.adzuna_connector.last_status
+                    adz_err = self.adzuna_connector.last_error
+
+                    if adz_status in ("NOT_CONFIGURED", "FAILED"):
+                        source_errors.append(f"adzuna: {adz_status} - {adz_err}")
+                    else:
+                        source_successes.append("adzuna")
+
+                    sources_detail["adzuna"] = {
+                        "status": adz_status,
+                        "error": adz_err,
+                        "records_fetched": adz_fetched,
+                        "records_added": adz_added,
+                        "records_updated": adz_updated,
+                        "records_skipped": adz_skipped,
+                    }
                 except Exception as err:
                     logger.warning("[SyncEngine] Adzuna ingestion failed: %s", err)
-                    source_errors.append(f"adzuna: {err}")
+                    source_errors.append(f"adzuna: FAILED - {err}")
+                    sources_detail["adzuna"] = {
+                        "status": "FAILED",
+                        "error": str(err),
+                        "records_fetched": 0,
+                        "records_added": 0,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                    }
 
             if src_norm in ("all", "industry_signals", "industry"):
                 try:
                     from app.ingestion.industry_intelligence import industry_ingestor
-                    ind_res = industry_ingestor.ingest_from_feeds()
-                    total_fetched += ind_res.get("fetched", 0)
-                    total_added += ind_res.get("added", 0)
-                    total_updated += ind_res.get("updated", 0)
-                    total_skipped += ind_res.get("skipped", 0)
+                    ind_res = industry_ingestor.ingest_from_feeds(is_demo=is_explicit_demo_mode())
+                    ind_fetched = ind_res.get("records_fetched", ind_res.get("fetched", 0))
+                    ind_added = ind_res.get("records_added", ind_res.get("added", 0))
+                    ind_updated = ind_res.get("records_updated", ind_res.get("updated", 0))
+                    ind_skipped = ind_res.get("records_duplicated", ind_res.get("skipped", 0))
+                    total_fetched += ind_fetched
+                    total_added += ind_added
+                    total_updated += ind_updated
+                    total_skipped += ind_skipped
                     source_successes.append("industry_signals")
+                    sources_detail["industry_signals"] = {
+                        "status": "SUCCESS" if ind_fetched else "NO_DATA",
+                        "error": None,
+                        "records_fetched": ind_fetched,
+                        "records_added": ind_added,
+                        "records_updated": ind_updated,
+                        "records_skipped": ind_skipped,
+                    }
                 except Exception as err:
                     logger.warning("[SyncEngine] Industry signals ingestion failed: %s", err)
-                    source_errors.append(f"industry_signals: {err}")
+                    source_errors.append(f"industry_signals: FAILED - {err}")
+                    sources_detail["industry_signals"] = {
+                        "status": "FAILED",
+                        "error": str(err),
+                        "records_fetched": 0,
+                        "records_added": 0,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                    }
 
             if src_norm in ("all", "skill_forecasts", "forecasts", "forecast"):
-                try:
-                    from app.services.forecast_engine import persist_computed_forecasts
-                    fc_res = persist_computed_forecasts()
-                    total_added += len(fc_res)
-                    source_successes.append("skill_forecasts")
-                except Exception as err:
-                    logger.warning("[SyncEngine] Forecasts persistence failed: %s", err)
-                    source_errors.append(f"skill_forecasts: {err}")
+                if not is_supabase_connected() and not is_explicit_demo_mode():
+                    err_text = "Supabase client is not configured or unavailable in production environment."
+                    source_errors.append(f"skill_forecasts: NOT_CONFIGURED - {err_text}")
+                    sources_detail["skill_forecasts"] = {
+                        "status": "NOT_CONFIGURED",
+                        "error": err_text,
+                        "records_fetched": 0,
+                        "records_added": 0,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                    }
+                else:
+                    try:
+                        from app.services.forecast_engine import persist_computed_forecasts
+                        fc_res = persist_computed_forecasts()
+                        fc_count = len(fc_res)
+                        total_added += fc_count
+                        source_successes.append("skill_forecasts")
+                        sources_detail["skill_forecasts"] = {
+                            "status": "SUCCESS" if fc_count else "NO_DATA",
+                            "error": None,
+                            "records_fetched": fc_count,
+                            "records_added": fc_count,
+                            "records_updated": 0,
+                            "records_skipped": 0,
+                        }
+                    except Exception as err:
+                        logger.warning("[SyncEngine] Forecasts persistence failed: %s", err)
+                        source_errors.append(f"skill_forecasts: FAILED - {err}")
+                        sources_detail["skill_forecasts"] = {
+                            "status": "FAILED",
+                            "error": str(err),
+                            "records_fetched": 0,
+                            "records_added": 0,
+                            "records_updated": 0,
+                            "records_skipped": 0,
+                        }
 
             duration_ms = int((time.perf_counter() - start_perf) * 1000)
             completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -198,6 +333,7 @@ class SyncEngine:
                 "error_message": err_msg,
                 "completed_at": completed_at,
                 "duration_ms": duration_ms,
+                "sources_detail": sources_detail,
             })
             save_sync_log(log_entry)
 
@@ -218,6 +354,7 @@ class SyncEngine:
                 "error_message": error_msg,
                 "completed_at": completed_at,
                 "duration_ms": duration_ms,
+                "sources_detail": sources_detail,
             })
             save_sync_log(log_entry)
             return log_entry

@@ -212,7 +212,7 @@ export default function Landing() {
         </h1>
 
         <p className="mt-5 text-base sm:text-lg text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed font-normal">
-          SkillSetu bridges the divide between industry demand and vocational education across Maharashtra.
+          SkillSetuAI bridges the divide between industry demand and vocational education across Maharashtra.
           We detect real-time skill gaps, automate curriculum recommendations, and guide workforce planning
           for Government, Institutes, Students, and Employers.
         </p>
@@ -274,7 +274,7 @@ export default function Landing() {
         <StatCard
           label="Tracked Competencies"
           value={stats.skillsCount}
-          subtext="NSQF & NCO-2015 mapped"
+          subtext="NSQF aligned"
           trend="55 standardized"
           icon="🎯"
         />
@@ -301,7 +301,7 @@ export default function Landing() {
             End-to-End Workflow
           </span>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white mt-1">
-            How SkillSetu Closes the Loop
+            How SkillSetuAI Closes the Loop
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-2">
             A continuous feedback system ensuring vocational education dynamically adapts to real-world industrial demand
@@ -489,7 +489,7 @@ export default function Landing() {
         </div>
 
         <p className="text-[11px] text-slate-500 mt-8 text-center border-t border-slate-800 pt-4">
-          Data reflected from active SkillSetu ingestion pipelines & synthetic demo benchmarks • Not official government gazette statistics
+          Data reflected from active SkillSetuAI ingestion pipelines & synthetic demo benchmarks • Not official government gazette statistics
         </p>
       </section>
     </Layout>

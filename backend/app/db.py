@@ -47,8 +47,21 @@ def _find_real_data_dir() -> Path:
     return real_dir
 
 
+def _row_identity(row: dict) -> Any:
+    if not isinstance(row, dict):
+        return None
+    if row.get("id"):
+        return row["id"]
+    if row.get("user_id"):
+        return row["user_id"]
+    if row.get("job_id") and row.get("skill_id"):
+        return (row["job_id"], row["skill_id"])
+    if row.get("course_id") and row.get("skill_id"):
+        return (row["course_id"], row["skill_id"])
+    return None
+
+
 def _flush_real_table(table: str):
-    """Write all user-submitted and real ingested records for a table to data/real/{table}.json."""
     try:
         real_dir = _find_real_data_dir()
         records = _cache.get(table, [])
@@ -59,13 +72,19 @@ def _flush_real_table(table: str):
                 or (r.get("is_demo") is False and r.get("source") != "DEMO_SYNTHETIC")
             )
         ]
-
-        # ponytail: runtime users persist to users_runtime.json (not users.json)
-        # so load_real_data can skip the fixture file while still loading persisted users
+        deduped_real: list[dict] = []
+        seen_identities: set[Any] = set()
+        for r in real_records:
+            ident = _row_identity(r)
+            if ident is not None:
+                if ident in seen_identities:
+                    continue
+                seen_identities.add(ident)
+            deduped_real.append(r)
         filename = "users_runtime" if table == "users" else table
         out_file = real_dir / f"{filename}.json"
-        out_file.write_text(json.dumps(real_records, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("[DB] Flushed %d real records to %s", len(real_records), out_file)
+        out_file.write_text(json.dumps(deduped_real, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("[DB] Flushed %d real records to %s", len(deduped_real), out_file)
     except Exception as e:
         logger.warning("[DB] Failed flushing real table '%s' to disk: %s", table, e)
 
@@ -145,19 +164,13 @@ def load_demo_data() -> int:
 
 
 def load_real_data() -> int:
-    """Load and overlay real user-submitted records from data/real directory into _cache."""
     real_dir = _find_real_data_dir()
     loaded_count = 0
     if not real_dir.is_dir():
         return 0
 
     for f in real_dir.glob("*.json"):
-        if f.name == "README.md":
-            continue
-        # SECURITY: skip users.json fixture file — test fixture accounts must not become
-        # valid production login identities. Runtime-persisted users live in
-        # users_runtime.json (written by save_user/_flush_real_table) and load normally.
-        if f.name == "users.json":
+        if f.name == "README.md" or f.name == "users.json":
             continue
         try:
             records = json.loads(f.read_text(encoding="utf-8"))
@@ -166,21 +179,23 @@ def load_real_data() -> int:
                 if table == "users_runtime":
                     table = "users"
                 existing = _cache.setdefault(table, [])
-                existing_ids = {r.get("id") for r in existing if isinstance(r, dict) and r.get("id")}
-                # Prepend / merge real records
+                existing_map = {}
+                for idx, item in enumerate(existing):
+                    ident = _row_identity(item)
+                    if ident is not None:
+                        existing_map[ident] = idx
                 for r in records:
                     if not isinstance(r, dict):
                         continue
                     r["source"] = r.get("source") or "USER_SUBMITTED"
                     r["is_demo"] = False
-                    rid = r.get("id")
-                    if rid and rid in existing_ids:
-                        for idx, item in enumerate(existing):
-                            if isinstance(item, dict) and item.get("id") == rid:
-                                existing[idx] = r
-                                break
+                    rid = _row_identity(r)
+                    if rid is not None and rid in existing_map:
+                        existing[existing_map[rid]] = r
                     else:
-                        existing.insert(0, r)
+                        if rid is not None:
+                            existing_map[rid] = len(existing)
+                        existing.append(r)
                 loaded_count += len(records)
         except Exception as e:
             logger.warning("[DB] Failed loading real data file %s: %s", f.name, e)
@@ -188,18 +203,6 @@ def load_real_data() -> int:
     if loaded_count > 0:
         logger.info("[DB] Loaded %d real user records across tables from %s", loaded_count, real_dir)
     return loaded_count
-
-
-def _row_identity(row: dict) -> Any:
-    if not isinstance(row, dict):
-        return None
-    if row.get("id"):
-        return row["id"]
-    if row.get("job_id") and row.get("skill_id"):
-        return (row["job_id"], row["skill_id"])
-    if row.get("course_id") and row.get("skill_id"):
-        return (row["course_id"], row["skill_id"])
-    return None
 
 
 def init_db():
@@ -243,6 +246,17 @@ def init_db():
                     logger.info("[DB] Merged %d records from Supabase table '%s'", len(res.data), tbl)
             except Exception as e:
                 logger.warning("[DB] Supabase table '%s' query error: %s", tbl, e)
+
+        try:
+            skills_res = client.table("skills").select("id").limit(1).execute()
+            if not getattr(skills_res, "data", None):
+                from app.repositories.supabase_repository import upsert_skills
+                authoritative_skills = _cache.get("skills", [])
+                if authoritative_skills:
+                    upsert_skills(authoritative_skills)
+                    logger.info("[DB] Seeded %d authoritative skills into Supabase", len(authoritative_skills))
+        except Exception as e:
+            logger.warning("[DB] Failed seeding skills to Supabase: %s", e)
 
     if not settings.is_production and settings.demo_auth_enabled:
         init_demo_users()
@@ -491,8 +505,20 @@ def delete_employer_demand(demand_id: str) -> bool:
     return repo_deleted or cache_deleted
 
 
+VALID_SYNC_LOG_STATUSES = {
+    "running", "RUNNING",
+    "success", "SUCCESS",
+    "failed", "FAILED",
+    "partial", "PARTIAL",
+    "no_data", "NO_DATA",
+}
+
+
 def save_sync_log(log_entry: dict) -> bool:
-    """Save or update sync audit log in memory and Supabase."""
+    status_val = log_entry.get("status")
+    if not status_val or status_val not in VALID_SYNC_LOG_STATUSES:
+        logger.warning("[DB] Rejecting sync_log with invalid status: %s", status_val)
+        return False
     if not _cache:
         init_db()
     sync_id = log_entry.get("id")
@@ -509,12 +535,53 @@ def save_sync_log(log_entry: dict) -> bool:
     client = get_supabase_client()
     if client:
         try:
-            client.table("sync_logs").upsert(log_entry).execute()
+            valid_cols = {
+                "id", "source_name", "job_type", "status",
+                "records_fetched", "records_added", "records_updated", "records_skipped",
+                "error_message", "started_at", "completed_at", "duration_ms",
+            }
+            db_payload = {k: v for k, v in log_entry.items() if k in valid_cols}
+            sources_payload = dict(log_entry.get("sources_detail") or {})
+            if "is_demo" in log_entry:
+                sources_payload["_meta"] = {"is_demo": bool(log_entry.get("is_demo"))}
+            if sources_payload:
+                encoded = json.dumps(sources_payload)
+                existing_err = (db_payload.get("error_message") or "").split("||SOURCES_DETAIL:", 1)[0].strip()
+                db_payload["error_message"] = f"{existing_err}||SOURCES_DETAIL:{encoded}" if existing_err else f"||SOURCES_DETAIL:{encoded}"
+            client.table("sync_logs").upsert(db_payload).execute()
             logger.info("[DB] Persisted sync_log '%s' (%s) to Supabase.", sync_id, log_entry.get("status"))
             return True
         except Exception as e:
             logger.warning("[DB] Failed persisting sync_log to Supabase: %s", e)
-    return False
+            return False
+    return True
+
+
+def decode_sync_log(log_entry: dict) -> dict:
+    if not isinstance(log_entry, dict):
+        return log_entry
+    decoded = dict(log_entry)
+    err_msg = decoded.get("error_message")
+    if err_msg and "||SOURCES_DETAIL:" in err_msg:
+        parts = err_msg.split("||SOURCES_DETAIL:", 1)
+        decoded["error_message"] = parts[0].strip() or None
+        try:
+            decoded["sources_detail"] = json.loads(parts[1])
+            if "_meta" in decoded["sources_detail"]:
+                decoded["is_demo"] = decoded["sources_detail"]["_meta"].get("is_demo", False)
+                del decoded["sources_detail"]["_meta"]
+        except Exception:
+            pass
+    if _cache.get("sync_logs"):
+        entry_id = decoded.get("id")
+        if entry_id:
+            cached = next((item for item in _cache.get("sync_logs", []) if item.get("id") == entry_id), None)
+            if cached:
+                if not decoded.get("sources_detail") and cached.get("sources_detail"):
+                    decoded["sources_detail"] = cached["sources_detail"]
+                if "is_demo" in cached and "is_demo" not in decoded:
+                    decoded["is_demo"] = cached["is_demo"]
+    return decoded
 
 
 def persist_schemes_to_supabase(schemes: list[dict]):

@@ -142,11 +142,23 @@ async def recommended_schemes(
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id") or "me"
 
-    # Query Supabase repository (authoritative system of record)
+    from app.routers.student import _verify_student_recommendations_access
+    _verify_student_recommendations_access(resolved_id, current_user)
+
     profile = None
     try:
         from app.repositories.supabase_repository import get_student_profile, get_student_assessment, get_student_assessment_by_user
-        profile = get_student_profile(resolved_id) or get_student_assessment(resolved_id) or get_student_assessment_by_user(resolved_id)
+        from app.core.time import parse_iso_timestamp
+        p = get_student_profile(resolved_id)
+        a = get_student_assessment(resolved_id) or get_student_assessment_by_user(resolved_id)
+        p_time = parse_iso_timestamp((p.get("updated_at") or p.get("created_at") or "") if p else "")
+        a_time = parse_iso_timestamp((a.get("updated_at") or a.get("created_at") or "") if a else "")
+        if p and (p.get("skills") or not a or p_time >= a_time):
+            profile = p
+        elif a:
+            profile = a
+        else:
+            profile = None
     except Exception as e:
         logger.exception("[RecommendedSchemes] Supabase error for %s: %s", resolved_id, e)
         raise HTTPException(
@@ -184,9 +196,8 @@ async def recommended_schemes(
         elif s:
             student_skills.add(str(s).lower())
 
-
-    student_district = (profile.get("district") or "").lower()
-    student_education = (profile.get("education") or "").lower()
+    student_district = (profile.get("district") or profile.get("preferred_location") or "").lower()
+    student_education = (profile.get("education") or profile.get("degree") or profile.get("education_level") or "").lower()
 
     if is_demo_student_id(resolved_id) or profile.get("is_demo") or profile.get("source") == "DEMO_SYNTHETIC":
         schemes = get_demo("schemes")

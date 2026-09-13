@@ -327,7 +327,7 @@ export default function SkillExplainabilityModal({
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/40 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500 dark:text-slate-400">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>DATA PROVENANCE: SKILLSETU GROUNDED LABOUR INTELLIGENCE</span>
+            <span>DATA PROVENANCE: SKILLSETUAI GROUNDED LABOUR INTELLIGENCE</span>
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
@@ -360,7 +360,7 @@ export default function SkillExplainabilityModal({
                     institute: c.institute,
                     district: c.district,
                   })),
-                  source: 'SkillSetu Grounded Labour Intelligence',
+                  source: 'SkillSetuAI Grounded Labour Intelligence',
                 },
               }}
               onClick={onClose}

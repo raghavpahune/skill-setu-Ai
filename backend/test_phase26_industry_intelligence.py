@@ -48,8 +48,8 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def setup_test_environment():
-    """Reset database caches and demo dataset before each test run."""
+def setup_test_environment(monkeypatch):
+    monkeypatch.setenv("SKILLSETU_DATA_MODE", "demo")
     init_db()
 
 
@@ -132,9 +132,24 @@ def test_freshness_classification_engine():
 # ============================================================================
 
 def test_public_signals_list_and_filters():
-    """Verify public retrieval of approved active signals with filtering."""
-    # Ensure fresh ingestion
-    industry_ingestor.ingest_from_feeds()
+    test_feeds = [
+        {
+            "title": "NASSCOM Releases Generative AI skilling guidelines",
+            "description": "NASSCOM launches skilling initiative for generative AI across engineering institutes in Maharashtra.",
+            "category": "EMERGING_SKILL",
+            "industry": "Information Technology & AI",
+            "skills": ["Generative AI", "Prompt Engineering"],
+            "tools": ["Python", "PyTorch"],
+            "source_url": "https://nasscom.in/genai-guidelines-2026",
+            "source_name": "NASSCOM Strategic Review",
+            "source_type": "OFFICIAL_GOV",
+            "validation_status": STATUS_APPROVED,
+            "is_active": True,
+            "is_demo": False,
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+        }
+    ]
+    industry_ingestor.ingest_from_feeds(test_feeds)
 
     res = client.get("/api/industry/signals")
     assert res.status_code == 200
@@ -144,20 +159,17 @@ def test_public_signals_list_and_filters():
     signals = data["signals"]
     assert len(signals) > 0
 
-    # Every public signal must be approved and active
     for s in signals:
         assert s["is_active"] is True
         assert s["validation_status"] == STATUS_APPROVED
         assert "freshness" in s
         assert "data_provenance" in s
 
-    # Category filter
     res_cat = client.get("/api/industry/signals?category=EMERGING_SKILL")
     assert res_cat.status_code == 200
     for s in res_cat.json()["signals"]:
         assert s["category"] == "EMERGING_SKILL"
 
-    # Search filter
     res_search = client.get("/api/industry/signals?search=AI")
     assert res_search.status_code == 200
 
@@ -256,8 +268,8 @@ def test_admin_industry_signal_crud_and_moderation():
 # 5. SCHEDULER INTEGRATION
 # ============================================================================
 
-def test_scheduler_industry_sync_execution():
-    """Verify scheduler execute_sync supports industry_signals source."""
+def test_scheduler_industry_sync_execution(monkeypatch):
+    monkeypatch.setattr("app.ingestion.scheduler.is_explicit_demo_mode", lambda: True)
     import asyncio
     result = asyncio.run(scheduler.execute_sync(source="industry_signals"))
     assert result["status"] == "success"

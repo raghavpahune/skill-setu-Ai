@@ -555,7 +555,7 @@ export default function StudentDashboard() {
           <span>📡</span>
           <span>Industry & Tech Alerts</span>
           <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300">
-            Live Feed
+            Alerts Feed
           </span>
         </button>
       </div>
@@ -637,7 +637,7 @@ export default function StudentDashboard() {
                 No Personalized Assessment Completed Yet
               </h3>
               <p className="text-xs text-amber-700 dark:text-amber-300 max-w-lg mx-auto leading-relaxed">
-                You are viewing your personal candidate profile. Take the quick 3-minute diagnostic assessment to generate your verified NSQF Skill Passport, radar benchmarks, and personalized learning roadmap.
+                You are viewing your personal candidate profile. Take the quick 3-minute diagnostic assessment to generate your Skill Passport, radar benchmarks, and personalized learning roadmap.
               </p>
               <div className="flex items-center justify-center gap-3 pt-2">
                 <button
@@ -721,7 +721,7 @@ export default function StudentDashboard() {
                     </p>
                   </div>
                   <span className="text-[11px] font-mono px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold rounded border border-slate-200 dark:border-slate-700">
-                    NCO-2015
+                    Competency Standards
                   </span>
                 </div>
 

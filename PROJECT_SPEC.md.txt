@@ -1,8 +1,8 @@
-# SKILLSETU — PROJECT SPECIFICATION
+# SKILLSETUAI — PROJECT SPECIFICATION
 
 ## 1. PROJECT NAME
 
-SkillSetu
+SkillSetuAI
 
 AI-Powered Labour-Market Intelligence & Curriculum-Alignment Platform
 
@@ -34,7 +34,7 @@ This creates:
 - Poor district-level training planning
 - Unclear career pathways for students
 
-SkillSetu must create a continuous evidence-based feedback loop between:
+SkillSetuAI must create a continuous evidence-based feedback loop between:
 
 LABOUR MARKET
 → SKILLS
@@ -105,7 +105,7 @@ Can view:
 Can:
 
 - Submit skill requirements
-- Validate SkillSetu's skill-demand analysis
+- Validate SkillSetuAI's skill-demand analysis
 - Confirm / correct / reject recommendations
 - Report difficult-to-hire skills
 
@@ -516,13 +516,13 @@ Automation Engineer
 
 ---
 
-# 16. AI SKILLSETU COPILOT — NEW FEATURE
+# 16. AI SKILLSETUAI COPILOT — NEW FEATURE
 
-Build a conversational AI assistant connected to SkillSetu data.
+Build a conversational AI assistant connected to SkillSetuAI data.
 
 It must NOT behave like a generic chatbot.
 
-It should answer using SkillSetu's database and provide evidence.
+It should answer using SkillSetuAI's database and provide evidence.
 
 Government question:
 
@@ -548,7 +548,7 @@ RAG
 +
 Supabase / pgvector
 +
-SkillSetu structured data
+SkillSetuAI structured data
 
 Possible LLM:
 
@@ -903,7 +903,7 @@ FastAPI connector
      ↓
 Database
      ↓
-SkillSetu intelligence engine
+SkillSetuAI intelligence engine
 
 Only introduce MCP if it provides a clear benefit and is actually required.
 
@@ -1223,7 +1223,7 @@ Government and employer data must not be publicly exposed.
 
 Use this general structure:
 
-SkillSetu/
+SkillSetuAI/
 │
 ├── frontend/
 │
@@ -1251,7 +1251,7 @@ The AI coding agent may adjust the structure if there is a strong technical reas
 
 # 36. FINAL PRODUCT IDENTITY
 
-SkillSetu is NOT:
+SkillSetuAI is NOT:
 
 - A social media platform
 - A generic news app
@@ -1259,7 +1259,7 @@ SkillSetu is NOT:
 - A generic chatbot
 - A course marketplace
 
-SkillSetu IS:
+SkillSetuAI IS:
 
 A continuous skill-intelligence and workforce decision-support platform connecting:
 
@@ -1277,7 +1277,7 @@ through continuously updated labour-market intelligence.
 
 # 37. UNIQUE VALUE PROPOSITION
 
-"SkillSetu converts changing industry demand into actionable skill, curriculum, training and career decisions."
+"SkillSetuAI converts changing industry demand into actionable skill, curriculum, training and career decisions."
 
 The strongest differentiators are:
 

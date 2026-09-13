@@ -96,7 +96,7 @@ export default function Register() {
               S
             </div>
             <h1 className="text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              Create Your SkillSetu Account
+              Create Your SkillSetuAI Account
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Select your role to access customized labour-market intelligence and tools

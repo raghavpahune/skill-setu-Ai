@@ -52,7 +52,27 @@ async def student_industry_alerts(
     resolved_id = student_id
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id")
-    return get_personalized_industry_alerts(domain_id=domain, student_id=resolved_id)
+    is_demo_id = is_demo_student_id(resolved_id)
+    is_demo_fixture = False
+    if not is_demo_id and resolved_id:
+        demo_profiles = get_demo("student_profiles") or []
+        is_demo_fixture = any((p.get("user_id") or p.get("id")) == resolved_id for p in demo_profiles)
+    is_demo_req = is_demo_id or is_demo_fixture
+    if resolved_id and not is_demo_req:
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to view personalized industry alerts.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user_id = current_user.get("id")
+        user_role = (current_user.get("role") or "").upper()
+        if user_id != resolved_id and user_role != "ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot access industry alerts for another user.",
+            )
+    return get_personalized_industry_alerts(domain_id=domain, student_id=resolved_id, current_user=current_user)
 
 
 @router.get("/student/skill-explainability/{skill}")
@@ -65,8 +85,38 @@ async def skill_explainability(
     resolved_id = student_id
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id")
+    is_demo_id = is_demo_student_id(resolved_id)
+    is_demo_fixture = False
+    if not is_demo_id and resolved_id:
+        demo_profiles = get_demo("student_profiles") or []
+        is_demo_fixture = any((p.get("user_id") or p.get("id")) == resolved_id for p in demo_profiles)
+    is_demo_req = is_demo_id or is_demo_fixture
+    if resolved_id and not is_demo_req:
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to view personalized skill explainability.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        user_id = current_user.get("id")
+        user_role = (current_user.get("role") or "").upper()
+        if user_id != resolved_id and user_role != "ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot access skill explainability for another user.",
+            )
     return get_skill_explainability(skill_query=skill, student_id=resolved_id)
 
+
+
+def _is_private_user_record(record: dict) -> bool:
+    if not record or not isinstance(record, dict):
+        return False
+    if record.get("source") in ("DEMO_SYNTHETIC", "BENCHMARK_NATIONAL") or record.get("is_demo") is True:
+        return False
+    if is_demo_student_id(record.get("id")) or is_demo_student_id(record.get("user_id")):
+        return False
+    return True
 
 
 @router.get("/student/me/passport")
@@ -85,7 +135,6 @@ async def my_skill_passport(
         skills_map = {}
         skills_name_map = {}
 
-    # 1. Check for real student assessment submission via Supabase repository
     matched_assessment = None
     try:
         from app.repositories.supabase_repository import get_student_assessment_by_user
@@ -97,57 +146,10 @@ async def my_skill_passport(
             detail=f"Database query failed for student user '{user_id}'.",
         ) from e
 
-    if matched_assessment:
-        target_role = matched_assessment.get("career_goal", "AI Engineer")
-        from app.services.student_service import ROLE_REQUIREMENTS_MAP
-        req_sids = ROLE_REQUIREMENTS_MAP.get(target_role.lower(), ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"])
-
-        curr_skills = []
-        curr_sids = set()
-        for cs in matched_assessment.get("current_skills", []):
-            s_name = cs.get("skill_name", "")
-            sid = cs.get("skill_id")
-            if not sid and s_name.lower() in skills_name_map:
-                sid = skills_name_map[s_name.lower()]["id"]
-            if sid:
-                curr_sids.add(sid)
-            sk_obj = skills_map.get(sid, {})
-            curr_skills.append({
-                "skill_id": sid or f"sk-custom-{len(curr_skills)+1}",
-                "skill_name": s_name or sk_obj.get("name", "Custom Skill"),
-                "proficiency": cs.get("proficiency", "intermediate"),
-                "category": cs.get("category") or sk_obj.get("category", "General"),
-                "nsqf_level": cs.get("nsqf_level") or sk_obj.get("nsqf_level", 5),
-            })
-
-        required = [
-            {
-                "skill_id": sid,
-                "skill_name": skills_map.get(sid, {}).get("name", sid),
-                "category": skills_map.get(sid, {}).get("category", "General"),
-                "nsqf_level": skills_map.get(sid, {}).get("nsqf_level", 5),
-            }
-            for sid in req_sids
-        ]
-        missing = [r for r in required if r["skill_id"] not in curr_sids]
-
-        return {
-            "user_id": user_id,
-            "name": matched_assessment.get("name") or current_user.get("full_name", "Student Candidate"),
-            "target_role": target_role,
-            "skill_match_pct": matched_assessment.get("skill_match_pct", 65),
-            "current_skills": curr_skills,
-            "required_skills": required,
-            "missing_skills": missing,
-            "source": "USER_SUBMITTED",
-            "is_personalized": True,
-        }
-
-    # 2. Check for student profile via Supabase repository
     matched_profile = None
     try:
-        from app.repositories.supabase_repository import get_student_profile
-        matched_profile = get_student_profile(user_id)
+        from app.repositories.supabase_repository import get_student_profile, get_employee_profile
+        matched_profile = get_student_profile(user_id) or get_employee_profile(user_id)
     except Exception as e:
         logger.exception("[StudentPassport] Supabase error fetching profile for %s: %s", user_id, e)
         raise HTTPException(
@@ -155,7 +157,16 @@ async def my_skill_passport(
             detail=f"Database query failed for student profile '{user_id}'.",
         ) from e
 
-    if matched_profile:
+    from app.core.time import parse_iso_timestamp
+    demo_skills_id_map = {s["id"]: s.get("name", "") for s in (get_demo("skills") or [])}
+    prof_time = parse_iso_timestamp((matched_profile.get("updated_at") or matched_profile.get("created_at") or "") if matched_profile else "")
+    asst_time = parse_iso_timestamp((matched_assessment.get("updated_at") or matched_assessment.get("created_at") or "") if matched_assessment else "")
+    if matched_assessment:
+        use_profile = bool(matched_profile and matched_profile.get("skills") and prof_time >= asst_time)
+    else:
+        use_profile = bool(matched_profile)
+
+    if use_profile and matched_profile:
         current = []
         curr_sids = set()
         for sk in matched_profile.get("skills", []):
@@ -187,15 +198,22 @@ async def my_skill_passport(
         if not req_sids:
             req_sids = ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"]
 
-        required = [
-            {
-                "skill_id": sid,
-                "skill_name": skills_map.get(sid, {}).get("name", sid),
-                "category": skills_map.get(sid, {}).get("category", "General"),
-                "nsqf_level": skills_map.get(sid, {}).get("nsqf_level", 5),
-            }
-            for sid in req_sids
-        ]
+        required = []
+        for sid in req_sids:
+            auth_sid = sid
+            if auth_sid not in skills_map:
+                d_name = demo_skills_id_map.get(sid, "")
+                if d_name and d_name.lower() in skills_name_map:
+                    auth_sid = skills_name_map[d_name.lower()]["id"]
+                elif sid.lower() in skills_name_map:
+                    auth_sid = skills_name_map[sid.lower()]["id"]
+            sk_meta = skills_map.get(auth_sid, {})
+            required.append({
+                "skill_id": auth_sid,
+                "skill_name": sk_meta.get("name", sid),
+                "category": sk_meta.get("category", "General"),
+                "nsqf_level": sk_meta.get("nsqf_level", 5),
+            })
         missing = [r for r in required if r["skill_id"] not in curr_sids]
         match_pct = int((len(required) - len(missing)) / max(1, len(required)) * 100) if required else 0
         if matched_profile.get("skill_match_pct") is not None:
@@ -213,7 +231,59 @@ async def my_skill_passport(
             "is_personalized": True,
         }
 
-    # 3. Explicit unassessed state for new accounts (no silent fallback to demo student)
+    if matched_assessment:
+        target_role = matched_assessment.get("career_goal", "AI Engineer")
+        from app.services.student_service import ROLE_REQUIREMENTS_MAP
+        req_sids = ROLE_REQUIREMENTS_MAP.get(target_role.lower(), ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"])
+
+        curr_skills = []
+        curr_sids = set()
+        for cs in matched_assessment.get("current_skills", []):
+            s_name = cs.get("skill_name", "")
+            sid = cs.get("skill_id")
+            if not sid and s_name.lower() in skills_name_map:
+                sid = skills_name_map[s_name.lower()]["id"]
+            if sid:
+                curr_sids.add(sid)
+            sk_obj = skills_map.get(sid, {})
+            curr_skills.append({
+                "skill_id": sid or f"sk-custom-{len(curr_skills)+1}",
+                "skill_name": s_name or sk_obj.get("name", "Custom Skill"),
+                "proficiency": cs.get("proficiency", "intermediate"),
+                "category": cs.get("category") or sk_obj.get("category", "General"),
+                "nsqf_level": cs.get("nsqf_level") or sk_obj.get("nsqf_level", 5),
+            })
+
+        required = []
+        for sid in req_sids:
+            auth_sid = sid
+            if auth_sid not in skills_map:
+                d_name = demo_skills_id_map.get(sid, "")
+                if d_name and d_name.lower() in skills_name_map:
+                    auth_sid = skills_name_map[d_name.lower()]["id"]
+                elif sid.lower() in skills_name_map:
+                    auth_sid = skills_name_map[sid.lower()]["id"]
+            sk_obj = skills_map.get(auth_sid, {})
+            required.append({
+                "skill_id": auth_sid,
+                "skill_name": sk_obj.get("name", sid),
+                "category": sk_obj.get("category", "General"),
+                "nsqf_level": sk_obj.get("nsqf_level", 5),
+            })
+        missing = [r for r in required if r["skill_id"] not in curr_sids]
+
+        return {
+            "user_id": user_id,
+            "name": matched_assessment.get("name") or current_user.get("full_name", "Student Candidate"),
+            "target_role": target_role,
+            "skill_match_pct": matched_assessment.get("skill_match_pct", 65),
+            "current_skills": curr_skills,
+            "required_skills": required,
+            "missing_skills": missing,
+            "source": "USER_SUBMITTED",
+            "is_personalized": True,
+        }
+
     return {
         "user_id": user_id,
         "name": current_user.get("full_name", "Student Candidate"),
@@ -237,8 +307,17 @@ async def skill_passport(
     if student_id == "me" and current_user:
         return await my_skill_passport(current_user=current_user)
 
-    if is_demo_student_id(student_id):
-        profiles = get_demo("student_profiles")
+    demo_profiles = get_demo("student_profiles") or []
+    demo_assessments = get_demo("student_assessments") or []
+    is_demo_fixture = any(
+        (item.get("user_id") or item.get("id")) == student_id
+        for item in (demo_profiles + demo_assessments)
+        if item.get("source") in ("DEMO_SYNTHETIC", "BENCHMARK_NATIONAL") or item.get("is_demo") is True or is_demo_student_id(item.get("user_id") or item.get("id"))
+    )
+    is_demo_req = is_demo_student_id(student_id) or is_demo_fixture
+
+    if is_demo_req:
+        profiles = demo_profiles
         skills_map = {s["id"]: s for s in get_demo("skills")}
         skills_name_map = {s["name"].lower(): s for s in get_demo("skills")}
     else:
@@ -252,7 +331,6 @@ async def skill_passport(
             skills_map = {}
             skills_name_map = {}
 
-    # First check student_assessments in Supabase
     a = None
     try:
         from app.repositories.supabase_repository import get_student_assessment, get_student_assessment_by_user
@@ -264,85 +342,16 @@ async def skill_passport(
             detail=f"Database query failed for student assessment '{student_id}'.",
         ) from e
 
-    if not a and is_demo_student_id(student_id):
-        assessments = get_demo("student_assessments")
-        for item in assessments:
+    if not a and is_demo_req:
+        for item in demo_assessments:
             if item.get("id") == student_id or item.get("user_id") == student_id:
                 a = item
                 break
 
-    if a:
-        # Privacy check: user-submitted assessments are private to the candidate and admin
-        if a.get("source") in ("USER_SUBMITTED", "FIRST_PARTY") or not a.get("is_demo", True):
-            if not current_user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required to view candidate assessment.",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            user_id = current_user.get("id")
-            user_email = current_user.get("email")
-            user_role = (current_user.get("role") or "").upper()
-            is_owner = (
-                (a.get("user_id") and a.get("user_id") == user_id)
-                or (a.get("id") and a.get("id") == user_id)
-                or (user_email and a.get("user_email") == user_email)
-            )
-            if not is_owner and user_role != "ADMIN":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Forbidden: You cannot access another student's personal assessment.",
-                )
-
-        target_role = a.get("career_goal", "AI Engineer")
-        from app.services.student_service import ROLE_REQUIREMENTS_MAP
-        req_sids = ROLE_REQUIREMENTS_MAP.get(target_role.lower(), ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"])
-
-        curr_skills = []
-        curr_sids = set()
-        for cs in a.get("current_skills", []):
-            s_name = cs.get("skill_name", "")
-            sid = cs.get("skill_id")
-            if not sid and s_name.lower() in skills_name_map:
-                sid = skills_name_map[s_name.lower()]["id"]
-            if sid:
-                curr_sids.add(sid)
-            sk_obj = skills_map.get(sid, {})
-            curr_skills.append({
-                "skill_id": sid or f"sk-custom-{len(curr_skills)+1}",
-                "skill_name": s_name or sk_obj.get("name", "Custom Skill"),
-                "proficiency": cs.get("proficiency", "intermediate"),
-                "category": cs.get("category") or sk_obj.get("category", "General"),
-                "nsqf_level": cs.get("nsqf_level") or sk_obj.get("nsqf_level", 5),
-            })
-
-        required = [
-            {
-                "skill_id": sid,
-                "skill_name": skills_map.get(sid, {}).get("name", sid),
-                "category": skills_map.get(sid, {}).get("category", "General"),
-                "nsqf_level": skills_map.get(sid, {}).get("nsqf_level", 5),
-            }
-            for sid in req_sids
-        ]
-        missing = [r for r in required if r["skill_id"] not in curr_sids]
-
-        return {
-            "user_id": a.get("user_id") or a.get("id"),
-            "name": a.get("name", "Student Candidate"),
-            "target_role": target_role,
-            "skill_match_pct": a.get("skill_match_pct", 50),
-            "current_skills": curr_skills,
-            "required_skills": required,
-            "missing_skills": missing,
-            "source": a.get("source", "USER_SUBMITTED"),
-            "is_personalized": True,
-        }
-
     p = None
     try:
-        from app.repositories.supabase_repository import get_student_profile
-        p = get_student_profile(student_id)
+        from app.repositories.supabase_repository import get_student_profile, get_employee_profile
+        p = get_student_profile(student_id) or get_employee_profile(student_id)
     except Exception as e:
         logger.exception("[StudentPassport] Supabase error for profile %s: %s", student_id, e)
         raise HTTPException(
@@ -350,14 +359,23 @@ async def skill_passport(
             detail=f"Database query failed for student profile '{student_id}'.",
         ) from e
 
-    if not p and is_demo_student_id(student_id):
-        for item in profiles:
+    if not p and is_demo_req:
+        for item in demo_profiles:
             if item.get("user_id") == student_id or item.get("id") == student_id:
                 p = item
                 break
 
-    if p:
-        if not is_demo_student_id(student_id):
+    from app.core.time import parse_iso_timestamp
+    demo_skills_id_map = {s["id"]: s.get("name", "") for s in (get_demo("skills") or [])}
+    p_time = parse_iso_timestamp((p.get("updated_at") or p.get("created_at") or "") if p else "")
+    a_time = parse_iso_timestamp((a.get("updated_at") or a.get("created_at") or "") if a else "")
+    if a:
+        use_p = bool(p and p.get("skills") and p_time >= a_time)
+    else:
+        use_p = bool(p)
+
+    if use_p and p:
+        if _is_private_user_record(p):
             if not current_user:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -402,15 +420,22 @@ async def skill_passport(
         if not req_sids:
             req_sids = ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"]
 
-        required = [
-            {
-                "skill_id": sid,
-                "skill_name": skills_map.get(sid, {}).get("name", sid),
-                "category": skills_map.get(sid, {}).get("category", "General"),
-                "nsqf_level": skills_map.get(sid, {}).get("nsqf_level", 5),
-            }
-            for sid in req_sids
-        ]
+        required = []
+        for sid in req_sids:
+            auth_sid = sid
+            if auth_sid not in skills_map:
+                d_name = demo_skills_id_map.get(sid, "")
+                if d_name and d_name.lower() in skills_name_map:
+                    auth_sid = skills_name_map[d_name.lower()]["id"]
+                elif sid.lower() in skills_name_map:
+                    auth_sid = skills_name_map[sid.lower()]["id"]
+            sk_meta = skills_map.get(auth_sid, {})
+            required.append({
+                "skill_id": auth_sid,
+                "skill_name": sk_meta.get("name", sid),
+                "category": sk_meta.get("category", "General"),
+                "nsqf_level": sk_meta.get("nsqf_level", 5),
+            })
         missing = [r for r in required if r["skill_id"] not in curr_sids]
         match_pct = int((len(required) - len(missing)) / max(1, len(required)) * 100) if required else 0
         if p.get("skill_match_pct") is not None:
@@ -425,6 +450,88 @@ async def skill_passport(
             "required_skills": required,
             "missing_skills": missing,
             "source": p.get("source", "USER_SUBMITTED"),
+            "is_personalized": True,
+        }
+
+    if a:
+        if _is_private_user_record(a):
+            if not current_user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required to view candidate assessment.",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            user_id = current_user.get("id")
+            user_email = current_user.get("email")
+            user_role = (current_user.get("role") or "").upper()
+            is_owner = (
+                (a.get("user_id") and a.get("user_id") == user_id)
+                or (a.get("id") and a.get("id") == user_id)
+                or (user_email and a.get("user_email") == user_email)
+            )
+            if not is_owner and user_role != "ADMIN":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Forbidden: You cannot access another student's personal assessment.",
+                )
+
+        target_role = a.get("career_goal", "AI Engineer")
+        from app.services.student_service import ROLE_REQUIREMENTS_MAP
+        role_key = target_role.lower().strip()
+        req_sids = ROLE_REQUIREMENTS_MAP.get(role_key)
+        if not req_sids:
+            for r_k, sids in ROLE_REQUIREMENTS_MAP.items():
+                if r_k in role_key or role_key in r_k:
+                    req_sids = sids
+                    break
+        if not req_sids:
+            req_sids = ["sk-001", "sk-002", "sk-003", "sk-004", "sk-005", "sk-006"]
+
+        curr_skills = []
+        curr_sids = set()
+        for cs in a.get("current_skills", []):
+            s_name = cs.get("skill_name", "")
+            sid = cs.get("skill_id")
+            if not sid and s_name.lower() in skills_name_map:
+                sid = skills_name_map[s_name.lower()]["id"]
+            if sid:
+                curr_sids.add(sid)
+            sk_obj = skills_map.get(sid, {})
+            curr_skills.append({
+                "skill_id": sid or f"sk-custom-{len(curr_skills)+1}",
+                "skill_name": s_name or sk_obj.get("name", "Custom Skill"),
+                "proficiency": cs.get("proficiency", "intermediate"),
+                "category": cs.get("category") or sk_obj.get("category", "General"),
+                "nsqf_level": cs.get("nsqf_level") or sk_obj.get("nsqf_level", 5),
+            })
+
+        required = []
+        for sid in req_sids:
+            auth_sid = sid
+            if auth_sid not in skills_map:
+                d_name = demo_skills_id_map.get(sid, "")
+                if d_name and d_name.lower() in skills_name_map:
+                    auth_sid = skills_name_map[d_name.lower()]["id"]
+                elif sid.lower() in skills_name_map:
+                    auth_sid = skills_name_map[sid.lower()]["id"]
+            sk_meta = skills_map.get(auth_sid, {})
+            required.append({
+                "skill_id": auth_sid,
+                "skill_name": sk_meta.get("name", sid),
+                "category": sk_meta.get("category", "General"),
+                "nsqf_level": sk_meta.get("nsqf_level", 5),
+            })
+        missing = [r for r in required if r["skill_id"] not in curr_sids]
+
+        return {
+            "user_id": a.get("user_id") or a.get("id"),
+            "name": a.get("name", "Student Candidate"),
+            "target_role": target_role,
+            "skill_match_pct": a.get("skill_match_pct", 50),
+            "current_skills": curr_skills,
+            "required_skills": required,
+            "missing_skills": missing,
+            "source": a.get("source", "USER_SUBMITTED"),
             "is_personalized": True,
         }
 
@@ -450,7 +557,11 @@ async def learning_roadmap(
     is_demo_fixture = False
     if not is_demo_id:
         demo_profiles = get_demo("student_profiles") or []
-        is_demo_fixture = any((p.get("user_id") or p.get("id")) == student_id for p in demo_profiles)
+        is_demo_fixture = any(
+            (p.get("user_id") or p.get("id")) == student_id
+            for p in demo_profiles
+            if p.get("source") in ("DEMO_SYNTHETIC", "BENCHMARK_NATIONAL") or p.get("is_demo") is True or is_demo_student_id(p.get("user_id") or p.get("id"))
+        )
         if not is_demo_fixture:
             if not current_user:
                 raise HTTPException(
@@ -513,7 +624,11 @@ async def recalculate_student_roadmap(
         )
     is_demo_id = is_demo_student_id(student_id)
     demo_profiles = get_demo("student_profiles") or []
-    is_demo_fixture = any((p.get("user_id") or p.get("id")) == student_id for p in demo_profiles)
+    is_demo_fixture = any(
+        (p.get("user_id") or p.get("id")) == student_id
+        for p in demo_profiles
+        if p.get("source") in ("DEMO_SYNTHETIC", "BENCHMARK_NATIONAL") or p.get("is_demo") is True or is_demo_student_id(p.get("user_id") or p.get("id"))
+    )
     is_demo_req = is_demo_id or is_demo_fixture
     from app.services.roadmap_service import compute_adaptive_roadmap
     from app.repositories.supabase_repository import SupabaseRepositoryError
@@ -537,9 +652,11 @@ async def recalculate_student_roadmap(
 @router.get("/students")
 async def list_students(
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
+    current_user: dict | None = Depends(get_optional_current_user),
 ):
     """List all students (real profiles + user submitted assessments, or demo students in explicit demo mode)."""
-    if is_explicit_demo_mode(is_demo):
+    user_role = (current_user.get("role") or "").upper() if current_user else ""
+    if is_explicit_demo_mode(is_demo) or user_role != "ADMIN":
         profiles = get_demo("student_profiles")
         assessments = get_demo("student_assessments")
     else:
@@ -579,7 +696,15 @@ async def get_quiz_questions(
         user_role = (current_user.get("role") or "").upper()
         target_id = student_id if (user_role == "ADMIN" and student_id) else current_user.get("id")
         user_email = current_user.get("email")
-        return get_personalized_diagnostic_questions(target_id, user_email)
+        res = get_personalized_diagnostic_questions(target_id, user_email)
+        if res.get("status") == "profile_incomplete":
+            return {
+                "status": "profile_incomplete",
+                "domain": "general",
+                "message": res.get("message"),
+                "questions": get_diagnostic_quiz_questions(),
+            }
+        return res
     return {
         "status": "unauthenticated",
         "domain": "general",
@@ -592,8 +717,6 @@ async def submit_student_assessment(
     submission: AssessmentSubmission,
     current_user: dict | None = Depends(get_optional_current_user),
 ):
-    """Receive student data submission, validate, calculate grounded gap/quiz report, and persist."""
-    # Convert Pydantic model to dictionary
     submission_data = {
         "name": submission.name,
         "education": submission.education,
@@ -610,10 +733,8 @@ async def submit_student_assessment(
     if current_user:
         submission_data["user_id"] = current_user.get("id")
 
-    # Evaluate against grounded SkillSetu labour-market data
     assessment_record = evaluate_student_assessment(submission_data)
 
-    # Attach authenticated user identity if logged in - NEVER trust client spoofing
     if current_user:
         assessment_record["user_id"] = current_user.get("id")
         assessment_record["user_email"] = current_user.get("email")
@@ -632,7 +753,6 @@ async def submit_student_assessment(
         assessment_record.setdefault("source", "USER_SUBMITTED")
         assessment_record.setdefault("data_provenance", "SELF_REPORTED_ASSESSMENT")
 
-    # Authoritatively persist to Supabase repository
     try:
         from app.repositories.supabase_repository import create_student_assessment
         saved_record = create_student_assessment(assessment_record)
@@ -643,7 +763,54 @@ async def submit_student_assessment(
             detail="Database insertion failed for student assessment.",
         ) from e
 
-    # Keep in-memory cache synchronized and write-through legacy audit files
+    if current_user:
+        try:
+            from app.repositories.supabase_repository import get_student_profile, upsert_student_profile
+            from app.routers.profile import resolve_taxonomy_skill_ids
+            user_id = current_user.get("id")
+            existing_prof = get_student_profile(user_id) or {}
+            merged_skills = list(existing_prof.get("skills") or [])
+            existing_indices = {
+                (s.get("skill_name") or s.get("name") or "").lower(): idx
+                for idx, s in enumerate(merged_skills)
+                if isinstance(s, dict)
+            }
+            for sk in submission_data.get("current_skills", []):
+                s_name = (sk.get("skill_name") or "").strip()
+                if not s_name:
+                    continue
+                if s_name.lower() in existing_indices:
+                    merged_skills[existing_indices[s_name.lower()]]["proficiency"] = sk.get("proficiency", "intermediate")
+                else:
+                    merged_skills.append({
+                        "skill_name": s_name,
+                        "proficiency": sk.get("proficiency", "intermediate"),
+                    })
+            candidate_name = submission.name or existing_prof.get("name") or existing_prof.get("full_name") or current_user.get("full_name") or current_user.get("name")
+            resolved_skills = resolve_taxonomy_skill_ids(merged_skills)
+            profile_sync_payload = {
+                "user_id": user_id,
+                "name": candidate_name,
+                "full_name": candidate_name,
+                "preferred_location": submission.district or existing_prof.get("preferred_location"),
+                "target_role": submission.career_goal or existing_prof.get("target_role"),
+                "desired_role": submission.career_goal or existing_prof.get("desired_role"),
+                "degree": existing_prof.get("degree") or submission.education,
+                "education_level": existing_prof.get("education_level") or "Undergraduate",
+                "institution": existing_prof.get("institution") or "Not Specified",
+                "career_interests": list(dict.fromkeys((existing_prof.get("career_interests") or []) + (submission.interests or []))),
+                "skills": resolved_skills,
+                "skill_match_pct": assessment_record.get("skill_match_pct", existing_prof.get("skill_match_pct", 50)),
+                "source": "USER_SUBMITTED",
+                "is_demo": False,
+                "updated_at": now_iso,
+            }
+            if not existing_prof:
+                profile_sync_payload["created_at"] = now_iso
+            upsert_student_profile(profile_sync_payload)
+        except Exception as e:
+            logger.exception("[StudentRouter] Profile sync failed during assessment submission: %s", e)
+
     try:
         if "student_assessments" in _cache:
             _cache["student_assessments"].insert(0, saved_record)
@@ -676,6 +843,17 @@ async def list_student_assessments(
             detail="Database query failed listing student assessments.",
         ) from e
 
+    user_role = (current_user.get("role") or "").upper() if current_user else ""
+    user_id = current_user.get("id") if current_user else None
+    if user_role != "ADMIN":
+        filtered = []
+        for a in assessments:
+            if not _is_private_user_record(a):
+                filtered.append(a)
+            elif user_id and (a.get("user_id") == user_id or a.get("id") == user_id):
+                filtered.append(a)
+        assessments = filtered
+
     return {
         "status": "success",
         "total": len(assessments),
@@ -683,11 +861,7 @@ async def list_student_assessments(
     }
 
 
-def _is_private_user_record(record: dict) -> bool:
-    """A record is private if it is explicitly owned by a registered user account."""
-    if record.get("source") in ("DEMO_SYNTHETIC", "BENCHMARK_NATIONAL") or record.get("is_demo") is True:
-        return False
-    return bool(record.get("user_id"))
+
 
 
 @router.get("/student/assessment/{assessment_id}")
@@ -760,8 +934,14 @@ def _verify_student_recommendations_access(target_id: str, current_user: dict | 
             get_student_assessment,
             get_student_assessment_by_user,
             get_student_profile,
+            get_employee_profile,
         )
-        a = get_student_assessment(target_id) or get_student_assessment_by_user(target_id) or get_student_profile(target_id)
+        a = (
+            get_student_assessment(target_id)
+            or get_student_assessment_by_user(target_id)
+            or get_student_profile(target_id)
+            or get_employee_profile(target_id)
+        )
     except Exception as e:
         logger.exception("[VerifyAccess] Supabase query failed for %s: %s", target_id, e)
         if not is_demo_student_id(target_id):
@@ -795,6 +975,9 @@ def _verify_student_recommendations_access(target_id: str, current_user: dict | 
                     a = item
                     break
 
+    if is_demo_student_id(target_id):
+        return
+
     if a and _is_private_user_record(a):
         if not current_user:
             raise HTTPException(
@@ -807,7 +990,8 @@ def _verify_student_recommendations_access(target_id: str, current_user: dict | 
         user_role = (current_user.get("role") or "").upper()
         record_user_id = a.get("user_id")
         is_owner = (
-            (record_user_id and user_id == record_user_id)
+            (target_id and user_id == target_id)
+            or (record_user_id and user_id == record_user_id)
             or (a.get("id") and user_id == a.get("id"))
             or (user_email and a.get("user_email") == user_email)
         )

@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import logging
 import time
+import uuid
 from typing import Any
 
 from app.config import settings
@@ -89,10 +90,11 @@ class IngestionScheduler:
     def _check_active_distributed_sync(self, lease_seconds: int = 900) -> bool:
         try:
             if is_explicit_demo_mode():
-                logs = list(get_demo("sync_logs"))
+                logs = [l for l in get_demo("sync_logs") if l.get("is_demo") is True]
             else:
                 from app.repositories.supabase_repository import list_sync_logs
-                logs = list_sync_logs(limit=10)
+                logs = list_sync_logs(limit=10, is_demo=False)
+                logs = [l for l in logs if not l.get("is_demo")]
             now_dt = datetime.datetime.now(datetime.timezone.utc)
             for log in logs:
                 if log.get("status") == "running":
@@ -142,38 +144,130 @@ class IngestionScheduler:
 
                 if source in ("industry_signals", "industry"):
                     from app.ingestion.industry_intelligence import industry_ingestor
-                    ind_res = await loop.run_in_executor(None, industry_ingestor.ingest_from_feeds)
+                    from app.db import save_sync_log
+                    ind_res = await loop.run_in_executor(
+                        None,
+                        lambda: industry_ingestor.ingest_from_feeds(is_demo=is_explicit_demo_mode()),
+                    )
                     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    self._last_successful_run_timestamp = now_str
-                    self._last_error = None
+                    fetched_cnt = ind_res.get("records_fetched", ind_res.get("fetched", 0))
+                    added_cnt = ind_res.get("records_added", ind_res.get("added", 0))
+                    updated_cnt = ind_res.get("records_updated", ind_res.get("updated", 0))
+                    skipped_cnt = ind_res.get("records_duplicated", ind_res.get("skipped", 0))
+                    ind_status_raw = (ind_res.get("status") or ("success" if fetched_cnt > 0 else "NO_DATA")).lower()
+                    errors_list = ind_res.get("errors", [])
+                    ind_err = "; ".join(errors_list) if errors_list else ind_res.get("error_message")
+                    self._last_run_timestamp = now_str
                     self._last_run_duration_ms = int((time.perf_counter() - start_perf) * 1000)
-                    return {"status": "success", "source": source, "industry_sync": ind_res, "duration_ms": self._last_run_duration_ms}
+                    if ind_status_raw in ("success", "no_data"):
+                        self._last_successful_run_timestamp = now_str
+                        self._last_error = None
+                        persisted_status = "success" if fetched_cnt > 0 else "NO_DATA"
+                        detail_status = "SUCCESS" if fetched_cnt > 0 else "NO_DATA"
+                        return_status = "success" if fetched_cnt > 0 else "no_data"
+                    elif ind_status_raw == "partial":
+                        self._last_error = ind_err
+                        persisted_status = "partial"
+                        detail_status = "PARTIAL"
+                        return_status = "partial"
+                    else:
+                        self._last_error = ind_err or "Industry sync run failed"
+                        persisted_status = "failed"
+                        detail_status = "FAILED"
+                        return_status = "failed"
+
+                    save_sync_log({
+                        "id": str(uuid.uuid4()),
+                        "source_name": source,
+                        "job_type": "scheduled_sync",
+                        "status": persisted_status,
+                        "records_fetched": fetched_cnt,
+                        "records_added": added_cnt,
+                        "records_updated": updated_cnt,
+                        "records_skipped": skipped_cnt,
+                        "error_message": ind_err,
+                        "started_at": attempt_time,
+                        "completed_at": now_str,
+                        "duration_ms": self._last_run_duration_ms,
+                        "is_demo": is_explicit_demo_mode(),
+                        "sources_detail": {
+                            "industry_signals": {
+                                "status": detail_status,
+                                "error": ind_err,
+                                "records_fetched": fetched_cnt,
+                                "records_added": added_cnt,
+                                "records_updated": updated_cnt,
+                                "records_skipped": skipped_cnt,
+                            }
+                        },
+                    })
+                    return {
+                        "status": return_status,
+                        "source": source,
+                        "industry_sync": ind_res,
+                        "duration_ms": self._last_run_duration_ms,
+                        "error_message": ind_err,
+                    }
 
                 if source in ("skill_forecasts", "forecasts", "forecast"):
                     from app.services.forecast_engine import persist_computed_forecasts
+                    from app.db import save_sync_log
                     fc_res = await loop.run_in_executor(None, persist_computed_forecasts)
                     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    fc_cnt = len(fc_res)
+                    self._last_run_timestamp = now_str
                     self._last_successful_run_timestamp = now_str
                     self._last_error = None
                     self._last_run_duration_ms = int((time.perf_counter() - start_perf) * 1000)
-                    return {"status": "success", "source": source, "forecasts_persisted": len(fc_res), "duration_ms": self._last_run_duration_ms}
+                    save_sync_log({
+                        "id": str(uuid.uuid4()),
+                        "source_name": source,
+                        "job_type": "scheduled_sync",
+                        "status": "success" if fc_cnt > 0 else "NO_DATA",
+                        "records_fetched": fc_cnt,
+                        "records_added": fc_cnt,
+                        "records_updated": 0,
+                        "records_skipped": 0,
+                        "error_message": None,
+                        "started_at": attempt_time,
+                        "completed_at": now_str,
+                        "duration_ms": self._last_run_duration_ms,
+                        "is_demo": is_explicit_demo_mode(),
+                        "sources_detail": {
+                            "skill_forecasts": {
+                                "status": "SUCCESS" if fc_cnt > 0 else "NO_DATA",
+                                "error": None,
+                                "records_fetched": fc_cnt,
+                                "records_added": fc_cnt,
+                                "records_updated": 0,
+                                "records_skipped": 0,
+                            }
+                        },
+                    })
+                    return {"status": "success" if fc_cnt > 0 else "no_data", "source": source, "forecasts_persisted": len(fc_res), "duration_ms": self._last_run_duration_ms}
 
                 result = await loop.run_in_executor(None, self.engine.run_sync, source)
-                if source == "all":
-                    from app.services.forecast_engine import persist_computed_forecasts
-                    await loop.run_in_executor(None, persist_computed_forecasts)
 
                 if "source" not in result:
                     result["source"] = source
 
-                self._last_run_duration_ms = result.get("duration_ms", int((time.perf_counter() - start_perf) * 1000))
-                if result.get("status") == "success":
-                    self._last_successful_run_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                completed_ts = result.get("completed_at") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+                self._last_run_timestamp = completed_ts
+                self._last_run_duration_ms = int(result.get("duration_ms") or ((time.perf_counter() - start_perf) * 1000))
+                res_status = (result.get("status") or "").lower()
+                if res_status in ("success", "no_data"):
+                    self._last_successful_run_timestamp = completed_ts
                     self._last_error = None
+                elif res_status == "partial":
+                    err_text = result.get("error_message")
+                    self._last_error = err_text
                 else:
                     self._last_error = result.get("error_message") or "Sync run failed"
                 return result
             except Exception as exc:
+                now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                self._last_run_timestamp = now_str
+                self._last_run_duration_ms = int((time.perf_counter() - start_perf) * 1000)
                 self._last_error = str(exc)
                 logger.exception("Error executing sync: %s", exc)
                 return {
@@ -181,7 +275,7 @@ class IngestionScheduler:
                     "source": source,
                     "error_message": str(exc),
                     "started_at": attempt_time,
-                    "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "completed_at": now_str,
                 }
             finally:
                 self._is_sync_running = False
@@ -213,23 +307,67 @@ class IngestionScheduler:
         except Exception as exc:
             logger.exception("Unexpected error in scheduler worker loop: %s", exc)
 
-    def _should_catchup_sync(self) -> bool:
+    def _fetch_persisted_telemetry_logs(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         if is_explicit_demo_mode():
-            logs = list(get_demo("sync_logs"))
+            raw_logs = list(get_demo("sync_logs"))
+            from app.db import decode_sync_log
+            logs = [decode_sync_log(l) for l in raw_logs if l.get("is_demo") is True]
         else:
             try:
                 from app.repositories.supabase_repository import list_sync_logs
-                logs = list_sync_logs(limit=10)
+                raw_logs = list_sync_logs(limit=20, is_demo=False)
             except Exception as exc:
-                logger.warning("Error fetching sync logs for catchup check: %s", exc)
-                logs = []
+                logger.warning("Error fetching sync logs for telemetry: %s", exc)
+                raw_logs = []
+            if not raw_logs:
+                from app.db import _cache
+                raw_logs = list(_cache.get("sync_logs", []))
+            from app.db import decode_sync_log
+            decoded_logs = [decode_sync_log(l) for l in raw_logs]
+            logs = [l for l in decoded_logs if not l.get("is_demo")]
 
         if not logs:
-            return True
+            return None, None
 
         logs.sort(key=lambda x: x.get("started_at", ""), reverse=True)
-        last_log = logs[0]
-        started_str = last_log.get("started_at")
+        latest_log = logs[0]
+        latest_success_log = next(
+            (l for l in logs if (l.get("status") or "").lower() in ("success", "no_data")),
+            None,
+        )
+        return latest_log, latest_success_log
+
+    def _reconcile_telemetry(
+        self,
+        latest_log: dict[str, Any] | None,
+        latest_success_log: dict[str, Any] | None,
+    ) -> None:
+        if latest_log:
+            log_run_ts = latest_log.get("completed_at") or latest_log.get("started_at")
+            if log_run_ts and (self._last_run_timestamp is None or log_run_ts >= self._last_run_timestamp):
+                self._last_run_timestamp = log_run_ts
+                if not self._is_sync_running:
+                    self._last_attempted_run_timestamp = latest_log.get("started_at")
+                self._last_run_duration_ms = int(latest_log.get("duration_ms") or 0)
+                st = (latest_log.get("status") or "").lower()
+                if st in ("success", "no_data"):
+                    self._last_error = None
+                elif st in ("failed", "partial"):
+                    self._last_error = latest_log.get("error_message") or ("Sync run failed" if st == "failed" else None)
+        if latest_success_log:
+            success_ts = latest_success_log.get("completed_at") or latest_success_log.get("started_at")
+            if success_ts and (self._last_successful_run_timestamp is None or success_ts >= self._last_successful_run_timestamp):
+                self._last_successful_run_timestamp = success_ts
+
+    def _should_catchup_sync(self) -> bool:
+        latest_log, latest_success_log = self._fetch_persisted_telemetry_logs()
+        if not latest_log:
+            return True
+
+        if self._last_run_timestamp is None:
+            self._reconcile_telemetry(latest_log, latest_success_log)
+
+        started_str = latest_log.get("started_at")
         if not started_str:
             return True
 
@@ -242,7 +380,38 @@ class IngestionScheduler:
             logger.warning("Error parsing timestamp for catchup check: %s", exc)
             return True
 
-    def get_status(self) -> dict[str, Any]:
+    def get_status(
+        self,
+        latest_log: dict[str, Any] | None = None,
+        latest_success_log: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if latest_log is None and self._last_run_timestamp is None:
+            latest_log, latest_success_log = self._fetch_persisted_telemetry_logs()
+
+        last_run = self._last_run_timestamp
+        last_attempt = self._last_attempted_run_timestamp
+        last_success = self._last_successful_run_timestamp
+        duration_ms = self._last_run_duration_ms
+        last_error = self._last_error
+
+        if latest_log:
+            log_run_ts = latest_log.get("completed_at") or latest_log.get("started_at")
+            if log_run_ts and (last_run is None or log_run_ts >= last_run):
+                last_run = log_run_ts
+                if not self._is_sync_running:
+                    last_attempt = latest_log.get("started_at")
+                duration_ms = int(latest_log.get("duration_ms") or 0)
+                st = (latest_log.get("status") or "").lower()
+                if st in ("success", "no_data"):
+                    last_error = None
+                elif st in ("failed", "partial"):
+                    last_error = latest_log.get("error_message") or ("Sync run failed" if st == "failed" else None)
+
+        if latest_success_log:
+            log_success_ts = latest_success_log.get("completed_at") or latest_success_log.get("started_at")
+            if log_success_ts and (last_success is None or log_success_ts >= last_success):
+                last_success = log_success_ts
+
         return {
             "auto_sync_enabled": settings.auto_sync_enabled,
             "scheduler_active": self.is_active,
@@ -250,11 +419,11 @@ class IngestionScheduler:
             "interval_hours": settings.sync_interval_hours,
             "refresh_interval_minutes": settings.effective_refresh_interval_minutes,
             "interval_minutes": settings.effective_refresh_interval_minutes,
-            "last_run_timestamp": self._last_run_timestamp,
-            "last_attempted_run_timestamp": self._last_attempted_run_timestamp,
-            "last_successful_run_timestamp": self._last_successful_run_timestamp,
-            "last_run_duration_ms": self._last_run_duration_ms,
-            "last_error": self._last_error,
+            "last_run_timestamp": last_run,
+            "last_attempted_run_timestamp": last_attempt,
+            "last_successful_run_timestamp": last_success,
+            "last_run_duration_ms": duration_ms,
+            "last_error": last_error,
         }
 
 

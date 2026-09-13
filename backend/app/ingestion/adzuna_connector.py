@@ -18,6 +18,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.core.data_mode import is_explicit_demo_mode
 from app.ingestion.base_adapter import (
     BaseSourceAdapter,
     SOURCE_TYPE_LIVE_API,
@@ -120,6 +121,8 @@ class AdzunaConnector(BaseSourceAdapter):
             "User-Agent": "SkillSetu-IngestionBot/1.0 (Maharashtra Labour Market Intelligence)",
             "Accept": "application/json",
         }
+        self.last_status: str = "IDLE"
+        self.last_error: str | None = None
 
     @property
     def has_credentials(self) -> bool:
@@ -136,26 +139,33 @@ class AdzunaConnector(BaseSourceAdapter):
         results_per_page: int = 25,
         what: str = "engineer OR technician OR developer OR analyst",
         where: str = "Maharashtra",
+        is_demo: bool | None = None,
         **kwargs: Any,
     ) -> list[dict[str, Any]]:
-        """Fetch raw job results from Adzuna API with exponential backoff.
-
-        If credentials are not configured, falls back to the curated, authentic
-        historical snapshot and flags each record with is_snapshot=True.
-        """
-        if not self.has_credentials:
-            logger.info("[Adzuna] ADZUNA_APP_ID/KEY not configured. Using historical verified snapshot for Maharashtra.")
+        if is_explicit_demo_mode(is_demo):
+            self.last_status = "SUCCESS"
+            self.last_error = None
             return self._get_verified_snapshot()
 
+        if not self.has_credentials:
+            self.last_status = "NOT_CONFIGURED"
+            self.last_error = "ADZUNA_APP_ID / ADZUNA_APP_KEY not configured in production environment."
+            logger.warning("[Adzuna] %s", self.last_error)
+            return []
+
         url = f"{ADZUNA_BASE_URL}/{page}"
-        params = {
+        params: dict[str, Any] = {
             "app_id": self.app_id,
             "app_key": self.app_key,
             "results_per_page": results_per_page,
-            "what": what,
             "where": where,
             "content-type": "application/json",
         }
+        if what:
+            if " OR " in what:
+                params["what_or"] = " ".join([w.strip() for w in what.split(" OR ") if w.strip()])
+            else:
+                params["what"] = what
 
         last_error = None
         for attempt in range(1, self.max_retries + 1):
@@ -166,34 +176,39 @@ class AdzunaConnector(BaseSourceAdapter):
                 if response.status_code == 200:
                     data = response.json()
                     results = data.get("results", [])
-                    logger.info("[Adzuna] Received %d live jobs from Adzuna API", len(results))
-                    # Mark records as live
                     for r in results:
                         r["is_snapshot"] = False
+                    self.last_status = "SUCCESS" if results else "NO_DATA"
+                    self.last_error = None
                     return results
 
                 if response.status_code in (401, 403):
-                    logger.warning("[Adzuna] Authentication failed (HTTP %d). Check ADZUNA_APP_ID/KEY.", response.status_code)
+                    last_error = f"Adzuna authentication failed (HTTP {response.status_code}). Check ADZUNA_APP_ID/KEY."
+                    logger.warning("[Adzuna] %s", last_error)
                     break
 
                 if response.status_code == 429:
-                    logger.warning("[Adzuna] Rate limit hit (HTTP 429). Backing off.")
+                    last_error = "Adzuna rate limit exceeded (HTTP 429)."
+                    logger.warning("[Adzuna] %s Backing off.", last_error)
                     time.sleep(2.0 * attempt)
                     continue
 
-                logger.warning("[Adzuna] Returned HTTP %d: %s", response.status_code, response.text[:200])
+                last_error = f"Adzuna returned HTTP {response.status_code}: {response.text[:200]}"
+                logger.warning("[Adzuna] %s", last_error)
 
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_error = exc
-                logger.warning("[Adzuna] Network issue on attempt %d: %s", attempt, exc)
+                last_error = f"Adzuna network issue on attempt {attempt}: {exc}"
+                logger.warning("[Adzuna] %s", last_error)
                 time.sleep(1.5 * attempt)
             except Exception as exc:
-                last_error = exc
-                logger.error("[Adzuna] Unexpected error querying Adzuna: %s", exc)
+                last_error = f"Unexpected error querying Adzuna: {exc}"
+                logger.error("[Adzuna] %s", last_error)
                 break
 
-        logger.warning("[Adzuna] Live fetch failed (%s). Falling back to historical verified snapshot.", last_error)
-        return self._get_verified_snapshot()
+        self.last_status = "FAILED"
+        self.last_error = str(last_error)
+        logger.warning("[Adzuna] Live fetch failed: %s", last_error)
+        return []
 
     def validate_and_transform(
         self,

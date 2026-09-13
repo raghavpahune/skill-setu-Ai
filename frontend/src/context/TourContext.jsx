@@ -301,7 +301,7 @@ export const PUBLIC_TOUR_STEPS = [
     route: '/',
     targetSelector: '[data-demo="hero-section"]',
     stage: '01. Overview',
-    title: 'SkillSetu — Maharashtra Workforce Intelligence',
+    title: 'SkillSetuAI — Maharashtra Workforce Intelligence',
     description: 'An evidence-based closed-loop platform connecting Government, Industry, Institutes, and Students.',
     whyItMatters: 'Select any demo role to experience a tailored, domain-specific platform.',
     badge: 'One Platform • Five Experiences',

@@ -1,4 +1,4 @@
-# SkillSetu
+# SkillSetuAI
 
 AI-Powered Labour-Market Intelligence & Curriculum-Alignment Platform
 
@@ -6,9 +6,9 @@ Government of Maharashtra — Department of Skills, Employment, Entrepreneurship
 
 ---
 
-## What is SkillSetu?
+## What is SkillSetuAI?
 
-SkillSetu converts changing industry demand into actionable skill, curriculum, training, and career decisions. It connects **Government**, **Training Institutes**, **Employers**, and **Students** through continuously updated labour-market intelligence.
+SkillSetuAI converts changing industry demand into actionable skill, curriculum, training, and career decisions. It connects **Government**, **Training Institutes**, **Employers**, and **Students** through continuously updated labour-market intelligence.
 
 ## Quick Start
 

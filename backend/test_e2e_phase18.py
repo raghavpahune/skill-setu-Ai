@@ -20,6 +20,8 @@ init_demo_users()
 ADMIN_KEY = "demo-admin-key-2026"
 EMPLOYER_TOKEN = create_access_token({"sub": "usr-employer-001", "email": "employer@skillsetu.gov.in", "role": "EMPLOYER"})
 EMPLOYER_AUTH_HEADERS = {"Authorization": f"Bearer {EMPLOYER_TOKEN}"}
+STUDENT_TOKEN = create_access_token({"sub": "usr-student-001", "email": "student@skillsetu.gov.in", "role": "STUDENT"})
+STUDENT_AUTH_HEADERS = {"Authorization": f"Bearer {STUDENT_TOKEN}"}
 
 
 pytestmark = pytest.mark.usefixtures("enable_demo_mode")
@@ -51,22 +53,31 @@ def test_full_student_assessment_to_recommendation_and_copilot_flow():
         },
     }
 
-    res_ast = client.post("/api/student/assessment", json=assessment_payload)
+    res_ast = client.post("/api/student/assessment", json=assessment_payload, headers=STUDENT_AUTH_HEADERS)
     assert res_ast.status_code == 200
     ast_data = res_ast.json()
     assert ast_data["status"] == "success"
     ast_record = ast_data["assessment"]
     ast_id = ast_record["id"]
 
-    # Verify provenance & evaluation
     assert ast_record["source"] == "USER_SUBMITTED"
     assert ast_record["is_demo"] is False
     assert ast_record["quiz_score_pct"] == 100
     assert "evaluation_summary" in ast_record
     assert ast_record["evaluation_summary"]["target_role"] == "EV Technician"
 
-    # Step 2: Request personalized career recommendations for this submitted assessment
-    res_rec = client.get(f"/api/student/recommendations/{ast_id}")
+    assert client.get(f"/api/student/recommendations/{ast_id}").status_code == 401
+    assert client.get(f"/api/schemes/recommended/{ast_id}").status_code == 401
+    assert client.get(f"/api/gov/opportunities/recommended/{ast_id}").status_code == 401
+    assert client.post(
+        "/api/copilot/explain-career",
+        json={
+            "student_id": ast_id,
+            "question": "Why is EV Technician recommended for me and what are my missing skills?",
+        },
+    ).status_code == 401
+
+    res_rec = client.get(f"/api/student/recommendations/{ast_id}", headers=STUDENT_AUTH_HEADERS)
     assert res_rec.status_code == 200
     rec_data = res_rec.json()
     assert rec_data["status"] == "success"
@@ -74,15 +85,13 @@ def test_full_student_assessment_to_recommendation_and_copilot_flow():
     assert rec_data["candidate_name"] == "Tanvi Joshi"
     assert rec_data["target_career_goal"] == "EV Technician"
 
-    # Verify recommended career rankings
     top_rec = rec_data["top_recommendation"]
     assert top_rec["role_name"] == "EV Technician"
     assert "EV Battery Technology" in top_rec["missing_skills"]
     assert len(top_rec["explanation_reasons"]) > 0
     assert rec_data["data_provenance"]["student_profile_source"] == "USER_SUBMITTED"
 
-    # Step 3: Verify personalized government schemes recommendations
-    res_schemes = client.get(f"/api/schemes/recommended/{ast_id}")
+    res_schemes = client.get(f"/api/schemes/recommended/{ast_id}", headers=STUDENT_AUTH_HEADERS)
     assert res_schemes.status_code == 200
     schemes_data = res_schemes.json()
     assert schemes_data["student_id"] == ast_id
@@ -91,20 +100,19 @@ def test_full_student_assessment_to_recommendation_and_copilot_flow():
         assert "match_reasons" in s
         assert "source" in s
 
-    # Step 4: Verify personalized government opportunities recommendations
-    res_gov = client.get(f"/api/gov/opportunities/recommended/{ast_id}")
+    res_gov = client.get(f"/api/gov/opportunities/recommended/{ast_id}", headers=STUDENT_AUTH_HEADERS)
     assert res_gov.status_code == 200
     gov_data = res_gov.json()
     assert gov_data["student_id"] == ast_id
     assert len(gov_data["opportunities"]) > 0
 
-    # Step 5: Query AI Copilot with this user assessment ID
     res_copilot = client.post(
         "/api/copilot/explain-career",
         json={
             "student_id": ast_id,
             "question": "Why is EV Technician recommended for me and what are my missing skills?",
         },
+        headers=STUDENT_AUTH_HEADERS,
     )
     assert res_copilot.status_code == 200
     copilot_data = res_copilot.json()

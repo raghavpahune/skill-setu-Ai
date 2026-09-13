@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from app.core.security import is_demo_student_id
+from app.core.time import parse_iso_timestamp
 from app.db import get_demo
 from app.repositories import supabase_repository
 
@@ -232,31 +233,20 @@ def _extract_student_skills(profile: dict[str, Any] | None, assessment: dict[str
                 "category": matched_meta.get("category", "General") if matched_meta else "General",
                 "nsqf_level": matched_meta.get("nsqf_level", 5) if matched_meta else 5,
             }
-        else:
-            rank = {"expert": 4, "advanced": 3, "intermediate": 2, "beginner": 1}
-            current_rank = rank.get(claimed[resolved_id]["proficiency"], 2)
-            new_rank = rank.get(clean_prof, 2)
-            if new_rank > current_rank:
-                claimed[resolved_id]["proficiency"] = clean_prof
 
-    if profile:
-        raw_skills = profile.get("skills") or []
+    prof_time = parse_iso_timestamp((profile.get("updated_at") or profile.get("created_at") or "") if profile else "")
+    asst_time = parse_iso_timestamp((assessment.get("updated_at") or assessment.get("created_at") or "") if assessment else "")
+    prof_skills = (profile.get("skills") or []) if profile else []
+    asst_skills = (assessment.get("current_skills") or []) if assessment else []
+    sources = [(profile, prof_skills), (assessment, asst_skills)] if prof_time >= asst_time else [(assessment, asst_skills), (profile, prof_skills)]
+    for src_obj, raw_skills in sources:
+        if not src_obj:
+            continue
         for sk in raw_skills:
             if isinstance(sk, dict):
                 sid = sk.get("skill_id") or sk.get("id")
-                name = sk.get("name") or sk.get("skill_name")
-                prof = sk.get("proficiency") or sk.get("level")
-                record_skill(sid, name, prof)
-            elif isinstance(sk, str):
-                record_skill(None, sk, "intermediate")
-
-    if assessment:
-        raw_current = assessment.get("current_skills") or []
-        for sk in raw_current:
-            if isinstance(sk, dict):
-                sid = sk.get("skill_id") or sk.get("id")
                 name = sk.get("skill_name") or sk.get("name")
-                prof = sk.get("level") or sk.get("proficiency")
+                prof = sk.get("proficiency") or sk.get("level")
                 record_skill(sid, name, prof)
             elif isinstance(sk, str):
                 record_skill(None, sk, "intermediate")
@@ -267,10 +257,18 @@ def _extract_student_skills(profile: dict[str, Any] | None, assessment: dict[str
 def _get_target_role(student_id: str, requested_role: str | None, profile: dict[str, Any] | None, assessment: dict[str, Any] | None) -> str:
     if requested_role and requested_role.strip():
         return requested_role.strip()
-    if profile and profile.get("target_role"):
-        return str(profile["target_role"]).strip()
-    if assessment and assessment.get("career_goal"):
-        return str(assessment["career_goal"]).strip()
+    prof_time = parse_iso_timestamp((profile.get("updated_at") or profile.get("created_at") or "") if profile else "")
+    asst_time = parse_iso_timestamp((assessment.get("updated_at") or assessment.get("created_at") or "") if assessment else "")
+    if prof_time >= asst_time:
+        if profile and (profile.get("target_role") or profile.get("desired_role")):
+            return str(profile.get("target_role") or profile.get("desired_role")).strip()
+        if assessment and assessment.get("career_goal"):
+            return str(assessment["career_goal"]).strip()
+    else:
+        if assessment and assessment.get("career_goal"):
+            return str(assessment["career_goal"]).strip()
+        if profile and (profile.get("target_role") or profile.get("desired_role")):
+            return str(profile.get("target_role") or profile.get("desired_role")).strip()
     return "AI Engineer"
 
 

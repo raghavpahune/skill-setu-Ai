@@ -322,7 +322,6 @@ class DemoProvider(LLMProvider):
                 "* **Action:** Submit candidate skill feedback to accelerate state-level syllabus adjustments."
             )
 
-        # 8. Forecast query
         if "forecast" in prompt_lower or "trend" in prompt_lower:
             return (
                 "### 12-to-24 Month Skill Forecast\n\n"
@@ -331,7 +330,26 @@ class DemoProvider(LLMProvider):
                 "* **Automating / Shifting:** Traditional Manual Drafting, Basic Data Entry."
             )
 
-        # Default Maharashtra overview
+        if "transition" in prompt_lower or "upskill" in prompt_lower or "employee" in prompt_lower or "mobility" in prompt_lower or ctx.get("employee_profile"):
+            ep = ctx.get("employee_profile") or {}
+            c_role = ep.get("current_role") or "Experienced Professional"
+            t_role = ep.get("target_role") or "Emerging Technology Lead"
+            skills_list = ep.get("skills") or ["Technical Foundations", "Domain Experience"]
+            skills_str = ", ".join(f"**{s}**" for s in skills_list[:5])
+            certs = ep.get("certifications") or []
+            certs_str = ", ".join(certs) if certs else "State / Industry Recognized Credentials"
+            return (
+                f"### Career Transition & Upskilling Intelligence\n\n"
+                f"Strategic career transition path from **{c_role}** to **{t_role}** based on active Maharashtra industrial demands:\n\n"
+                f"#### 1. Transferable Competencies:\n"
+                f"* **Current Baseline:** {skills_str}\n"
+                f"* **Verified Credentials:** {certs_str}\n\n"
+                f"#### 2. Strategic Upskilling Bridge:\n"
+                f"1. **Audit High-Demand Frameworks:** Align existing competencies with state growth sectors (Smart Manufacturing, Electric Vehicles, Cloud/AI).\n"
+                f"2. **Hands-On Capstone:** Complete an industry-aligned technical prototype demonstrating bridge competencies.\n"
+                f"3. **Targeted Certification:** Attain NSQF Level 6/7 specialized certifications recognized by Maharashtra industrial clusters (Pune, Chhatrapati Sambhajinagar, Mumbai)."
+            )
+
         return (
             "### SkillSetu Labour-Market Intelligence\n\n"
             "SkillSetu continuously indexes 55+ skills, 560+ job postings, and 27 accredited training courses across 10 Maharashtra districts.\n\n"
