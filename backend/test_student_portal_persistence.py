@@ -435,3 +435,258 @@ def test_supplementary_sqlite_database_contract_simulation():
     assert cursor.fetchone()[0] == "ML Engineer"
 
     conn.close()
+
+
+@pytest.fixture
+def admin_user_and_headers():
+    admin_id = f"usr-admin-{uuid.uuid4().hex[:8]}"
+    save_user({
+        "id": admin_id,
+        "email": f"{admin_id}@skillsetu.gov.in",
+        "role": "ADMIN",
+        "full_name": "Portal Admin",
+        "name": "Portal Admin",
+    })
+    token = create_access_token({"sub": admin_id, "email": f"{admin_id}@skillsetu.gov.in", "role": "ADMIN"})
+    return admin_id, {"Authorization": f"Bearer {token}"}
+
+
+def test_student_profile_put_full_flow(student_user_and_headers):
+    user_id, headers = student_user_and_headers
+    client_db = get_client()
+
+    ml_uuid = str(uuid.uuid4())
+    py_uuid = str(uuid.uuid4())
+    client_db.table("skills").rows = [
+        r for r in client_db.table("skills").rows
+        if r.get("name") not in ("Machine Learning", "Python")
+    ]
+    client_db.table("skills").rows.extend([
+        {
+            "id": ml_uuid,
+            "name": "Machine Learning",
+            "category": "AI/ML",
+            "nsqf_level": 7,
+            "synonyms": ["ML", "Statistical Learning"],
+        },
+        {
+            "id": py_uuid,
+            "name": "Python",
+            "category": "Programming",
+            "nsqf_level": 6,
+            "synonyms": ["Python3", "Py"],
+        },
+    ])
+
+    payload = {
+        "full_name": "Full Put Student",
+        "institution": "National Institute of Technology",
+        "degree": "B.Tech Computer Science and Engineering",
+        "education_level": "Undergraduate (B.Tech / B.E / B.Sc)",
+        "academic_year": "Final Year",
+        "graduation_year": 2026,
+        "desired_role": "Machine Learning Engineer",
+        "target_role": "Machine Learning Engineer",
+        "preferred_location": "Bengaluru",
+        "career_interests": ["Deep Learning", "Cloud Computing"],
+        "skills": [
+            {"skill_name": "Python", "proficiency": "advanced"},
+            {"skill_name": "ml", "proficiency": "intermediate"},
+            {"skill_name": "ProprietaryFramework99", "proficiency": "beginner"},
+        ],
+        "projects": [
+            {
+                "name": "SkillSetu Portal",
+                "description": "Production candidate workflow",
+                "skills": ["Python", "FastAPI", "React"],
+                "url": "https://skillsetu.gov.in/portal",
+            }
+        ],
+        "certifications": [
+            {
+                "name": "Cloud Practitioner",
+                "issuer": "",
+                "issue_date": "2026-03-01",
+                "url": "https://certs.example.com/123",
+            }
+        ],
+        "courses": [
+            {
+                "course_name": "Advanced Neural Networks",
+                "provider": "Coursera",
+                "status": "completed",
+            }
+        ],
+        "experience": [
+            {
+                "company": "GovTech Labs",
+                "role": "Junior Data Intern",
+                "duration": "12 months",
+                "description": "Engineered analytical pipelines",
+            }
+        ],
+    }
+
+    with TestClient(app) as http_client:
+        put_res = http_client.put("/api/student/profile", json=payload, headers=headers)
+        assert put_res.status_code == 200
+        put_data = put_res.json()
+        assert put_data["status"] == "success"
+        prof = put_data["profile"]
+        assert prof["user_id"] == user_id
+        assert prof["full_name"] == "Full Put Student"
+        assert len(prof["skills"]) == 3
+        assert len(prof["projects"]) == 1
+        assert len(prof["certifications"]) == 1
+        assert prof["certifications"][0]["issuer"] == "Self-Certified / Industry"
+        assert len(prof["courses"]) == 1
+        assert len(prof["experience"]) == 1
+
+        get_res = http_client.get("/api/student/profile", headers=headers)
+        assert get_res.status_code == 200
+        reloaded = get_res.json()["profile"]
+        assert reloaded["user_id"] == user_id
+        assert reloaded["institution"] == "National Institute of Technology"
+        assert reloaded["certifications"][0]["issuer"] == "Self-Certified / Industry"
+        assert reloaded["experience"][0]["company"] == "GovTech Labs"
+
+    prof_rows = [r for r in client_db.table("student_profiles").rows if r.get("user_id") == user_id]
+    assert len(prof_rows) == 1
+    stored_skills = prof_rows[0].get("skills") or []
+    assert len(stored_skills) == 3
+    skill_names = {s.get("skill_name") for s in stored_skills}
+    assert "Python" in skill_names
+    assert "ml" in skill_names
+    assert "ProprietaryFramework99" in skill_names
+
+    skill_rows = [r for r in client_db.table("student_skills").rows if r.get("user_id") == user_id]
+    assert len(skill_rows) == 2
+    rel_ids = {r["skill_id"] for r in skill_rows}
+    assert py_uuid in rel_ids
+    assert ml_uuid in rel_ids
+
+
+def test_student_profile_experience_endpoint(student_user_and_headers):
+    user_id, headers = student_user_and_headers
+
+    with TestClient(app) as http_client:
+        init_res = http_client.put(
+            "/api/student/profile",
+            json={"target_role": "Backend Engineer"},
+            headers=headers,
+        )
+        assert init_res.status_code == 200
+
+        exp_payload = {
+            "experience": [
+                {
+                    "company": "Tech Corp",
+                    "role": "Software Engineer",
+                    "duration": "2 years",
+                    "description": "Backend API development",
+                }
+            ]
+        }
+        exp_res = http_client.put("/api/student/profile/experience", json=exp_payload, headers=headers)
+        assert exp_res.status_code == 200
+        assert len(exp_res.json()["experience"]) == 1
+
+        get_res = http_client.get("/api/student/profile", headers=headers)
+        assert get_res.status_code == 200
+        prof = get_res.json()["profile"]
+        assert len(prof["experience"]) == 1
+        assert prof["experience"][0]["company"] == "Tech Corp"
+
+
+def test_student_profile_cross_user_user_id_query_param(
+    student_user_and_headers,
+    other_student_headers,
+    admin_user_and_headers,
+):
+    user_a_id, headers_a = student_user_and_headers
+    user_b_id, headers_b = other_student_headers
+    admin_id, admin_headers = admin_user_and_headers
+
+    with TestClient(app) as http_client:
+        create_res = http_client.put(
+            "/api/student/profile",
+            json={"target_role": "Target Student A", "full_name": "Student A Original"},
+            headers=headers_a,
+        )
+        assert create_res.status_code == 200
+
+        forbidden_get = http_client.get(f"/api/student/profile?user_id={user_a_id}", headers=headers_b)
+        assert forbidden_get.status_code == 403
+
+        forbidden_put = http_client.put(
+            f"/api/student/profile?user_id={user_a_id}",
+            json={"target_role": "Hacked Role"},
+            headers=headers_b,
+        )
+        assert forbidden_put.status_code == 403
+
+        admin_get = http_client.get(f"/api/student/profile?user_id={user_a_id}", headers=admin_headers)
+        assert admin_get.status_code == 200
+        assert admin_get.json()["profile"]["target_role"] == "Target Student A"
+
+        admin_put = http_client.put(
+            f"/api/student/profile?user_id={user_a_id}",
+            json={"target_role": "Admin Updated Role", "full_name": "Student A Updated"},
+            headers=admin_headers,
+        )
+        assert admin_put.status_code == 200
+        assert admin_put.json()["profile"]["target_role"] == "Admin Updated Role"
+
+        owner_get = http_client.get("/api/student/profile", headers=headers_a)
+        assert owner_get.status_code == 200
+        assert owner_get.json()["profile"]["target_role"] == "Admin Updated Role"
+
+
+def test_student_profile_with_fake_uuid_resolves_cleanly(student_user_and_headers):
+    user_id, headers = student_user_and_headers
+    client_db = get_client()
+
+    authoritative_uuid = str(uuid.uuid4())
+    client_db.table("skills").rows = [
+        r for r in client_db.table("skills").rows if r.get("name") != "Machine Learning"
+    ]
+    client_db.table("skills").rows.append({
+        "id": authoritative_uuid,
+        "name": "Machine Learning",
+        "category": "AI/ML",
+        "synonyms": ["ML"],
+    })
+
+    fake_uuid_1 = "11111111-2222-3333-4444-555555555555"
+    fake_uuid_2 = "99999999-8888-7777-6666-555555555555"
+
+    payload = {
+        "target_role": "ML Engineer",
+        "skills": [
+            {
+                "skill_id": fake_uuid_1,
+                "skill_name": "Machine Learning",
+                "proficiency": "advanced",
+            },
+            {
+                "skill_id": fake_uuid_2,
+                "skill_name": "TotallyCustomSkillWithFakeUuid",
+                "proficiency": "beginner",
+            },
+        ],
+    }
+
+    with TestClient(app) as http_client:
+        put_res = http_client.put("/api/student/profile", json=payload, headers=headers)
+        assert put_res.status_code == 200
+        prof = put_res.json()["profile"]
+        assert len(prof["skills"]) == 2
+
+        skills_by_name = {s["skill_name"]: s for s in prof["skills"]}
+        assert skills_by_name["Machine Learning"]["skill_id"] == authoritative_uuid
+        assert skills_by_name["TotallyCustomSkillWithFakeUuid"]["skill_id"] is None
+
+    skill_rows = [r for r in client_db.table("student_skills").rows if r.get("user_id") == user_id]
+    assert len(skill_rows) == 1
+    assert skill_rows[0]["skill_id"] == authoritative_uuid
+    assert skill_rows[0]["proficiency"] == "advanced"

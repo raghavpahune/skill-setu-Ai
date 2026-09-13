@@ -550,13 +550,18 @@ def upsert_student_profile(profile_data: dict[str, Any]) -> dict[str, Any]:
                             if syn and isinstance(syn, str):
                                 tax_map[syn.strip().lower()] = str(tid)
 
+                authoritative_ids = set(tax_map.values())
                 new_rel_skills = []
                 for sk in clean_profile["skills"]:
                     if not isinstance(sk, dict):
                         continue
                     sname = (sk.get("skill_name") or sk.get("name") or "").strip()
                     existing_sid = sk.get("skill_id") or sk.get("id")
-                    sid = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else tax_map.get(sname.lower())
+                    existing_sid_str = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else None
+                    if existing_sid_str and existing_sid_str in authoritative_ids:
+                        sid = existing_sid_str
+                    else:
+                        sid = tax_map.get(sname.lower())
                     if not sid:
                         continue
                     raw_prof = str(sk.get("proficiency") or "intermediate").strip().lower()

@@ -75,13 +75,20 @@ class ProjectItem(BaseModel):
 
 class CertificationItem(BaseModel):
     name: str = Field(..., min_length=1, max_length=150)
-    issuer: str = Field(..., min_length=1, max_length=150)
+    issuer: str = Field(default="Self-Certified / Industry", max_length=150)
     issue_date: str | None = Field(None, max_length=50)
     url: str | None = Field(None, max_length=500)
 
-    @field_validator("name", "issuer")
+    @field_validator("issuer", mode="before")
     @classmethod
-    def validate_text(cls, v: str) -> str:
+    def validate_issuer(cls, v: Any) -> str:
+        if not v or not isinstance(v, str) or not v.strip():
+            return "Self-Certified / Industry"
+        return v.strip()
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
         clean = v.strip()
         if not clean:
             raise ValueError("Field cannot be empty")
@@ -191,45 +198,54 @@ def resolve_taxonomy_skill_ids(skills: list[dict[str, Any]]) -> list[dict[str, A
         from app.db import _cache
         tax_skills = _cache.get("skills", []) or []
     name_map = {}
-    is_authoritative = {}
+    valid_ids = set()
     for s in tax_skills:
         sname = s.get("name")
         sid = s.get("id")
         if not sname or not sid:
             continue
+        if not _is_valid_uuid(sid):
+            continue
+        valid_id = str(sid)
+        valid_ids.add(valid_id)
         canon_key = sname.strip().lower()
-        if _is_valid_uuid(sid):
-            valid_id = str(sid)
-            auth_flag = True
-        else:
-            valid_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"skill.{canon_key}"))
-            auth_flag = False
-
         keys_to_set = [canon_key]
         for syn in s.get("synonyms", []) or []:
             if syn and isinstance(syn, str) and syn.strip():
                 keys_to_set.append(syn.strip().lower())
 
         for k in keys_to_set:
-            if k not in name_map or (auth_flag and not is_authoritative.get(k, False)):
+            if k not in name_map:
                 name_map[k] = valid_id
-                is_authoritative[k] = auth_flag
 
     resolved = []
     for sk in skills:
         sname = sk.get("skill_name", "") or sk.get("name", "")
         clean_key = sname.strip().lower()
         existing_sid = sk.get("skill_id") or sk.get("id")
-        sid = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else name_map.get(clean_key)
-        resolved.append({
-            **sk,
-            "skill_id": str(sid) if sid is not None else None,
-        })
+        existing_sid_str = str(existing_sid).strip() if existing_sid and _is_valid_uuid(existing_sid) else None
+
+        if existing_sid_str and existing_sid_str in valid_ids:
+            sid = existing_sid_str
+        elif clean_key in name_map:
+            sid = name_map[clean_key]
+        else:
+            sid = None
+
+        resolved_sk = dict(sk)
+        resolved_sk["skill_id"] = sid
+        if "id" in resolved_sk and resolved_sk["id"] != sid:
+            if sid is not None:
+                resolved_sk["id"] = sid
+            else:
+                del resolved_sk["id"]
+        resolved.append(resolved_sk)
     return resolved
 
 
 @router.get("/student/profile")
 async def get_my_student_profile(
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -238,11 +254,16 @@ async def get_my_student_profile(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student profile access requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        profile = supabase_repository.get_student_profile(user_id)
+        profile = supabase_repository.get_student_profile(target_user_id)
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure fetching student profile %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure fetching student profile %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database query failed for student profile.",
@@ -251,7 +272,7 @@ async def get_my_student_profile(
     if not profile:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student profile not found for user '{user_id}'.",
+            detail=f"Student profile not found for user '{target_user_id}'.",
         )
     return {
         "status": "success",
@@ -267,11 +288,14 @@ def ensure_user_in_supabase(user_id: str, current_user: dict[str, Any], role: st
     try:
         user_res = client.table("users").select("id").eq("id", user_id).execute()
         if not user_res.data:
+            name = (current_user.get("full_name") or current_user.get("name") or "Platform User") if user_id == current_user.get("id") else f"User {user_id[:8]}"
+            email = (current_user.get("email") or f"{user_id}@skillsetu.gov.in") if user_id == current_user.get("id") else f"{user_id}@skillsetu.gov.in"
+            user_role = role if user_id == current_user.get("id") else "STUDENT"
             client.table("users").upsert({
                 "id": user_id,
-                "name": current_user.get("full_name") or current_user.get("name") or "Platform User",
-                "email": current_user.get("email") or f"{user_id}@skillsetu.gov.in",
-                "role": role,
+                "name": name,
+                "email": email,
+                "role": user_role,
             }, on_conflict="id").execute()
     except Exception as e:
         logger.warning("[Profile] Failed ensuring user presence in Supabase users table: %s", e)
@@ -280,6 +304,7 @@ def ensure_user_in_supabase(user_id: str, current_user: dict[str, Any], role: st
 @router.post("/student/profile", status_code=status.HTTP_201_CREATED)
 async def create_student_profile(
     payload: StudentProfilePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -288,8 +313,13 @@ async def create_student_profile(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student profile creation requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
-    ensure_user_in_supabase(user_id, current_user, role)
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
+    ensure_user_in_supabase(target_user_id, current_user, role)
     now_iso = datetime.now(timezone.utc).isoformat()
     raw_skills = [s.model_dump() for s in payload.skills]
     deduped_skills = deduplicate_skills(raw_skills)
@@ -299,8 +329,8 @@ async def create_student_profile(
     try:
         resolved_skills = resolve_taxonomy_skill_ids(deduped_skills)
         profile_dict = {
-            "user_id": user_id,
-            "full_name": payload.full_name or current_user.get("full_name") or "",
+            "user_id": target_user_id,
+            "full_name": payload.full_name or (current_user.get("full_name") if target_user_id == current_user["id"] else "") or "",
             "institution": payload.institution,
             "degree": payload.degree,
             "education_level": payload.education_level,
@@ -323,7 +353,7 @@ async def create_student_profile(
         }
         saved = supabase_repository.upsert_student_profile(profile_dict)
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure creating student profile %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure creating student profile %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed for student profile. Please try again later.",
@@ -339,6 +369,7 @@ async def create_student_profile(
 @router.put("/student/profile")
 async def update_student_profile(
     payload: StudentProfilePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -347,8 +378,13 @@ async def update_student_profile(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student profile update requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
-    ensure_user_in_supabase(user_id, current_user, role)
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
+    ensure_user_in_supabase(target_user_id, current_user, role)
     now_iso = datetime.now(timezone.utc).isoformat()
     raw_skills = [s.model_dump() for s in payload.skills]
     deduped_skills = deduplicate_skills(raw_skills)
@@ -358,8 +394,8 @@ async def update_student_profile(
     try:
         resolved_skills = resolve_taxonomy_skill_ids(deduped_skills)
         profile_dict = {
-            "user_id": user_id,
-            "full_name": payload.full_name or current_user.get("full_name") or "",
+            "user_id": target_user_id,
+            "full_name": payload.full_name or (current_user.get("full_name") if target_user_id == current_user["id"] else "") or "",
             "institution": payload.institution,
             "degree": payload.degree,
             "education_level": payload.education_level,
@@ -380,7 +416,7 @@ async def update_student_profile(
         }
         saved = supabase_repository.upsert_student_profile(profile_dict)
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure updating student profile %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure updating student profile %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed for student profile. Please try again later.",
@@ -396,6 +432,7 @@ async def update_student_profile(
 @router.patch("/student/profile")
 async def patch_student_profile(
     payload: StudentProfilePatchPayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -404,12 +441,17 @@ async def patch_student_profile(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student profile patch requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
-    ensure_user_in_supabase(user_id, current_user, role)
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
+    ensure_user_in_supabase(target_user_id, current_user, role)
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database query failure on patch %s: %s", user_id, e)
+        logger.exception("[Profile] Database query failure on patch %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database query failed for student profile.",
@@ -418,7 +460,7 @@ async def patch_student_profile(
     if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Student profile not found for user '{user_id}'.",
+            detail=f"Student profile not found for user '{target_user_id}'.",
         )
 
     try:
@@ -443,7 +485,7 @@ async def patch_student_profile(
         merged = {**existing, **patch_data, "updated_at": datetime.now(timezone.utc).isoformat()}
         saved = supabase_repository.upsert_student_profile(merged)
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database upsert failure on patch %s: %s", user_id, e)
+        logger.exception("[Profile] Database upsert failure on patch %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed for student profile patch. Please try again later.",
@@ -463,6 +505,7 @@ class SkillsUpdatePayload(BaseModel):
 @router.put("/student/profile/skills")
 async def update_student_skills(
     payload: SkillsUpdatePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -471,9 +514,14 @@ async def update_student_skills(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student skills update requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         raw_skills = [s.model_dump() for s in payload.skills]
@@ -485,7 +533,7 @@ async def update_student_skills(
             "skills": saved.get("skills", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure updating student skills %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure updating student skills %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student skills.",
@@ -495,6 +543,7 @@ async def update_student_skills(
 @router.post("/student/profile/skills")
 async def add_student_skill(
     skill: SkillItem,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -503,9 +552,14 @@ async def add_student_skill(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student skill addition requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         curr_skills = list(existing.get("skills") or [])
@@ -518,7 +572,7 @@ async def add_student_skill(
             "skills": saved.get("skills", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure adding student skill %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure adding student skill %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student skill.",
@@ -528,6 +582,7 @@ async def add_student_skill(
 @router.delete("/student/profile/skills/{skill_name}")
 async def delete_student_skill(
     skill_name: str,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -536,10 +591,15 @@ async def delete_student_skill(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student skill deletion requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     clean_target = skill_name.strip().lower()
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         curr_skills = [
@@ -554,7 +614,7 @@ async def delete_student_skill(
             "skills": saved.get("skills", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure deleting student skill %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure deleting student skill %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student skill deletion.",
@@ -568,6 +628,7 @@ class ProjectsUpdatePayload(BaseModel):
 @router.put("/student/profile/projects")
 async def update_student_projects(
     payload: ProjectsUpdatePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -576,9 +637,14 @@ async def update_student_projects(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student projects update requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         updated = {
@@ -592,7 +658,7 @@ async def update_student_projects(
             "projects": saved.get("projects", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure updating student projects %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure updating student projects %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student projects.",
@@ -606,6 +672,7 @@ class CertificationsUpdatePayload(BaseModel):
 @router.put("/student/profile/certifications")
 async def update_student_certifications(
     payload: CertificationsUpdatePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -614,9 +681,14 @@ async def update_student_certifications(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student certifications update requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         updated = {
@@ -630,7 +702,7 @@ async def update_student_certifications(
             "certifications": saved.get("certifications", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure updating student certifications %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure updating student certifications %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student certifications.",
@@ -644,6 +716,7 @@ class CoursesUpdatePayload(BaseModel):
 @router.put("/student/profile/courses")
 async def update_student_courses(
     payload: CoursesUpdatePayload,
+    user_id: str | None = None,
     current_user: dict[str, Any] = Depends(get_current_user),
 ):
     role = (current_user.get("role") or "").upper()
@@ -652,9 +725,14 @@ async def update_student_courses(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Student courses update requires STUDENT or ADMIN role.",
         )
-    user_id = current_user["id"]
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
     try:
-        existing = supabase_repository.get_student_profile(user_id)
+        existing = supabase_repository.get_student_profile(target_user_id)
         if not existing:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
         updated = {
@@ -668,10 +746,54 @@ async def update_student_courses(
             "courses": saved.get("courses", []),
         }
     except SupabaseRepositoryError as e:
-        logger.exception("[Profile] Database failure updating student courses %s: %s", user_id, e)
+        logger.exception("[Profile] Database failure updating student courses %s: %s", target_user_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database operation failed for student courses.",
+        ) from e
+
+
+class ExperienceUpdatePayload(BaseModel):
+    experience: list[ExperienceItem]
+
+
+@router.put("/student/profile/experience")
+async def update_student_experience(
+    payload: ExperienceUpdatePayload,
+    user_id: str | None = None,
+    current_user: dict[str, Any] = Depends(get_current_user),
+):
+    role = (current_user.get("role") or "").upper()
+    if role not in ("STUDENT", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Student experience update requires STUDENT or ADMIN role.",
+        )
+    if user_id and user_id != current_user["id"] and role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cannot access or modify another student's profile.",
+        )
+    target_user_id = user_id if (role == "ADMIN" and user_id) else current_user["id"]
+    try:
+        existing = supabase_repository.get_student_profile(target_user_id)
+        if not existing:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student profile not found.")
+        updated = {
+            **existing,
+            "experience": [e.model_dump() for e in payload.experience],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        saved = supabase_repository.upsert_student_profile(updated)
+        return {
+            "status": "success",
+            "experience": saved.get("experience", []),
+        }
+    except SupabaseRepositoryError as e:
+        logger.exception("[Profile] Database failure updating student experience %s: %s", target_user_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database operation failed for student experience.",
         ) from e
 
 

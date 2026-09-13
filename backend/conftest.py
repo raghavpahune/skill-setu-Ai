@@ -313,6 +313,8 @@ class MockSupabaseRpc:
                     for sk in req_skills:
                         if isinstance(sk, dict):
                             sid = str(sk.get("skill_id") or sk.get("id") or "").strip()
+                            if sid == "None":
+                                sid = ""
                             if not sid:
                                 s_name = str(sk.get("skill_name") or sk.get("name") or "").strip().lower()
                                 if s_name:
@@ -324,7 +326,7 @@ class MockSupabaseRpc:
                                             break
                             raw_prof = str(sk.get("proficiency") or "intermediate").strip().lower()
                             prof = raw_prof if raw_prof in ("beginner", "intermediate", "advanced", "expert") else "intermediate"
-                            if sid:
+                            if sid and sid != "None":
                                 new_skill_ids.add(sid)
                                 skills_table.upsert({
                                     "user_id": uid,
