@@ -1,3 +1,4 @@
+from pathlib import Path
 import sqlite3
 import uuid
 import pytest
@@ -690,3 +691,103 @@ def test_student_profile_with_fake_uuid_resolves_cleanly(student_user_and_header
     assert len(skill_rows) == 1
     assert skill_rows[0]["skill_id"] == authoritative_uuid
     assert skill_rows[0]["proficiency"] == "advanced"
+
+
+def test_student_profile_career_interests_persistence_and_round_trip(student_user_and_headers):
+    user_id, headers = student_user_and_headers
+    client_db = get_client()
+
+    initial_interests = ["Machine Learning", "Autonomous Systems", "Cloud Computing"]
+    payload_initial = {
+        "full_name": "Career Interest Tester",
+        "institution": "Tech Institute",
+        "degree": "Computer Science",
+        "target_role": "ML Engineer",
+        "career_interests": initial_interests,
+        "skills": [],
+    }
+
+    with TestClient(app) as http_client:
+        put_response = http_client.put("/api/student/profile", json=payload_initial, headers=headers)
+        assert put_response.status_code == 200
+        put_body = put_response.json()
+        assert put_body["status"] == "success"
+        assert put_body["profile"]["career_interests"] == initial_interests
+
+        get_response = http_client.get("/api/student/profile", headers=headers)
+        assert get_response.status_code == 200
+        get_body = get_response.json()
+        assert get_body["status"] == "success"
+        assert get_body["profile"]["career_interests"] == initial_interests
+
+    stored_profiles = [r for r in client_db.table("student_profiles").rows if r.get("user_id") == user_id]
+    assert len(stored_profiles) == 1
+    assert stored_profiles[0]["career_interests"] == initial_interests
+
+    updated_interests = ["Deep Learning", "Generative AI"]
+    payload_update = {
+        "career_interests": updated_interests,
+    }
+
+    with TestClient(app) as http_client:
+        patch_response = http_client.patch("/api/student/profile", json=payload_update, headers=headers)
+        assert patch_response.status_code == 200
+        patch_body = patch_response.json()
+        assert patch_body["status"] == "success"
+        assert patch_body["profile"]["career_interests"] == updated_interests
+
+        recheck_response = http_client.get("/api/student/profile", headers=headers)
+        assert recheck_response.status_code == 200
+        recheck_body = recheck_response.json()
+        assert recheck_body["profile"]["career_interests"] == updated_interests
+
+    updated_profiles = [r for r in client_db.table("student_profiles").rows if r.get("user_id") == user_id]
+    assert len(updated_profiles) == 1
+    assert updated_profiles[0]["career_interests"] == updated_interests
+
+
+def test_student_profile_missing_columns_migration_and_rpc_contract():
+    project_root = Path(__file__).resolve().parent.parent
+    migration_file = project_root / "data" / "migrations" / "20260913_add_missing_student_profile_columns.sql"
+    assert migration_file.is_file()
+    migration_sql = migration_file.read_text(encoding="utf-8")
+
+    expected_column_definitions = [
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS full_name TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS institution TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS degree TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS education_level TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS academic_year TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS graduation_year INT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS desired_role TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS preferred_location TEXT;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS career_interests TEXT[] DEFAULT '{}';",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '[]'::jsonb;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS projects JSONB DEFAULT '[]'::jsonb;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS certifications JSONB DEFAULT '[]'::jsonb;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS courses JSONB DEFAULT '[]'::jsonb;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS experience JSONB DEFAULT '[]'::jsonb;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS skill_match_pct INT DEFAULT 0;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'USER_SUBMITTED';",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT FALSE;",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();",
+        "ALTER TABLE public.student_profiles ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();",
+    ]
+
+    for col_def in expected_column_definitions:
+        assert col_def in migration_sql
+
+    schema_file = project_root / "data" / "schema.sql"
+    assert schema_file.is_file()
+    schema_sql = schema_file.read_text(encoding="utf-8")
+    assert "career_interests TEXT[] DEFAULT '{}'" in schema_sql
+    assert "experience JSONB DEFAULT '[]'::jsonb" in schema_sql
+    assert "ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS career_interests TEXT[] DEFAULT '{}';" in schema_sql
+    assert "ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS experience JSONB DEFAULT '[]'::jsonb;" in schema_sql
+
+    rpc_file = project_root / "data" / "migrations" / "20260912_fix_student_profile_sync_atomic.sql"
+    assert rpc_file.is_file()
+    rpc_sql = rpc_file.read_text(encoding="utf-8")
+    assert "career_interests," in rpc_sql
+    assert "experience," in rpc_sql
+
