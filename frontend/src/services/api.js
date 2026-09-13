@@ -573,6 +573,12 @@ export const api = {
   getCourseModernizationBlueprint: (courseId) => {
     return fetchJSON(`/curriculum/recommendations/${encodeURIComponent(courseId)}`);
   },
+  getAdminIntegrationsHealth: (adminKey = '') => {
+    const key = adminKey || (typeof window !== 'undefined' ? window.localStorage?.getItem('skillsetu_admin_key') : '');
+    const headers = key ? { 'X-Admin-Key': key } : {};
+    return fetchJSON('/admin/integrations/health', { headers });
+  },
 };
+
 
 

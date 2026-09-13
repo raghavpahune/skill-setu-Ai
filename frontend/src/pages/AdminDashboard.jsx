@@ -153,6 +153,7 @@ export default function AdminDashboard() {
   const [inspectSignalModalOpen, setInspectSignalModalOpen] = useState(false);
   const [signalAdminNotesInput, setSignalAdminNotesInput] = useState('');
   const [governanceData, setGovernanceData] = useState(null);
+  const [integrationsHealth, setIntegrationsHealth] = useState(null);
 
   // Load Student Assessment Data & Data Governance
   const fetchData = useCallback(() => {
@@ -175,7 +176,8 @@ export default function AdminDashboard() {
       api.getAdminAssessmentStats(adminKey),
       api.getAdminAssessments(params, adminKey),
       api.getDataGovernance(adminKey),
-    ]).then(([statsRes, listRes, govRes]) => {
+      api.getAdminIntegrationsHealth(adminKey),
+    ]).then(([statsRes, listRes, govRes, integRes]) => {
       if (statsRes.status === 'fulfilled' && statsRes.value?.status === 'success') {
         setStats(statsRes.value);
       } else if (statsRes.status === 'rejected' && statsRes.reason?.message?.includes('401')) {
@@ -193,9 +195,14 @@ export default function AdminDashboard() {
         setGovernanceData(govRes.value);
       }
 
+      if (integRes.status === 'fulfilled' && integRes.value?.status === 'success') {
+        setIntegrationsHealth(integRes.value);
+      }
+
       setLoading(false);
     });
   }, [adminKey, sourceFilter, districtFilter, careerGoalFilter, dateFrom, dateTo, searchTerm, page]);
+
 
 
   // Load Employer Demands Data (Phase 14)
@@ -885,7 +892,85 @@ export default function AdminDashboard() {
               </div>
             )}
 
-            {/* Real Data vs Demo Data Governance Card (§30) */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">
+                      Multi-Provider AI & External Data Routing
+                    </h3>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+                      Phase 37.3 Active
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Centralized multi-provider routing with resilient deterministic fallback and external connector telemetry.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`px-2.5 py-1 rounded-lg font-mono font-bold text-[11px] border ${
+                    integrationsHealth?.ai?.configured
+                      ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                      : 'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                  }`}>
+                    AI: {integrationsHealth?.ai?.configured ? 'Gemini Active' : 'Deterministic Fallback'}
+                  </span>
+                  <span className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300 border border-teal-300 dark:border-teal-800 font-mono font-bold text-[11px]">
+                    Tasks: 8 Categories
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">AI Provider Engine</span>
+                    <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
+                      {integrationsHealth?.ai?.model || 'gemini-3.6-flash'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
+                    <div>Status: <span className="font-semibold text-slate-800 dark:text-slate-200">{integrationsHealth?.ai?.configured ? 'Configured & Online' : 'Fallback Engaged'}</span></div>
+                    <div>Fallback Engine: <span className="font-semibold text-emerald-600 dark:text-emerald-400">Rule-Based Deterministic</span></div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Adzuna Jobs Feed</span>
+                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                      integrationsHealth?.external_data?.adzuna_jobs?.configured
+                        ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}>
+                      {integrationsHealth?.external_data?.adzuna_jobs?.status || 'SNAPSHOT_READY'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
+                    <div>Source: <span className="font-semibold text-slate-800 dark:text-slate-200">Adzuna India Jobs</span></div>
+                    <div>Fallback: <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified Local Snapshot</span></div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 dark:text-slate-300">data.gov.in (OGD)</span>
+                    <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
+                      integrationsHealth?.external_data?.datagov_schemes?.configured
+                        ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                        : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}>
+                      {integrationsHealth?.external_data?.datagov_schemes?.status || 'SNAPSHOT_READY'}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
+                    <div>Source: <span className="font-semibold text-slate-800 dark:text-slate-200">Open Government Data</span></div>
+                    <div>Fallback: <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verified Local Snapshot</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs p-6">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100 dark:border-slate-800">
                 <div>
@@ -901,6 +986,7 @@ export default function AdminDashboard() {
                     Real first-party user submissions persisted to disk and database alongside the immutable DEMO_SYNTHETIC benchmark baseline.
                   </p>
                 </div>
+
                 <div className="flex items-center gap-3 text-xs font-mono">
                   <div className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>

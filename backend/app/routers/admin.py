@@ -1097,3 +1097,19 @@ async def recompute_admin_forecasts():
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed during forecast recomputation.",
         ) from e
+
+
+@router.get("/admin/integrations/health", dependencies=[Depends(verify_admin_key)])
+async def get_admin_integrations_health():
+    from app.core.providers_config import get_safe_integration_diagnostics
+    from app.ingestion.connector_router import connector_registry
+    from ai.router import ai_router
+
+    diagnostics = get_safe_integration_diagnostics()
+    ai_diag = ai_router.get_diagnostics()
+    connector_diag = connector_registry.get_diagnostics()
+
+    diagnostics["ai"]["router_metrics"] = ai_diag.get("task_invocations", {})
+    diagnostics["external_data"]["connector_details"] = connector_diag.get("connectors", [])
+    return diagnostics
+

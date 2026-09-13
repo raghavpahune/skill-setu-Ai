@@ -86,3 +86,25 @@ async def explain_career(
         is_demo=query.is_demo,
     )
     return answer
+
+
+class TaskRouteQuery(BaseModel):
+    task_category: str
+    prompt: str
+    context: dict | None = None
+    is_demo: bool | None = None
+
+
+@router.post("/copilot/route-task")
+async def route_ai_task(
+    query: TaskRouteQuery,
+    current_user: dict | None = Depends(get_optional_current_user),
+):
+    from ai.router import ai_router
+    return await ai_router.route_task(
+        task_category=query.task_category,
+        prompt=query.prompt,
+        context=query.context,
+        is_demo=query.is_demo,
+    )
+
