@@ -235,3 +235,142 @@ def test_copilot_route_task_endpoint_authenticated(client, student_headers):
     assert data["fallback_used"] is True
     assert data["advisory"] is True
     assert "secret" not in str(data)
+
+
+def test_ai_provider_workload_configuration_respected():
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key-all", "AI_PROVIDER_CAREER_COPILOT": "gemini"}, clear=False):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock()
+            mock_inst.api_key = "test-key-all"
+            mock_inst.model = "gemini-3.6-flash"
+            mock_inst.generate.return_value = "Gemini copilot answer"
+            mock_gemini_cls.return_value = mock_inst
+
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="Explain career",
+                    is_demo=False,
+                )
+            )
+            assert res["provider"] == "gemini"
+            assert res["fallback_used"] is False
+            assert res["error"] is None
+            mock_inst.generate.assert_awaited_once()
+
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key-all", "AI_PROVIDER_CAREER_COPILOT": "deterministic_fallback"}, clear=False):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock()
+            mock_gemini_cls.return_value = mock_inst
+
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="Explain career",
+                    is_demo=False,
+                )
+            )
+            assert res["provider"] == "deterministic_fallback"
+            assert res["fallback_used"] is True
+            assert res["error"] is None
+            mock_inst.generate.assert_not_called()
+
+
+def test_ai_router_isolated_error_states_no_leakage():
+    with patch("ai.router.ai_router._resolve_gemini_for_task") as mock_resolve:
+        mock_prov = AsyncMock()
+        mock_prov.generate.side_effect = Exception("429 ResourceExhausted: Quota exceeded")
+        mock_resolve.return_value = mock_prov
+
+        res_a = asyncio.run(
+            ai_router.route_task(
+                task_category="career_copilot",
+                prompt="Explain careers",
+                is_demo=False,
+            )
+        )
+        assert res_a["provider"] == "deterministic_fallback"
+        assert res_a["error"] == "Failover triggered: QUOTA_EXCEEDED"
+        assert ai_router.get_last_error_category() == "QUOTA_EXCEEDED"
+
+    with patch("ai.router.ai_router._resolve_gemini_for_task", return_value=None):
+        res_b = asyncio.run(
+            ai_router.route_task(
+                task_category="skill_gap_analysis",
+                prompt="Gap analysis",
+                is_demo=False,
+            )
+        )
+        assert res_b["provider"] == "deterministic_fallback"
+        assert res_b["error"] == "Failover triggered: NOT_CONFIGURED"
+        assert ai_router.get_last_error_category() == "NOT_CONFIGURED"
+
+    with patch("ai.router.ai_router._resolve_gemini_for_task") as mock_resolve:
+        mock_prov = AsyncMock()
+        mock_prov.generate.return_value = "Successful analysis"
+        mock_prov.model = "gemini-3.6-flash"
+        mock_resolve.return_value = mock_prov
+
+        res_c = asyncio.run(
+            ai_router.route_task(
+                task_category="career_copilot",
+                prompt="Explain careers",
+                is_demo=False,
+            )
+        )
+        assert res_c["provider"] == "gemini"
+        assert res_c["error"] is None
+        assert ai_router.get_last_error_category() == "NONE"
+
+
+def test_ai_router_respects_skillsetu_data_mode():
+    with patch.dict(os.environ, {"SKILLSETU_DATA_MODE": "demo", "GEMINI_API_KEY": "test-key"}, clear=False):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock()
+            mock_gemini_cls.return_value = mock_inst
+
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="Explain career",
+                    is_demo=None,
+                )
+            )
+            assert res["provider"] == "deterministic_fallback"
+            assert res["fallback_used"] is True
+            mock_inst.generate.assert_not_called()
+
+    with patch.dict(os.environ, {"SKILLSETU_DATA_MODE": "synthetic", "GEMINI_API_KEY": "test-key"}, clear=False):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock()
+            mock_gemini_cls.return_value = mock_inst
+
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="Explain career",
+                    is_demo=None,
+                )
+            )
+            assert res["provider"] == "deterministic_fallback"
+            assert res["fallback_used"] is True
+            mock_inst.generate.assert_not_called()
+
+    with patch.dict(os.environ, {"SKILLSETU_DATA_MODE": "demo", "GEMINI_API_KEY": "test-key"}, clear=False):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock()
+            mock_inst.api_key = "test-key"
+            mock_inst.model = "gemini-3.6-flash"
+            mock_inst.generate.return_value = "Real answer"
+            mock_gemini_cls.return_value = mock_inst
+
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="Explain career",
+                    is_demo=False,
+                )
+            )
+            assert res["provider"] == "gemini"
+            assert res["fallback_used"] is False
+            mock_inst.generate.assert_awaited_once()

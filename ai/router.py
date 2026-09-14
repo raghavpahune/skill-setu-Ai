@@ -10,6 +10,7 @@ if str(_backend_dir) not in sys.path:
 
 from ai.gemini_provider import GeminiProvider
 from ai.demo_provider import DemoProvider
+from app.core.data_mode import is_explicit_demo_mode
 
 logger = logging.getLogger("skillsetu.ai.router")
 
@@ -42,7 +43,13 @@ class AIRouter:
 
     def _resolve_gemini_for_task(self, task_category: str) -> GeminiProvider | None:
         try:
-            from app.core.providers_config import get_workload_ai_key, is_workload_ai_configured
+            from app.core.providers_config import (
+                get_workload_ai_key,
+                is_workload_ai_configured,
+                get_workload_provider,
+            )
+            if get_workload_provider(task_category) != "gemini":
+                return None
             if is_workload_ai_configured(task_category):
                 key = get_workload_ai_key(task_category)
                 prov = GeminiProvider(api_key=key)
@@ -75,7 +82,7 @@ class AIRouter:
 
         start_time = time.perf_counter()
 
-        if is_demo is True:
+        if is_explicit_demo_mode(is_demo):
             fallback_start = time.perf_counter()
             fallback_answer = await self._deterministic_fallback.generate(prompt, context)
             elapsed_ms = (time.perf_counter() - fallback_start) * 1000.0
@@ -91,38 +98,45 @@ class AIRouter:
                 "error": None,
             }
 
-        gemini_prov = self._resolve_gemini_for_task(task_category)
+        from app.core.providers_config import get_workload_provider
+        configured_provider = get_workload_provider(task_category)
 
-        if gemini_prov is not None:
-            try:
-                answer = await gemini_prov.generate(prompt, context)
-                elapsed_ms = (time.perf_counter() - start_time) * 1000.0
-                self._last_error_category = "NONE"
-                return {
-                    "status": "success",
-                    "answer": answer,
-                    "provider": "gemini",
-                    "model": getattr(gemini_prov, "model", "gemini-3.6-flash"),
-                    "task_category": task_category,
-                    "fallback_used": False,
-                    "advisory": True,
-                    "latency_ms": round(elapsed_ms, 2),
-                    "error": None,
-                }
-            except Exception as e:
-                err_str = str(e).lower()
-                if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                    self._last_error_category = "QUOTA_EXCEEDED"
-                elif "timeout" in err_str or "timed out" in err_str:
-                    self._last_error_category = "TIMEOUT"
-                elif "401" in err_str or "403" in err_str or "api_key" in err_str:
-                    self._last_error_category = "AUTH_FAILURE"
-                else:
-                    self._last_error_category = "NETWORK_ERROR"
-                logger.warning(f"[AIRouter] Gemini failed for task '{task_category}' ({self._last_error_category}): {e}. Activating deterministic fallback.")
+        request_error_category = "NONE"
+        gemini_prov = None
 
-        if not gemini_prov and self._last_error_category == "NONE":
-            self._last_error_category = "NOT_CONFIGURED"
+        if configured_provider == "gemini":
+            gemini_prov = self._resolve_gemini_for_task(task_category)
+            if gemini_prov is not None:
+                try:
+                    answer = await gemini_prov.generate(prompt, context)
+                    elapsed_ms = (time.perf_counter() - start_time) * 1000.0
+                    self._last_error_category = "NONE"
+                    return {
+                        "status": "success",
+                        "answer": answer,
+                        "provider": "gemini",
+                        "model": getattr(gemini_prov, "model", "gemini-3.6-flash"),
+                        "task_category": task_category,
+                        "fallback_used": False,
+                        "advisory": True,
+                        "latency_ms": round(elapsed_ms, 2),
+                        "error": None,
+                    }
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                        request_error_category = "QUOTA_EXCEEDED"
+                    elif "timeout" in err_str or "timed out" in err_str:
+                        request_error_category = "TIMEOUT"
+                    elif "401" in err_str or "403" in err_str or "api_key" in err_str:
+                        request_error_category = "AUTH_FAILURE"
+                    else:
+                        request_error_category = "NETWORK_ERROR"
+                    self._last_error_category = request_error_category
+                    logger.warning(f"[AIRouter] Gemini failed for task '{task_category}' ({request_error_category}): {e}. Activating deterministic fallback.")
+            else:
+                request_error_category = "NOT_CONFIGURED"
+                self._last_error_category = "NOT_CONFIGURED"
 
         fallback_start = time.perf_counter()
         fallback_answer = await self._deterministic_fallback.generate(prompt, context)
@@ -137,7 +151,7 @@ class AIRouter:
             "fallback_used": True,
             "advisory": True,
             "latency_ms": round(elapsed_ms, 2),
-            "error": None if self._last_error_category == "NONE" else f"Failover triggered: {self._last_error_category}",
+            "error": None if request_error_category == "NONE" else f"Failover triggered: {request_error_category}",
         }
 
     def get_diagnostics(self) -> dict[str, Any]:

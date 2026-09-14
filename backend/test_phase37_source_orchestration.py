@@ -261,3 +261,94 @@ def test_admin_integrations_health_includes_source_orchestration(client, admin_h
     assert SOURCE_ADZUNA in registry_source_ids
     assert SOURCE_DATAGOV in registry_source_ids
     assert SOURCE_SUPABASE in registry_source_ids
+
+
+def test_raw_datagov_schemes_ingestion_and_transformation():
+    raw_ogd_records = [
+        {"document_id": "alloc-2023-24", "_year": "2023-24", "amount_allocated": "1530.50"},
+        {"document_id": "alloc-2022-23", "_year": "2022-23", "amount_allocated": "1420.00"},
+    ]
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._datagov_connector, "fetch_raw", return_value=raw_ogd_records):
+            res = source_orchestrator.fetch_data(workload=WORKLOAD_GOVERNMENT_SCHEMES, limit=10, is_demo=False)
+            assert res.status == "SUCCESS"
+            assert res.provenance == SOURCE_TYPE_LIVE_API
+            assert res.records_count == 2
+            for rec in res.records:
+                assert rec["id"]
+                assert rec["title"]
+                assert "Post-Matric" in rec["title"]
+                assert rec["source"] == "OGD_DATAGOV_IN"
+                assert rec["source_type"] == SOURCE_TYPE_LIVE_API
+                assert rec["is_demo"] is False
+
+
+def test_malformed_datagov_records_rejected():
+    bad_ogd_records = [
+        {"document_id": "", "_year": ""},
+        {"bad_field": 123},
+        "not-a-dict",
+    ]
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._datagov_connector, "fetch_raw", return_value=bad_ogd_records):
+            res = source_orchestrator.fetch_data(workload=WORKLOAD_GOVERNMENT_SCHEMES, limit=10, is_demo=False)
+            assert res.status == "VALIDATION_FAILED"
+            assert res.records == []
+            assert res.records_count == 0
+
+
+def test_mixed_job_vacancies_count_batch_robustness():
+    mixed_raw_jobs = [
+        {"id": "job-vc-1", "title": "Software Engineer", "company": "Tech Corp", "location": {"display_name": "Pune"}, "vacancies_count": "N/A"},
+        {"id": "job-vc-2", "title": "DevOps Engineer", "company": "Cloud Corp", "location": {"display_name": "Mumbai"}, "vacancies_count": "multiple"},
+        {"id": "job-vc-3", "title": "QA Engineer", "company": "Test Corp", "location": {"display_name": "Nagpur"}, "vacancies_count": None},
+        {"id": "job-vc-4", "title": "Data Engineer", "company": "Data Corp", "location": {"display_name": "Pune"}, "vacancies_count": "5"},
+        {"id": "job-vc-5", "title": "ML Engineer", "company": "AI Corp", "location": {"display_name": "Pune"}, "vacancies_count": 3},
+        {"id": "", "title": "Invalid Job", "company": "None"},
+    ]
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._adzuna_connector, "fetch_raw", return_value=mixed_raw_jobs):
+            res = source_orchestrator.fetch_data(workload=WORKLOAD_JOBS, limit=10, is_demo=False)
+            assert res.status == "SUCCESS"
+            assert res.records_count == 5
+            counts = [r["vacancies_count"] for r in res.records]
+            assert counts == [1, 1, 1, 5, 3]
+
+
+def test_supabase_workload_retrieval_and_error_handling():
+    sample_profiles = [{"id": "usr-test-1", "full_name": "Candidate A"}]
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch("app.repositories.supabase_repository.get_client"):
+            with patch("app.repositories.supabase_repository.list_student_profiles", return_value=sample_profiles):
+                res = source_orchestrator.fetch_data(workload=WORKLOAD_STUDENT_PROFILES, requires_live=False, is_demo=False)
+                assert res.status == "SUCCESS"
+                assert res.provenance == "VERIFIED"
+                assert res.authoritative is True
+                assert res.records_count == 1
+                assert res.records[0]["id"] == "usr-test-1"
+
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch("app.repositories.supabase_repository.get_client"):
+            with patch("app.repositories.supabase_repository.list_student_profiles", return_value=[]):
+                res = source_orchestrator.fetch_data(workload=WORKLOAD_STUDENT_PROFILES, requires_live=False, is_demo=False)
+                assert res.status == "SUCCESS"
+                assert res.provenance == "VERIFIED"
+                assert res.records == []
+                assert res.records_count == 0
+                assert res.error is None
+
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch("app.repositories.supabase_repository.get_client", side_effect=Exception("Database connection timeout")):
+            res = source_orchestrator.fetch_data(workload=WORKLOAD_STUDENT_PROFILES, requires_live=False, is_demo=False)
+            assert res.status == "UNAVAILABLE"
+            assert res.records == []
+            assert res.records_count == 0
+            assert "timeout" in str(res.error).lower()
+
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch("app.repositories.supabase_repository.get_client"):
+            res = source_orchestrator.fetch_data(workload="unsupported_unknown_workload", requires_live=False, is_demo=False)
+            assert res.status == "UNSUPPORTED_WORKLOAD"
+            assert res.records == []
+            assert res.records_count == 0
+            assert "not supported" in str(res.error).lower()

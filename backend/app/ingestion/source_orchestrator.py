@@ -164,6 +164,21 @@ def resolve_source_for_workload(workload: str, requires_live: bool = True, is_de
     return SOURCE_SUPABASE
 
 
+def normalize_vacancies_count(val: Any) -> int:
+    if val is None:
+        return 1
+    if isinstance(val, (int, float)):
+        try:
+            return max(1, int(val))
+        except (ValueError, OverflowError):
+            return 1
+    if isinstance(val, str):
+        cleaned = val.strip()
+        if cleaned.isdigit():
+            return max(1, int(cleaned))
+    return 1
+
+
 def validate_job_item(item: dict[str, Any]) -> tuple[bool, str | None, dict[str, Any] | None]:
     if not isinstance(item, dict):
         return False, "Record is not a dictionary", None
@@ -194,7 +209,7 @@ def validate_job_item(item: dict[str, Any]) -> tuple[bool, str | None, dict[str,
     cleaned["title"] = title
     cleaned["company"] = company_name
     cleaned["district"] = canonical_district
-    cleaned["vacancies_count"] = max(1, int(item.get("vacancies_count") or 1))
+    cleaned["vacancies_count"] = normalize_vacancies_count(item.get("vacancies_count"))
     cleaned["source"] = item.get("source") or "ADZUNA_API"
     cleaned["source_type"] = item.get("source_type") or SOURCE_TYPE_LIVE_API
     cleaned["is_demo"] = False
@@ -204,10 +219,13 @@ def validate_job_item(item: dict[str, Any]) -> tuple[bool, str | None, dict[str,
 def validate_scheme_item(item: dict[str, Any]) -> tuple[bool, str | None, dict[str, Any] | None]:
     if not isinstance(item, dict):
         return False, "Record is not a dictionary", None
-    raw_id = item.get("id") or item.get("external_id")
+    raw_id = item.get("id") or item.get("external_id") or item.get("document_id") or item.get("_id")
     if not raw_id or str(raw_id).strip() == "":
         return False, "Missing required scheme ID", None
-    title = str(item.get("title") or item.get("name") or "").strip()
+    raw_title = item.get("title") or item.get("name") or item.get("scheme_name")
+    if not raw_title and (item.get("_year") or item.get("financial_year")):
+        raw_title = f"National Scholarship Fund ({item.get('_year') or item.get('financial_year')})"
+    title = str(raw_title or "").strip()
     if len(title) < 3:
         return False, "Scheme title fails minimum length (3)", None
 
@@ -382,14 +400,17 @@ class SourceOrchestrator:
                     )
                 validated_records = []
                 for item in raw_items:
-                    ok, err, valid_record = validate_job_item(item)
-                    if ok and valid_record:
-                        valid_record["fetched_at"] = now_iso
-                        valid_record["freshness_status"] = compute_freshness(
-                            published_at=valid_record.get("created"),
-                            last_seen_at=now_iso,
-                        )
-                        validated_records.append(valid_record)
+                    try:
+                        ok, err, valid_record = validate_job_item(item)
+                        if ok and valid_record:
+                            valid_record["fetched_at"] = now_iso
+                            valid_record["freshness_status"] = compute_freshness(
+                                published_at=valid_record.get("created"),
+                                last_seen_at=now_iso,
+                            )
+                            validated_records.append(valid_record)
+                    except Exception as item_err:
+                        logger.warning(f"[SourceOrchestrator] Discarding malformed job item: {item_err}")
 
                 self._source_statuses[source_id] = "ONLINE"
                 self._last_errors[source_id] = "NONE"
@@ -429,16 +450,30 @@ class SourceOrchestrator:
                         authoritative=False,
                         is_demo=False,
                     )
+
+                try:
+                    transformed = self._datagov_connector.validate_and_transform(
+                        raw_items,
+                        resource_type=kwargs.get("resource_type", "scholarship"),
+                    )
+                except Exception as transform_err:
+                    logger.warning(f"[SourceOrchestrator] DataGov transformation error: {transform_err}")
+                    transformed = []
+
+                candidate_items = transformed if transformed else raw_items
                 validated_records = []
-                for item in raw_items:
-                    ok, err, valid_record = validate_scheme_item(item)
-                    if ok and valid_record:
-                        valid_record["fetched_at"] = now_iso
-                        valid_record["freshness_status"] = compute_freshness(
-                            published_at=valid_record.get("published_at"),
-                            last_seen_at=now_iso,
-                        )
-                        validated_records.append(valid_record)
+                for item in candidate_items:
+                    try:
+                        ok, err, valid_record = validate_scheme_item(item)
+                        if ok and valid_record:
+                            valid_record["fetched_at"] = now_iso
+                            valid_record["freshness_status"] = compute_freshness(
+                                published_at=valid_record.get("published_at"),
+                                last_seen_at=now_iso,
+                            )
+                            validated_records.append(valid_record)
+                    except Exception as item_err:
+                        logger.warning(f"[SourceOrchestrator] Discarding malformed scheme item: {item_err}")
 
                 self._source_statuses[source_id] = "ONLINE"
                 self._last_errors[source_id] = "NONE"
@@ -459,6 +494,41 @@ class SourceOrchestrator:
             else:
                 from app.repositories import supabase_repository
                 client = supabase_repository.get_client()
+
+                records = []
+                if workload == WORKLOAD_STUDENT_PROFILES:
+                    records = supabase_repository.list_student_profiles()[:limit]
+                elif workload == WORKLOAD_STUDENT_ASSESSMENTS:
+                    records = supabase_repository.list_student_assessments(limit=limit)
+                elif workload == WORKLOAD_EMPLOYER_DEMANDS:
+                    records = supabase_repository.list_employer_demands(limit=limit)
+                elif workload == WORKLOAD_COURSES:
+                    records = supabase_repository.list_courses(limit=limit)
+                elif workload == WORKLOAD_INDUSTRY_SIGNALS:
+                    records = supabase_repository.list_industry_signals(limit=limit)
+                elif workload == WORKLOAD_SKILLS:
+                    records = supabase_repository.list_skills(limit=limit)
+                elif workload == WORKLOAD_JOBS:
+                    records = supabase_repository.list_jobs(limit=limit)
+                elif workload == WORKLOAD_GOVERNMENT_SCHEMES:
+                    records = supabase_repository.list_schemes(limit=limit)
+                else:
+                    self._source_statuses[SOURCE_SUPABASE] = "ONLINE"
+                    self._last_errors[SOURCE_SUPABASE] = "NONE"
+                    return ExternalDataResponse(
+                        source=SOURCE_SUPABASE,
+                        workload=workload,
+                        status="UNSUPPORTED_WORKLOAD",
+                        provenance="NOT_SUPPORTED",
+                        records=[],
+                        records_count=0,
+                        fetched_at=now_iso,
+                        freshness_status="UNKNOWN",
+                        error=f"Workload '{workload}' is not supported by Supabase repository.",
+                        authoritative=True,
+                        is_demo=False,
+                    )
+
                 self._source_statuses[SOURCE_SUPABASE] = "ONLINE"
                 self._last_errors[SOURCE_SUPABASE] = "NONE"
                 return ExternalDataResponse(
@@ -466,8 +536,8 @@ class SourceOrchestrator:
                     workload=workload,
                     status="SUCCESS",
                     provenance="VERIFIED",
-                    records=[],
-                    records_count=0,
+                    records=records,
+                    records_count=len(records),
                     fetched_at=now_iso,
                     freshness_status="SYSTEM_OF_RECORD",
                     error=None,

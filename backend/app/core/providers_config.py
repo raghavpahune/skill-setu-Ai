@@ -47,7 +47,12 @@ def get_workload_ai_key(workload: str) -> str:
 
 
 def is_workload_ai_configured(workload: str) -> bool:
-    return bool(get_workload_ai_key(workload))
+    provider = get_workload_provider(workload)
+    if provider == "gemini":
+        return bool(get_workload_ai_key(workload))
+    if provider in ("deterministic_fallback", "demo_fallback", "demo"):
+        return True
+    return False
 
 
 def get_workload_provider(workload: str) -> str:
