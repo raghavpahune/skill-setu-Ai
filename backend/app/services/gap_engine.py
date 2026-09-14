@@ -24,7 +24,7 @@ def compute_gaps(district: str | None = None, is_demo: bool | None = None) -> li
     else:
         try:
             from app.repositories.supabase_repository import list_jobs, list_job_skills
-            jobs = list_jobs(limit=10000) or []
+            jobs = list_jobs(limit=None) or []
             job_ids = {j.get("id") for j in jobs if j.get("id")}
             repo_js = list_job_skills(job_ids=list(job_ids)) if job_ids else []
             job_skills = [js for js in (repo_js or []) if js.get("job_id") in job_ids]
@@ -43,7 +43,7 @@ def compute_gaps(district: str | None = None, is_demo: bool | None = None) -> li
 
         try:
             from app.repositories.supabase_repository import list_skills
-            repo_skills = list_skills(limit=10000) or []
+            repo_skills = list_skills(limit=None) or []
             skills_map = {s["id"]: s for s in repo_skills if "id" in s}
         except Exception:
             skills_map = {}

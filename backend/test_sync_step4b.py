@@ -121,7 +121,10 @@ def test_sync_api_endpoints():
 
     # POST /api/sync/trigger
     res_trigger = client.get("/api/sync/status")
-    res_post = client.post("/api/sync/trigger?source=data.gov.in")
+    res_post = client.post(
+        "/api/sync/trigger?source=data.gov.in",
+        headers={"X-Admin-Key": "demo-admin-key-2026"},
+    )
     assert res_post.status_code == 200
     trigger_res = res_post.json()
     assert trigger_res["status"] == "success"

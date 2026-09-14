@@ -328,11 +328,49 @@ class SourceOrchestrator:
         explicit_demo = is_explicit_demo_mode(is_demo)
 
         if explicit_demo:
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            if kwargs.get("resource_id"):
+                raw_items = self._datagov_connector.fetch_raw(
+                    limit=limit,
+                    offset=kwargs.get("offset", 0),
+                    is_demo=True,
+                    resource_id=kwargs.get("resource_id"),
+                )
+                transformed = self._datagov_connector.validate_and_transform(
+                    raw_items,
+                    resource_type=kwargs.get("resource_type", "scholarship"),
+                    resource_id=kwargs.get("resource_id"),
+                )
+                is_opp = kwargs.get("resource_type") in ("naps", "pmkvy")
+                validated_records = []
+                for item in transformed:
+                    ok, err, valid_record = validate_job_item(item) if is_opp else validate_scheme_item(item)
+                    if ok and valid_record:
+                        valid_record["is_demo"] = True
+                        valid_record["source"] = item.get("source") or "OGD_DATAGOV_IN"
+                        valid_record["source_type"] = SOURCE_TYPE_DEMO_SYNTHETIC
+                        valid_record["provenance"] = SOURCE_TYPE_DEMO_SYNTHETIC
+                        valid_record["fetched_at"] = now_iso
+                        valid_record["freshness_status"] = "STATIC_BASELINE"
+                        validated_records.append(valid_record)
+                return ExternalDataResponse(
+                    source=SOURCE_DATAGOV,
+                    workload=workload,
+                    status="SUCCESS",
+                    provenance=SOURCE_TYPE_DEMO_SYNTHETIC,
+                    records=validated_records,
+                    records_count=len(validated_records),
+                    fetched_at=now_iso,
+                    freshness_status="STATIC_BASELINE",
+                    error=None,
+                    authoritative=False,
+                    is_demo=True,
+                )
+
             source_id = SOURCE_LOCAL_DEMO
             demo_key = "jobs" if workload in (WORKLOAD_JOBS, WORKLOAD_LABOUR_MARKET_DEMAND, SIGNAL_TYPE_JOB_VOLUME) else "schemes"
             raw_records = get_demo(demo_key)[:limit]
             stamped = []
-            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
             for r in raw_records:
                 cloned = dict(r)
                 cloned["source"] = "DEMO_SYNTHETIC"

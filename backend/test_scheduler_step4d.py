@@ -119,7 +119,10 @@ def test_api_lifespan_and_status():
         assert data["scheduler"]["auto_sync_enabled"] is True
 
         # Check /api/sync/trigger
-        trigger_res = client.post("/api/sync/trigger?source=data.gov.in")
+        trigger_res = client.post(
+            "/api/sync/trigger?source=data.gov.in",
+            headers={"X-Admin-Key": "demo-admin-key-2026"},
+        )
         assert trigger_res.status_code == 200
         trig_data = trigger_res.json()
         assert trig_data["status"] in ("success", "skipped")

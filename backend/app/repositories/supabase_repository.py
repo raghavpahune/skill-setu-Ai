@@ -960,11 +960,23 @@ def list_courses(
             query = query.eq("source", source.strip())
         if status and status.lower() != "all":
             query = query.eq("status", status.strip())
-        res = query.execute()
-        rows = res.data or []
-        if limit is not None and limit > 0:
-            rows = rows[:limit]
-        return rows
+
+        if limit is not None and limit <= 1000:
+            res = query.order("id").range(0, limit - 1).execute()
+            return getattr(res, "data", []) or []
+
+        all_courses = []
+        page_size = 1000
+        curr_offset = 0
+        while True:
+            fetch_size = min(page_size, limit - len(all_courses)) if limit is not None else page_size
+            res = query.order("id").range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_courses.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_courses) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_courses
     except Exception as e:
         logger.error("[SupabaseRepo] Failed listing courses: %s", e)
         raise SupabaseRepositoryError(f"Database query failed for courses: {e}") from e
@@ -1436,7 +1448,7 @@ def list_jobs(
     district: str | None = None,
     industry: str | None = None,
     opportunity_type: str | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Authoritatively list jobs/opportunities directly from Supabase."""
@@ -1450,9 +1462,22 @@ def list_jobs(
         if opportunity_type:
             query = query.eq("opportunity_type", opportunity_type.lower())
 
-        res = query.order("id").range(offset, offset + limit - 1).execute()
-        jobs = getattr(res, "data", []) or []
-        return jobs
+        if limit is not None and limit <= 1000:
+            res = query.order("id").range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+
+        all_jobs = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_jobs)) if limit is not None else page_size
+            res = query.order("id").range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_jobs.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_jobs) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_jobs
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -1519,8 +1544,17 @@ def list_job_skills(job_ids: list[str] | None = None) -> list[dict[str, Any]]:
                 all_skills.extend(getattr(res, "data", []) or [])
             return all_skills
 
-        res = client.table("job_skills").select("*").execute()
-        return getattr(res, "data", []) or []
+        all_skills = []
+        page_size = 1000
+        curr_offset = 0
+        while True:
+            res = client.table("job_skills").select("*").order("job_id").range(curr_offset, curr_offset + page_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_skills.extend(batch)
+            if len(batch) < page_size:
+                break
+            curr_offset += page_size
+        return all_skills
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -1543,8 +1577,17 @@ def list_course_skills(course_ids: list[str] | None = None) -> list[dict[str, An
                 all_skills.extend(getattr(res, "data", []) or [])
             return all_skills
 
-        res = client.table("course_skills").select("*").execute()
-        return getattr(res, "data", []) or []
+        all_skills = []
+        page_size = 1000
+        curr_offset = 0
+        while True:
+            res = client.table("course_skills").select("*").order("course_id").range(curr_offset, curr_offset + page_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_skills.extend(batch)
+            if len(batch) < page_size:
+                break
+            curr_offset += page_size
+        return all_skills
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -1716,13 +1759,27 @@ def upsert_schemes(schemes_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raise SupabaseRepositoryError(f"Database upsert failed for schemes: {e}") from e
 
 
-def list_skills(limit: int = 1000, offset: int = 0) -> list[dict[str, Any]]:
+def list_skills(limit: int | None = 1000, offset: int = 0) -> list[dict[str, Any]]:
     """Authoritatively list skills from Supabase."""
     try:
         client = get_client()
         query = client.table("skills").select("*")
-        res = query.order("id").range(offset, offset + limit - 1).execute()
-        return getattr(res, "data", []) or []
+        if limit is not None and limit <= 1000:
+            res = query.order("id").range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+
+        all_skills = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_skills)) if limit is not None else page_size
+            res = query.order("id").range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_skills.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_skills) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_skills
     except SupabaseRepositoryError:
         raise
     except Exception as e:
