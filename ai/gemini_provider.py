@@ -14,14 +14,13 @@ MODELS = ["gemini-3.6-flash"]
 class GeminiProvider(LLMProvider):
     """Robust Google Gemini provider supporting google-genai SDK (async/sync) and Direct REST HTTP failover."""
 
-    def __init__(self):
-        self.api_key = self._resolve_api_key()
+    def __init__(self, api_key: str | None = None):
+        self.api_key = (api_key or self._resolve_api_key()).strip().strip("'\"")
         self.client = None
         self.model = "gemini-3.6-flash"
         self._sdk = None
 
         if not self.api_key:
-            logger.info("[GeminiProvider] No GEMINI_API_KEY or GOOGLE_API_KEY detected in runtime environment.")
             return
 
         # Initialize official google-genai SDK client if installed, otherwise fallback to direct REST

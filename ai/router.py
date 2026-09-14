@@ -1,4 +1,3 @@
-import os
 import sys
 import time
 import logging
@@ -9,7 +8,6 @@ _backend_dir = Path(__file__).resolve().parent.parent / "backend"
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
-from ai.provider import LLMProvider
 from ai.gemini_provider import GeminiProvider
 from ai.demo_provider import DemoProvider
 
@@ -38,19 +36,20 @@ SUPPORTED_AI_TASKS = [
 
 class AIRouter:
     def __init__(self):
-        self._fallback_provider = DemoProvider()
+        self._deterministic_fallback = DemoProvider()
         self._last_error_category = "NONE"
         self._task_counts: dict[str, int] = {t: 0 for t in SUPPORTED_AI_TASKS}
 
-    def _resolve_gemini(self) -> GeminiProvider | None:
+    def _resolve_gemini_for_task(self, task_category: str) -> GeminiProvider | None:
         try:
-            from app.core.providers_config import is_gemini_configured
-            if is_gemini_configured():
-                prov = GeminiProvider()
+            from app.core.providers_config import get_workload_ai_key, is_workload_ai_configured
+            if is_workload_ai_configured(task_category):
+                key = get_workload_ai_key(task_category)
+                prov = GeminiProvider(api_key=key)
                 if prov.api_key:
                     return prov
         except Exception as e:
-            logger.warning(f"[AIRouter] Failed initializing GeminiProvider: {e}")
+            logger.warning(f"[AIRouter] Failed initializing GeminiProvider for '{task_category}': {e}")
         return None
 
     def get_last_error_category(self) -> str:
@@ -67,14 +66,32 @@ class AIRouter:
         is_demo: bool | None = None,
         timeout_seconds: float = 30.0,
     ) -> dict[str, Any]:
+        if task_category not in SUPPORTED_AI_TASKS:
+            raise ValueError(f"Unsupported AI task category: {task_category}. Supported categories: {SUPPORTED_AI_TASKS}")
+
         if task_category not in self._task_counts:
             self._task_counts[task_category] = 0
         self._task_counts[task_category] += 1
 
         start_time = time.perf_counter()
-        normalized_task = task_category if task_category in SUPPORTED_AI_TASKS else TASK_CAREER_COPILOT
 
-        gemini_prov = None if is_demo is True else self._resolve_gemini()
+        if is_demo is True:
+            fallback_start = time.perf_counter()
+            fallback_answer = await self._deterministic_fallback.generate(prompt, context)
+            elapsed_ms = (time.perf_counter() - fallback_start) * 1000.0
+            return {
+                "status": "success",
+                "answer": fallback_answer,
+                "provider": "deterministic_fallback",
+                "model": "rule-based-deterministic",
+                "task_category": task_category,
+                "fallback_used": True,
+                "advisory": True,
+                "latency_ms": round(elapsed_ms, 2),
+                "error": None,
+            }
+
+        gemini_prov = self._resolve_gemini_for_task(task_category)
 
         if gemini_prov is not None:
             try:
@@ -86,8 +103,9 @@ class AIRouter:
                     "answer": answer,
                     "provider": "gemini",
                     "model": getattr(gemini_prov, "model", "gemini-3.6-flash"),
-                    "task_category": normalized_task,
+                    "task_category": task_category,
                     "fallback_used": False,
+                    "advisory": True,
                     "latency_ms": round(elapsed_ms, 2),
                     "error": None,
                 }
@@ -101,22 +119,23 @@ class AIRouter:
                     self._last_error_category = "AUTH_FAILURE"
                 else:
                     self._last_error_category = "NETWORK_ERROR"
-                logger.warning(f"[AIRouter] Gemini failed for task '{normalized_task}' ({self._last_error_category}): {e}. Activating deterministic fallback.")
+                logger.warning(f"[AIRouter] Gemini failed for task '{task_category}' ({self._last_error_category}): {e}. Activating deterministic fallback.")
 
         if not gemini_prov and self._last_error_category == "NONE":
             self._last_error_category = "NOT_CONFIGURED"
 
         fallback_start = time.perf_counter()
-        fallback_answer = await self._fallback_provider.generate(prompt, context)
+        fallback_answer = await self._deterministic_fallback.generate(prompt, context)
         elapsed_ms = (time.perf_counter() - fallback_start) * 1000.0
 
         return {
             "status": "success",
             "answer": fallback_answer,
-            "provider": "demo_fallback",
+            "provider": "deterministic_fallback",
             "model": "rule-based-deterministic",
-            "task_category": normalized_task,
+            "task_category": task_category,
             "fallback_used": True,
+            "advisory": True,
             "latency_ms": round(elapsed_ms, 2),
             "error": None if self._last_error_category == "NONE" else f"Failover triggered: {self._last_error_category}",
         }
@@ -125,9 +144,9 @@ class AIRouter:
         from app.core.providers_config import is_gemini_configured
         gemini_ok = is_gemini_configured()
         return {
-            "primary_provider": "gemini",
-            "primary_configured": gemini_ok,
-            "fallback_provider": "demo_fallback",
+            "real_provider": "gemini",
+            "real_provider_configured": gemini_ok,
+            "fallback_mechanism": "deterministic_fallback",
             "fallback_available": True,
             "supported_tasks": list(SUPPORTED_AI_TASKS),
             "last_error_category": self._last_error_category,

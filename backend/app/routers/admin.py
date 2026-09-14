@@ -1103,13 +1103,16 @@ async def recompute_admin_forecasts():
 async def get_admin_integrations_health():
     from app.core.providers_config import get_safe_integration_diagnostics
     from app.ingestion.connector_router import connector_registry
+    from app.ingestion.source_orchestrator import source_orchestrator
     from ai.router import ai_router
 
     diagnostics = get_safe_integration_diagnostics()
     ai_diag = ai_router.get_diagnostics()
     connector_diag = connector_registry.get_diagnostics()
+    orchestrator_diag = source_orchestrator.get_source_diagnostics()
 
     diagnostics["ai"]["router_metrics"] = ai_diag.get("task_invocations", {})
     diagnostics["external_data"]["connector_details"] = connector_diag.get("connectors", [])
+    diagnostics["external_data"]["source_registry"] = orchestrator_diag.get("source_registry", [])
     return diagnostics
 
