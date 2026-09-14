@@ -169,8 +169,16 @@ class AIRouter:
         }
 
     def get_diagnostics(self) -> dict[str, Any]:
-        from app.core.providers_config import is_gemini_configured, is_workload_ai_configured
-        gemini_ok = is_gemini_configured() or any(is_workload_ai_configured(t) for t in SUPPORTED_AI_TASKS)
+        from app.core.providers_config import (
+            get_workload_provider,
+            is_gemini_configured,
+            is_workload_ai_configured,
+        )
+        gemini_ok = is_gemini_configured() or any(
+            get_workload_provider(task) == "gemini"
+            and is_workload_ai_configured(task)
+            for task in SUPPORTED_AI_TASKS
+        )
         return {
             "real_provider": "gemini",
             "real_provider_configured": gemini_ok,

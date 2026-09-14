@@ -1284,7 +1284,7 @@ def get_user_by_email(email: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
-            if str(u.get("id", "")).startswith("usr-employee") or clean_email.startswith("employee"):
+            if str(u.get("id", "")).startswith("usr-employee"):
                 u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
@@ -1333,7 +1333,7 @@ def get_user_by_id(user_id: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
-            if str(u.get("id", "")).startswith("usr-employee") or user_id == "usr-employee-001" or str(u.get("email", "")).lower().startswith("employee"):
+            if str(u.get("id", "")).startswith("usr-employee") or user_id == "usr-employee-001":
                 u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
@@ -1390,7 +1390,12 @@ def save_user(user_data: dict) -> dict:
                 try:
                     client.table("users").upsert(clean_supabase_user, on_conflict="id").execute()
                 except Exception as upsert_err:
-                    if clean_supabase_user.get("role") == "EMPLOYEE":
+                    err_msg = str(upsert_err).lower()
+                    is_role_constraint = (
+                        clean_supabase_user.get("role") == "EMPLOYEE"
+                        and ("users_role_check" in err_msg or "check constraint" in err_msg or "role" in err_msg)
+                    )
+                    if is_role_constraint:
                         clean_supabase_user_fallback = dict(clean_supabase_user)
                         clean_supabase_user_fallback["role"] = "STUDENT"
                         client.table("users").upsert(clean_supabase_user_fallback, on_conflict="id").execute()

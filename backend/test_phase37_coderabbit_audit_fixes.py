@@ -456,3 +456,76 @@ def test_adaptive_roadmap_real_mode_forecast_failure_fails_closed():
                     with patch("app.repositories.supabase_repository.list_skill_forecasts", side_effect=RuntimeError("DB outage")):
                         with pytest.raises(RuntimeError, match="Roadmap skill forecasts unavailable"):
                             compute_adaptive_roadmap("usr-real-fail-forecast", is_demo=False, persist=False)
+
+
+def test_ai_router_diagnostics_requires_gemini_provider_selected():
+    from ai.router import ai_router
+    with patch("app.core.providers_config.is_gemini_configured", return_value=False):
+        with patch("app.core.providers_config.get_workload_provider", return_value="deterministic_fallback"):
+            with patch("app.core.providers_config.is_workload_ai_configured", return_value=True):
+                diag = ai_router.get_diagnostics()
+                assert diag["real_provider_configured"] is False
+
+    with patch("app.core.providers_config.is_gemini_configured", return_value=False):
+        with patch("app.core.providers_config.get_workload_provider", side_effect=lambda t: "gemini" if t == "career_copilot" else "deterministic_fallback"):
+            with patch("app.core.providers_config.is_workload_ai_configured", side_effect=lambda t: t == "career_copilot"):
+                diag = ai_router.get_diagnostics()
+                assert diag["real_provider_configured"] is True
+
+
+def test_student_with_employee_prefixed_email_retains_student_role():
+    from app.db import get_user_by_email, get_user_by_id, _cache
+    _cache["users"] = [{
+        "id": "usr-std-employee-prefix-1",
+        "email": "employee.jane@domain.com",
+        "role": "STUDENT",
+        "name": "Jane Doe",
+    }]
+    mock_client = MagicMock()
+    mock_res = MagicMock()
+    mock_res.data = [{
+        "id": "usr-std-employee-prefix-1",
+        "email": "employee.jane@domain.com",
+        "role": "STUDENT",
+        "name": "Jane Doe",
+    }]
+    mock_client.table.return_value.select.return_value.ilike.return_value.execute.return_value = mock_res
+    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value = mock_res
+
+    with patch("app.db.get_supabase_client", return_value=mock_client):
+        u_cache = get_user_by_email("employee.jane@domain.com")
+        assert u_cache is not None
+        assert u_cache["role"] == "STUDENT"
+
+        _cache["users"] = []
+        u_supa = get_user_by_email("employee.jane@domain.com")
+        assert u_supa is not None
+        assert u_supa["role"] == "STUDENT"
+
+        _cache["users"] = [{
+            "id": "usr-std-employee-prefix-1",
+            "email": "employee.jane@domain.com",
+            "role": "STUDENT",
+            "name": "Jane Doe",
+        }]
+        u_id = get_user_by_id("usr-std-employee-prefix-1")
+        assert u_id is not None
+        assert u_id["role"] == "STUDENT"
+
+
+def test_save_user_reraises_on_arbitrary_upsert_failure():
+    from app.db import save_user
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+    mock_client = MagicMock()
+    mock_client.table.return_value.upsert.return_value.execute.side_effect = ConnectionError("Supabase connection timeout")
+
+    with patch("app.db.get_supabase_client", return_value=mock_client):
+        user_data = {
+            "id": "usr-employee-fail-network",
+            "email": "employee_fail@domain.com",
+            "role": "EMPLOYEE",
+            "name": "Fail Test",
+        }
+        with pytest.raises(SupabaseRepositoryError, match="Supabase connection timeout"):
+            save_user(user_data)
+        assert mock_client.table.return_value.upsert.call_count == 1
