@@ -23,7 +23,10 @@ from app.ingestion.base_adapter import (
     compute_freshness,
 )
 from app.ingestion.adzuna_connector import AdzunaConnector
-from app.ingestion.datagov_connector import DataGovConnector
+from app.ingestion.datagov_connector import (
+    DataGovConnector,
+    RESOURCE_SCHOLARSHIP_ALLOCATION,
+)
 
 logger = logging.getLogger("skillsetu.ingestion.orchestrator")
 
@@ -277,9 +280,13 @@ def create_industry_signal_contract(source: str, signal_type: str, raw_data: dic
 
 
 class SourceOrchestrator:
-    def __init__(self):
-        self._adzuna_connector = AdzunaConnector()
-        self._datagov_connector = DataGovConnector()
+    def __init__(
+        self,
+        adzuna_connector: AdzunaConnector | None = None,
+        datagov_connector: DataGovConnector | None = None,
+    ):
+        self._adzuna_connector = adzuna_connector or AdzunaConnector()
+        self._datagov_connector = datagov_connector or DataGovConnector()
         self._source_statuses: dict[str, str] = {
             SOURCE_ADZUNA: "IDLE",
             SOURCE_DATAGOV: "IDLE",
@@ -299,9 +306,9 @@ class SourceOrchestrator:
 
     def is_source_configured(self, source_id: str) -> bool:
         if source_id == SOURCE_ADZUNA:
-            return is_adzuna_configured()
+            return bool((self._adzuna_connector and self._adzuna_connector.has_credentials) or is_adzuna_configured())
         if source_id == SOURCE_DATAGOV:
-            return is_datagov_configured()
+            return bool((self._datagov_connector and self._datagov_connector.has_api_key) or is_datagov_configured())
         if source_id == SOURCE_SUPABASE:
             return is_supabase_configured()
         if source_id == SOURCE_LOCAL_DEMO:
@@ -412,18 +419,35 @@ class SourceOrchestrator:
                     except Exception as item_err:
                         logger.warning(f"[SourceOrchestrator] Discarding malformed job item: {item_err}")
 
+                if not validated_records:
+                    self._source_statuses[source_id] = "VALIDATION_FAILED"
+                    self._last_errors[source_id] = "VALIDATION_FAILED"
+                    return ExternalDataResponse(
+                        source=source_id,
+                        workload=workload,
+                        status="VALIDATION_FAILED",
+                        provenance="VALIDATION_FAILED",
+                        records=[],
+                        records_count=0,
+                        fetched_at=now_iso,
+                        freshness_status="UNKNOWN",
+                        error="All records failed schema validation",
+                        authoritative=False,
+                        is_demo=False,
+                    )
+
                 self._source_statuses[source_id] = "ONLINE"
                 self._last_errors[source_id] = "NONE"
                 return ExternalDataResponse(
                     source=source_id,
                     workload=workload,
-                    status="SUCCESS" if validated_records else "VALIDATION_FAILED",
+                    status="SUCCESS",
                     provenance=SOURCE_TYPE_LIVE_API,
                     records=validated_records,
                     records_count=len(validated_records),
                     fetched_at=now_iso,
                     freshness_status="LIVE",
-                    error=None if validated_records else "All records failed schema validation",
+                    error=None,
                     authoritative=False,
                     is_demo=False,
                 )
@@ -433,6 +457,7 @@ class SourceOrchestrator:
                     limit=limit,
                     offset=kwargs.get("offset", 0),
                     is_demo=False,
+                    resource_id=kwargs.get("resource_id", RESOURCE_SCHOLARSHIP_ALLOCATION),
                 )
                 if not raw_items:
                     self._source_statuses[source_id] = "UNAVAILABLE"
@@ -455,16 +480,51 @@ class SourceOrchestrator:
                     transformed = self._datagov_connector.validate_and_transform(
                         raw_items,
                         resource_type=kwargs.get("resource_type", "scholarship"),
+                        resource_id=kwargs.get("resource_id", RESOURCE_SCHOLARSHIP_ALLOCATION),
                     )
                 except Exception as transform_err:
                     logger.warning(f"[SourceOrchestrator] DataGov transformation error: {transform_err}")
-                    transformed = []
+                    self._source_statuses[source_id] = "VALIDATION_FAILED"
+                    self._last_errors[source_id] = "TRANSFORMATION_FAILED"
+                    return ExternalDataResponse(
+                        source=source_id,
+                        workload=workload,
+                        status="VALIDATION_FAILED",
+                        provenance="VALIDATION_FAILED",
+                        records=[],
+                        records_count=0,
+                        fetched_at=now_iso,
+                        freshness_status="UNKNOWN",
+                        error=f"data.gov.in transformation failed: {transform_err}",
+                        authoritative=False,
+                        is_demo=False,
+                    )
 
-                candidate_items = transformed if transformed else raw_items
+                if not transformed:
+                    self._source_statuses[source_id] = "VALIDATION_FAILED"
+                    self._last_errors[source_id] = "TRANSFORMATION_EMPTY"
+                    return ExternalDataResponse(
+                        source=source_id,
+                        workload=workload,
+                        status="VALIDATION_FAILED",
+                        provenance="VALIDATION_FAILED",
+                        records=[],
+                        records_count=0,
+                        fetched_at=now_iso,
+                        freshness_status="UNKNOWN",
+                        error="data.gov.in transformation returned no valid records for raw input.",
+                        authoritative=False,
+                        is_demo=False,
+                    )
+
+                is_opportunity_resource = kwargs.get("resource_type") in ("naps", "pmkvy")
                 validated_records = []
-                for item in candidate_items:
+                for item in transformed:
                     try:
-                        ok, err, valid_record = validate_scheme_item(item)
+                        if is_opportunity_resource:
+                            ok, err, valid_record = validate_job_item(item)
+                        else:
+                            ok, err, valid_record = validate_scheme_item(item)
                         if ok and valid_record:
                             valid_record["fetched_at"] = now_iso
                             valid_record["freshness_status"] = compute_freshness(
@@ -475,18 +535,35 @@ class SourceOrchestrator:
                     except Exception as item_err:
                         logger.warning(f"[SourceOrchestrator] Discarding malformed scheme item: {item_err}")
 
+                if not validated_records:
+                    self._source_statuses[source_id] = "VALIDATION_FAILED"
+                    self._last_errors[source_id] = "VALIDATION_FAILED"
+                    return ExternalDataResponse(
+                        source=source_id,
+                        workload=workload,
+                        status="VALIDATION_FAILED",
+                        provenance="VALIDATION_FAILED",
+                        records=[],
+                        records_count=0,
+                        fetched_at=now_iso,
+                        freshness_status="UNKNOWN",
+                        error="All records failed schema validation",
+                        authoritative=False,
+                        is_demo=False,
+                    )
+
                 self._source_statuses[source_id] = "ONLINE"
                 self._last_errors[source_id] = "NONE"
                 return ExternalDataResponse(
                     source=source_id,
                     workload=workload,
-                    status="SUCCESS" if validated_records else "VALIDATION_FAILED",
+                    status="SUCCESS",
                     provenance=SOURCE_TYPE_LIVE_API,
                     records=validated_records,
                     records_count=len(validated_records),
                     fetched_at=now_iso,
                     freshness_status="LIVE",
-                    error=None if validated_records else "All records failed schema validation",
+                    error=None,
                     authoritative=False,
                     is_demo=False,
                 )
@@ -574,12 +651,15 @@ class SourceOrchestrator:
             elif current_status == "ONLINE":
                 display_status = "ONLINE"
                 availability = "AVAILABLE"
-            elif current_status == "UNAVAILABLE":
-                display_status = "UNAVAILABLE"
+            elif current_status in ("UNAVAILABLE", "VALIDATION_FAILED"):
+                display_status = current_status
                 availability = "UNAVAILABLE"
+            elif src_id == SOURCE_LOCAL_DEMO:
+                display_status = "ONLINE"
+                availability = "AVAILABLE"
             else:
-                display_status = "READY" if configured else "NOT_CONFIGURED"
-                availability = "AVAILABLE" if configured else "UNAVAILABLE"
+                display_status = "CONFIGURED" if configured else "NOT_CONFIGURED"
+                availability = "UNKNOWN" if configured else "UNAVAILABLE"
 
             sources_diag.append({
                 "source_id": spec.source_id,

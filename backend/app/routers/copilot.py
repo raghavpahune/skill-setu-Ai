@@ -59,6 +59,7 @@ async def ask_copilot(
         context_data=ctx_data,
         current_user=current_user,
         is_demo=query.is_demo,
+        task_category="career_copilot",
     )
     return answer
 
@@ -83,6 +84,7 @@ async def explain_career(
         student_id=query.student_id,
         current_user=current_user,
         is_demo=query.is_demo,
+        task_category="career_copilot",
     )
     return answer
 

@@ -25,6 +25,7 @@ from app.db import (
     persist_schemes_to_supabase,
     persist_jobs_to_supabase,
 )
+from app.ingestion.base_adapter import SOURCE_TYPE_LIVE_API
 from app.ingestion.adzuna_connector import AdzunaConnector
 from app.ingestion.datagov_connector import (
     DataGovConnector,
@@ -32,6 +33,12 @@ from app.ingestion.datagov_connector import (
     RESOURCE_ITI_CRAFTSMEN,
     RESOURCE_NAPS_APPRENTICESHIP,
     RESOURCE_PMKVY_SKILL,
+)
+from app.ingestion.source_orchestrator import (
+    SourceOrchestrator,
+    WORKLOAD_JOBS,
+    WORKLOAD_GOVERNMENT_SCHEMES,
+    SOURCE_DATAGOV,
 )
 
 logger = logging.getLogger("skillsetu.ingestion.sync_engine")
@@ -43,10 +50,15 @@ class SyncEngine:
         self,
         datagov_connector: DataGovConnector | None = None,
         adzuna_connector: AdzunaConnector | None = None,
+        source_orchestrator: SourceOrchestrator | None = None,
     ):
         self.datagov_connector = datagov_connector or DataGovConnector()
         self.adzuna_connector = adzuna_connector or AdzunaConnector()
         self.connector = self.datagov_connector
+        self.source_orchestrator = source_orchestrator or SourceOrchestrator(
+            adzuna_connector=self.adzuna_connector,
+            datagov_connector=self.datagov_connector,
+        )
 
     def run_sync(self, source_name: str = "all") -> dict[str, Any]:
         sync_id = str(uuid.uuid4())
@@ -191,30 +203,39 @@ class SyncEngine:
 
             if src_norm in ("all", "adzuna", "jobs"):
                 try:
-                    logger.info("[SyncEngine] Ingesting live job vacancies from Adzuna India...")
-                    adzuna_raw = self.adzuna_connector.fetch_raw(page=1, results_per_page=25, where="Maharashtra")
-                    adz_fetched = len(adzuna_raw)
+                    logger.info("[SyncEngine] Ingesting live job vacancies from Adzuna India via SourceOrchestrator...")
+                    orch_resp = self.source_orchestrator.fetch_data(
+                        workload=WORKLOAD_JOBS,
+                        limit=25,
+                        where="Maharashtra",
+                        is_demo=is_explicit_demo_mode(),
+                    )
+                    adz_fetched = orch_resp.records_count
                     adz_added = 0
                     adz_updated = 0
                     adz_skipped = 0
 
-                    if adzuna_raw:
-                        adzuna_jobs = self.adzuna_connector.validate_and_transform(adzuna_raw)
-                        adz_skipped = max(0, adz_fetched - len(adzuna_jobs))
-                        added_j, updated_j = self._upsert_jobs(adzuna_jobs)
-                        adz_added += added_j
-                        adz_updated += updated_j
-                        self._upsert_job_skills(adzuna_jobs)
+                    if orch_resp.status == "SUCCESS":
+                        if orch_resp.is_demo:
+                            added_j, updated_j = self._upsert_jobs(orch_resp.records)
+                            adz_added += added_j
+                            adz_updated += updated_j
+                            self._upsert_job_skills(orch_resp.records)
+                        elif orch_resp.provenance == SOURCE_TYPE_LIVE_API:
+                            added_j, updated_j = self._upsert_jobs(orch_resp.records)
+                            adz_added += added_j
+                            adz_updated += updated_j
+                            self._upsert_job_skills(orch_resp.records)
 
                     total_fetched += adz_fetched
                     total_added += adz_added
                     total_updated += adz_updated
                     total_skipped += adz_skipped
 
-                    adz_status = self.adzuna_connector.last_status
-                    adz_err = self.adzuna_connector.last_error
+                    adz_status = orch_resp.status
+                    adz_err = orch_resp.error
 
-                    if adz_status in ("NOT_CONFIGURED", "FAILED"):
+                    if adz_status in ("NOT_CONFIGURED", "UNAVAILABLE", "VALIDATION_FAILED", "FAILED"):
                         source_errors.append(f"adzuna: {adz_status} - {adz_err}")
                     else:
                         source_successes.append("adzuna")

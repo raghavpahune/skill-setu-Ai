@@ -154,6 +154,49 @@ def get_safe_integration_diagnostics() -> dict[str, Any]:
             "fallback_mechanism": "deterministic_fallback",
         }
 
+    adz_status_raw = "UNKNOWN"
+    dg_status_raw = "UNKNOWN"
+    try:
+        from app.ingestion.source_orchestrator import source_orchestrator, SOURCE_ADZUNA, SOURCE_DATAGOV
+        adz_status_raw = source_orchestrator._source_statuses.get(SOURCE_ADZUNA, "UNKNOWN")
+        dg_status_raw = source_orchestrator._source_statuses.get(SOURCE_DATAGOV, "UNKNOWN")
+    except Exception:
+        pass
+
+    if not adzuna_ok:
+        adz_status = "NOT_CONFIGURED"
+        adz_avail = "UNAVAILABLE"
+        adz_prov = "NOT_CONFIGURED"
+    elif adz_status_raw == "ONLINE":
+        adz_status = "ONLINE"
+        adz_avail = "AVAILABLE"
+        adz_prov = "LIVE_API"
+    elif adz_status_raw in ("UNAVAILABLE", "VALIDATION_FAILED"):
+        adz_status = adz_status_raw
+        adz_avail = "UNAVAILABLE"
+        adz_prov = adz_status_raw
+    else:
+        adz_status = "CONFIGURED"
+        adz_avail = "UNKNOWN"
+        adz_prov = "CONFIGURED"
+
+    if not datagov_ok:
+        dg_status = "NOT_CONFIGURED"
+        dg_avail = "UNAVAILABLE"
+        dg_prov = "NOT_CONFIGURED"
+    elif dg_status_raw == "ONLINE":
+        dg_status = "ONLINE"
+        dg_avail = "AVAILABLE"
+        dg_prov = "LIVE_API"
+    elif dg_status_raw in ("UNAVAILABLE", "VALIDATION_FAILED"):
+        dg_status = dg_status_raw
+        dg_avail = "UNAVAILABLE"
+        dg_prov = dg_status_raw
+    else:
+        dg_status = "CONFIGURED"
+        dg_avail = "UNKNOWN"
+        dg_prov = "CONFIGURED"
+
     return {
         "status": "success",
         "timestamp": os.getenv("DIAGNOSTICS_TIMESTAMP", "live"),
@@ -173,18 +216,18 @@ def get_safe_integration_diagnostics() -> dict[str, Any]:
                 "provider": "Adzuna India Jobs API",
                 "source_name": "ADZUNA_API",
                 "configured": adzuna_ok,
-                "status": "ONLINE" if adzuna_ok else "NOT_CONFIGURED",
-                "availability": "AVAILABLE" if adzuna_ok else "UNAVAILABLE",
-                "provenance": "LIVE_API" if adzuna_ok else "NOT_CONFIGURED",
+                "status": adz_status,
+                "availability": adz_avail,
+                "provenance": adz_prov,
                 "fallback_available": False,
             },
             "datagov_schemes": {
                 "provider": "data.gov.in (OGD Platform India)",
                 "source_name": "OGD_DATAGOV_IN",
                 "configured": datagov_ok,
-                "status": "ONLINE" if datagov_ok else "NOT_CONFIGURED",
-                "availability": "AVAILABLE" if datagov_ok else "UNAVAILABLE",
-                "provenance": "LIVE_API" if datagov_ok else "NOT_CONFIGURED",
+                "status": dg_status,
+                "availability": dg_avail,
+                "provenance": dg_prov,
                 "fallback_available": False,
             },
             "supabase_database": {

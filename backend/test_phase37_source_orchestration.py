@@ -352,3 +352,171 @@ def test_supabase_workload_retrieval_and_error_handling():
             assert res.records == []
             assert res.records_count == 0
             assert "not supported" in str(res.error).lower()
+
+
+def test_datagov_transformation_failure_fail_closed():
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._datagov_connector, "fetch_raw", return_value=[{"id": "doc-1", "title": "Scheme 1"}]):
+            with patch.object(source_orchestrator._datagov_connector, "validate_and_transform", side_effect=Exception("Corrupted schema")):
+                res = source_orchestrator.fetch_data(workload=WORKLOAD_GOVERNMENT_SCHEMES, limit=10, is_demo=False)
+                assert res.status == "VALIDATION_FAILED"
+                assert res.provenance == "VALIDATION_FAILED"
+                assert res.provenance != SOURCE_TYPE_LIVE_API
+                assert res.records == []
+                assert res.records_count == 0
+                assert "transformation failed" in str(res.error).lower()
+                assert source_orchestrator._source_statuses[SOURCE_DATAGOV] == "VALIDATION_FAILED"
+
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._datagov_connector, "fetch_raw", return_value=[{"id": "doc-2", "title": "Scheme 2"}]):
+            with patch.object(source_orchestrator._datagov_connector, "validate_and_transform", return_value=[]):
+                res = source_orchestrator.fetch_data(workload=WORKLOAD_GOVERNMENT_SCHEMES, limit=10, is_demo=False)
+                assert res.status == "VALIDATION_FAILED"
+                assert res.provenance == "VALIDATION_FAILED"
+                assert res.provenance != SOURCE_TYPE_LIVE_API
+                assert res.records == []
+                assert res.records_count == 0
+                assert source_orchestrator._source_statuses[SOURCE_DATAGOV] == "VALIDATION_FAILED"
+
+    with patch.object(source_orchestrator, "is_source_configured", return_value=True):
+        with patch.object(source_orchestrator._datagov_connector, "fetch_raw", return_value=[{"document_id": "alloc-1", "_year": "2023-24"}]):
+            with patch.object(
+                source_orchestrator._datagov_connector,
+                "validate_and_transform",
+                return_value=[{
+                    "id": "trans-scheme-1",
+                    "title": "National Technical Scholarship (2023-24)",
+                    "department": "Higher Education",
+                    "source": "OGD_DATAGOV_IN",
+                    "source_type": SOURCE_TYPE_LIVE_API,
+                    "external_id": "SCHOLARSHIP_1",
+                    "application_portal_url": "https://scholarships.gov.in",
+                    "is_demo": False,
+                }],
+            ):
+                res = source_orchestrator.fetch_data(workload=WORKLOAD_GOVERNMENT_SCHEMES, limit=10, is_demo=False)
+                assert res.status == "SUCCESS"
+                assert res.provenance == SOURCE_TYPE_LIVE_API
+                assert res.records_count == 1
+                assert res.records[0]["id"] == "trans-scheme-1"
+                assert source_orchestrator._source_statuses[SOURCE_DATAGOV] == "ONLINE"
+
+
+def test_sync_engine_uses_source_orchestration_and_persists_only_validated_live():
+    from app.ingestion.sync_engine import SyncEngine
+    from app.ingestion.source_orchestrator import ExternalDataResponse
+
+    engine = SyncEngine()
+    fake_live_jobs = [
+        {
+            "id": "job-orch-1",
+            "external_id": "ext-orch-1",
+            "title": "Cloud Architect",
+            "company": "Tech Corp",
+            "district": "Pune",
+            "vacancies_count": 2,
+            "source": "ADZUNA_API",
+            "source_type": SOURCE_TYPE_LIVE_API,
+            "is_demo": False,
+        }
+    ]
+    succ_resp = ExternalDataResponse(
+        source=SOURCE_ADZUNA,
+        workload=WORKLOAD_JOBS,
+        status="SUCCESS",
+        provenance=SOURCE_TYPE_LIVE_API,
+        records=fake_live_jobs,
+        records_count=1,
+        authoritative=False,
+        is_demo=False,
+    )
+
+    with patch.object(engine.source_orchestrator, "fetch_data", return_value=succ_resp) as mock_fetch:
+        with patch("app.repositories.supabase_repository.upsert_jobs") as mock_upsert:
+            with patch("app.ingestion.sync_engine.is_supabase_connected", return_value=True):
+                with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=False):
+                    log = engine.run_sync(source_name="adzuna")
+                    assert log["status"] == "success"
+                    assert log["records_fetched"] == 1
+                    mock_fetch.assert_called_once()
+                    mock_upsert.assert_called_once()
+
+    unavail_resp = ExternalDataResponse(
+        source=SOURCE_ADZUNA,
+        workload=WORKLOAD_JOBS,
+        status="UNAVAILABLE",
+        provenance="UNAVAILABLE",
+        records=[],
+        records_count=0,
+        error="Upstream network failure",
+        authoritative=False,
+        is_demo=False,
+    )
+    with patch.object(engine.source_orchestrator, "fetch_data", return_value=unavail_resp):
+        with patch("app.repositories.supabase_repository.upsert_jobs") as mock_upsert:
+            with patch("app.ingestion.sync_engine.is_supabase_connected", return_value=True):
+                with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=False):
+                    log = engine.run_sync(source_name="adzuna")
+                    assert log["status"] == "failed"
+                    assert log["sources_detail"]["adzuna"]["status"] == "UNAVAILABLE"
+                    mock_upsert.assert_not_called()
+
+    with patch.object(engine.source_orchestrator, "fetch_data", return_value=succ_resp):
+        with patch("app.repositories.supabase_repository.upsert_jobs", side_effect=RuntimeError("Supabase connection timeout")):
+            with patch("app.ingestion.sync_engine.persist_jobs_to_supabase", side_effect=RuntimeError("Fallback error")):
+                with patch("app.ingestion.sync_engine.is_supabase_connected", return_value=True):
+                    with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=False):
+                        log = engine.run_sync(source_name="adzuna")
+                        assert log["status"] == "failed"
+                        assert "timeout" in str(log["error_message"]).lower() or "error" in str(log["error_message"]).lower()
+
+    demo_resp = ExternalDataResponse(
+        source=SOURCE_LOCAL_DEMO,
+        workload=WORKLOAD_JOBS,
+        status="SUCCESS",
+        provenance=SOURCE_TYPE_DEMO_SYNTHETIC,
+        records=fake_live_jobs,
+        records_count=1,
+        authoritative=False,
+        is_demo=True,
+    )
+    with patch.object(engine.source_orchestrator, "fetch_data", return_value=demo_resp):
+        with patch("app.repositories.supabase_repository.upsert_jobs") as mock_upsert:
+            with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=True):
+                log = engine.run_sync(source_name="adzuna")
+                assert log["status"] == "success"
+                assert log["is_demo"] is True
+                mock_upsert.assert_not_called()
+
+
+def test_diagnostics_configuration_only_state_and_online_transition():
+    from app.core.providers_config import get_safe_integration_diagnostics
+
+    with patch("app.core.providers_config.is_adzuna_configured", return_value=True):
+        with patch.object(source_orchestrator, "_source_statuses", {SOURCE_ADZUNA: "UNKNOWN"}):
+            diag = get_safe_integration_diagnostics()
+            adz_diag = diag["external_data"]["adzuna_jobs"]
+            assert adz_diag["configured"] is True
+            assert adz_diag["status"] == "CONFIGURED"
+            assert adz_diag["availability"] == "UNKNOWN"
+            assert adz_diag["provenance"] == "CONFIGURED"
+            assert adz_diag["status"] != "ONLINE"
+            assert adz_diag["availability"] != "AVAILABLE"
+            assert adz_diag["provenance"] != SOURCE_TYPE_LIVE_API
+
+        with patch.object(source_orchestrator, "_source_statuses", {SOURCE_ADZUNA: "ONLINE"}):
+            diag = get_safe_integration_diagnostics()
+            adz_diag = diag["external_data"]["adzuna_jobs"]
+            assert adz_diag["status"] == "ONLINE"
+            assert adz_diag["availability"] == "AVAILABLE"
+            assert adz_diag["provenance"] == SOURCE_TYPE_LIVE_API
+
+        with patch.object(source_orchestrator, "_source_statuses", {SOURCE_ADZUNA: "UNAVAILABLE"}):
+            diag = get_safe_integration_diagnostics()
+            adz_diag = diag["external_data"]["adzuna_jobs"]
+            assert adz_diag["status"] == "UNAVAILABLE"
+            assert adz_diag["availability"] == "UNAVAILABLE"
+
+    raw_str = str(diag)
+    assert "secret" not in raw_str.lower()
+    assert "password" not in raw_str.lower()

@@ -374,3 +374,207 @@ def test_ai_router_respects_skillsetu_data_mode():
             assert res["provider"] == "gemini"
             assert res["fallback_used"] is False
             mock_inst.generate.assert_awaited_once()
+
+
+def test_copilot_workload_provider_and_key_resolution(client, student_headers):
+    from ai.gemini_provider import GeminiProvider
+    with patch.dict(
+        os.environ,
+        {
+            "AI_PROVIDER_CAREER_COPILOT": "gemini",
+            "GEMINI_API_KEY_CAREER_COPILOT": "copilot-specific-key",
+            "GEMINI_API_KEY": "general-key",
+        },
+        clear=False,
+    ):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock(spec=GeminiProvider)
+            mock_inst.api_key = "copilot-specific-key"
+            mock_inst.model = "gemini-3.6-flash"
+            mock_inst.generate.return_value = "Workload specific career guidance"
+            mock_gemini_cls.return_value = mock_inst
+
+            sample_skills = [{"id": "sk-py", "name": "Python", "category": "IT", "nsqf_level": 5}]
+            sample_jobs = [{"id": "jb-1", "title": "Dev", "district": "Pune"}]
+            sample_job_skills = [{"job_id": "jb-1", "skill_id": "sk-py"}]
+            sample_course_skills = [{"course_id": "c-1", "skill_id": "sk-py"}]
+
+            with patch("app.repositories.supabase_repository.list_skills", return_value=sample_skills), \
+                 patch("app.repositories.supabase_repository.list_jobs", return_value=sample_jobs), \
+                 patch("app.repositories.supabase_repository.list_job_skills", return_value=sample_job_skills), \
+                 patch("app.repositories.supabase_repository.list_course_skills", return_value=sample_course_skills), \
+                 patch("app.services.district_service.compute_gaps", return_value=[]):
+
+                res_ask = client.post(
+                    "/api/copilot/ask",
+                    json={"question": "What skills do I need for Python?", "role": "student"},
+                    headers=student_headers,
+                )
+                assert res_ask.status_code == 200
+                data_ask = res_ask.json()
+                assert data_ask["answer"] == "Workload specific career guidance"
+                assert data_ask["demo_mode"] is False
+                assert "Gemini AI" in data_ask["provenance_label"]
+                assert mock_gemini_cls.call_args[1]["api_key"] == "copilot-specific-key"
+
+                res_exp = client.post(
+                    "/api/copilot/explain-career",
+                    json={"student_id": "test-student-uid", "question": "Explain my roadmap"},
+                    headers=student_headers,
+                )
+                assert res_exp.status_code == 200
+                data_exp = res_exp.json()
+                assert data_exp["answer"] == "Workload specific career guidance"
+                assert data_exp["demo_mode"] is False
+
+
+def test_copilot_endpoints_fail_closed_in_real_mode_when_provider_unavailable_or_fails(client, student_headers):
+    from ai.gemini_provider import GeminiProvider
+    with patch.dict(
+        os.environ,
+        {
+            "AI_PROVIDER_CAREER_COPILOT": "deterministic_fallback",
+        },
+        clear=False,
+    ):
+        res_ask = client.post(
+            "/api/copilot/ask",
+            json={"question": "Career path options", "role": "student"},
+            headers=student_headers,
+        )
+        assert res_ask.status_code == 200
+        data_ask = res_ask.json()
+        assert data_ask["demo_mode"] is False
+        assert data_ask["provenance_label"] == "⚠️ Service Offline"
+        assert "temporarily unavailable" in data_ask["answer"]
+
+        res_exp = client.post(
+            "/api/copilot/explain-career",
+            json={"student_id": "test-student-uid"},
+            headers=student_headers,
+        )
+        assert res_exp.status_code == 200
+        data_exp = res_exp.json()
+        assert data_exp["demo_mode"] is False
+        assert data_exp["provenance_label"] == "⚠️ Service Offline"
+
+    with patch.dict(
+        os.environ,
+        {
+            "AI_PROVIDER_CAREER_COPILOT": "gemini",
+            "GEMINI_API_KEY_CAREER_COPILOT": "error-test-key",
+        },
+        clear=False,
+    ):
+        with patch("ai.router.GeminiProvider") as mock_gemini_cls:
+            mock_inst = AsyncMock(spec=GeminiProvider)
+            mock_inst.api_key = "error-test-key"
+            mock_inst.model = "gemini-3.6-flash"
+            mock_inst.generate.side_effect = RuntimeError("Upstream API quota exceeded")
+            mock_gemini_cls.return_value = mock_inst
+
+            sample_skills = [{"id": "sk-py", "name": "Python", "category": "IT", "nsqf_level": 5}]
+            sample_jobs = [{"id": "jb-1", "title": "Dev", "district": "Pune"}]
+            sample_job_skills = [{"job_id": "jb-1", "skill_id": "sk-py"}]
+            sample_course_skills = [{"course_id": "c-1", "skill_id": "sk-py"}]
+
+            with patch("app.repositories.supabase_repository.list_skills", return_value=sample_skills), \
+                 patch("app.repositories.supabase_repository.list_jobs", return_value=sample_jobs), \
+                 patch("app.repositories.supabase_repository.list_job_skills", return_value=sample_job_skills), \
+                 patch("app.repositories.supabase_repository.list_course_skills", return_value=sample_course_skills), \
+                 patch("app.services.district_service.compute_gaps", return_value=[]):
+
+                res_err = client.post(
+                    "/api/copilot/ask",
+                    json={"question": "Career guidance for Python", "role": "student"},
+                    headers=student_headers,
+                )
+                assert res_err.status_code == 200
+                data_err = res_err.json()
+                assert data_err["demo_mode"] is False
+                assert data_err["provenance_label"] == "⚠️ Service Error"
+
+
+def test_copilot_endpoints_explicit_demo_mode(client, student_headers):
+    res_ask = client.post(
+        "/api/copilot/ask",
+        json={"question": "Tell me about data science", "role": "student", "is_demo": True},
+        headers=student_headers,
+    )
+    assert res_ask.status_code == 200
+    data_ask = res_ask.json()
+    assert data_ask["demo_mode"] is True
+    assert data_ask["model"] == "Rule-Based Offline Intelligence"
+    assert "Offline Demo Mode" in data_ask["provenance_label"]
+
+    res_exp = client.post(
+        "/api/copilot/explain-career",
+        json={"student_id": "test-student-uid", "is_demo": True},
+        headers=student_headers,
+    )
+    assert res_exp.status_code == 200
+    data_exp = res_exp.json()
+    assert data_exp["demo_mode"] is True
+
+
+def test_copilot_authorization_and_ownership_guards(client, student_headers, admin_headers):
+    private_record = {
+        "id": "other-student-456",
+        "user_id": "other-student-456",
+        "source": "USER_SUBMITTED",
+        "is_demo": False,
+        "career_goal": "AI Engineer",
+        "skills": [{"skill_name": "Python", "proficiency": "advanced"}],
+    }
+
+    with patch("app.repositories.supabase_repository.get_student_assessment", return_value=private_record), \
+         patch("app.repositories.supabase_repository.get_student_assessment_by_user", return_value=private_record):
+
+        unauth_ask = client.post(
+            "/api/copilot/ask",
+            json={"question": "recommendations", "student_id": "other-student-456"},
+        )
+        assert unauth_ask.status_code == 401
+
+        unauth_exp = client.post(
+            "/api/copilot/explain-career",
+            json={"student_id": "other-student-456"},
+        )
+        assert unauth_exp.status_code == 401
+
+        forbidden_ask = client.post(
+            "/api/copilot/ask",
+            json={"question": "recommendations", "student_id": "other-student-456"},
+            headers=student_headers,
+        )
+        assert forbidden_ask.status_code == 403
+
+        forbidden_exp = client.post(
+            "/api/copilot/explain-career",
+            json={"student_id": "other-student-456"},
+            headers=student_headers,
+        )
+        assert forbidden_exp.status_code == 403
+
+    owner_record = {
+        "id": "test-student-uid",
+        "user_id": "test-student-uid",
+        "source": "USER_SUBMITTED",
+        "is_demo": False,
+    }
+    with patch("app.repositories.supabase_repository.get_student_assessment", return_value=owner_record), \
+         patch("app.repositories.supabase_repository.get_student_assessment_by_user", return_value=owner_record):
+
+        ok_owner_exp = client.post(
+            "/api/copilot/explain-career",
+            json={"student_id": "test-student-uid", "is_demo": True},
+            headers=student_headers,
+        )
+        assert ok_owner_exp.status_code == 200
+
+        ok_admin_exp = client.post(
+            "/api/copilot/explain-career",
+            json={"student_id": "test-student-uid", "is_demo": True},
+            headers=admin_headers,
+        )
+        assert ok_admin_exp.status_code == 200

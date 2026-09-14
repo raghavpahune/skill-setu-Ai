@@ -113,17 +113,59 @@ class ExternalConnectorRegistry:
         adzuna_ok = is_adzuna_configured()
         datagov_ok = is_datagov_configured()
 
+        if not adzuna_ok:
+            adz_status = "NOT_CONFIGURED"
+            adz_avail = "UNAVAILABLE"
+            adz_prov = "NOT_CONFIGURED"
+            adz_fresh = "STALE"
+        elif self._adzuna_status == "ONLINE":
+            adz_status = "ONLINE"
+            adz_avail = "AVAILABLE"
+            adz_prov = "LIVE_API"
+            adz_fresh = "LIVE"
+        elif self._adzuna_status in ("UNAVAILABLE", "FAILED"):
+            adz_status = self._adzuna_status
+            adz_avail = "UNAVAILABLE"
+            adz_prov = self._adzuna_status
+            adz_fresh = "STALE"
+        else:
+            adz_status = "CONFIGURED"
+            adz_avail = "UNKNOWN"
+            adz_prov = "CONFIGURED"
+            adz_fresh = "UNKNOWN"
+
+        if not datagov_ok:
+            dg_status = "NOT_CONFIGURED"
+            dg_avail = "UNAVAILABLE"
+            dg_prov = "NOT_CONFIGURED"
+            dg_fresh = "STALE"
+        elif self._datagov_status == "ONLINE":
+            dg_status = "ONLINE"
+            dg_avail = "AVAILABLE"
+            dg_prov = "LIVE_API"
+            dg_fresh = "LIVE"
+        elif self._datagov_status in ("UNAVAILABLE", "FAILED"):
+            dg_status = self._datagov_status
+            dg_avail = "UNAVAILABLE"
+            dg_prov = self._datagov_status
+            dg_fresh = "STALE"
+        else:
+            dg_status = "CONFIGURED"
+            dg_avail = "UNKNOWN"
+            dg_prov = "CONFIGURED"
+            dg_fresh = "UNKNOWN"
+
         return {
             "connectors": [
                 {
                     "provider_name": "Adzuna India Jobs API",
                     "source_name": "ADZUNA_API",
                     "configured": adzuna_ok,
-                    "status": "ONLINE" if (adzuna_ok and self._adzuna_status == "ONLINE") else ("NOT_CONFIGURED" if not adzuna_ok else self._adzuna_status),
-                    "availability": "AVAILABLE" if (adzuna_ok and self._adzuna_status != "UNAVAILABLE") else "UNAVAILABLE",
+                    "status": adz_status,
+                    "availability": adz_avail,
                     "last_failure_category": self._last_adzuna_error,
-                    "freshness": "LIVE" if (adzuna_ok and self._adzuna_status == "ONLINE") else "STALE",
-                    "provenance": "LIVE_API" if adzuna_ok else "NOT_CONFIGURED",
+                    "freshness": adz_fresh,
+                    "provenance": adz_prov,
                     "timeout_seconds": self._adzuna.timeout_seconds,
                     "max_retries": self._adzuna.max_retries,
                     "fallback_available": False,
@@ -132,11 +174,11 @@ class ExternalConnectorRegistry:
                     "provider_name": "data.gov.in (OGD Platform India)",
                     "source_name": "OGD_DATAGOV_IN",
                     "configured": datagov_ok,
-                    "status": "ONLINE" if (datagov_ok and self._datagov_status == "ONLINE") else ("NOT_CONFIGURED" if not datagov_ok else self._datagov_status),
-                    "availability": "AVAILABLE" if (datagov_ok and self._datagov_status != "UNAVAILABLE") else "UNAVAILABLE",
+                    "status": dg_status,
+                    "availability": dg_avail,
                     "last_failure_category": self._last_datagov_error,
-                    "freshness": "LIVE" if (datagov_ok and self._datagov_status == "ONLINE") else "STALE",
-                    "provenance": "LIVE_API" if datagov_ok else "NOT_CONFIGURED",
+                    "freshness": dg_fresh,
+                    "provenance": dg_prov,
                     "timeout_seconds": self._datagov.timeout_seconds,
                     "max_retries": self._datagov.max_retries,
                     "fallback_available": False,

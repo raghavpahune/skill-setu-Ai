@@ -939,8 +939,10 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Adzuna Jobs Feed</span>
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                    integrationsHealth?.external_data?.adzuna_jobs?.configured
+                    integrationsHealth?.external_data?.adzuna_jobs?.status === 'ONLINE'
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                      : integrationsHealth?.external_data?.adzuna_jobs?.status === 'CONFIGURED'
+                      ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}>
                     {integrationsHealth?.external_data?.adzuna_jobs?.status || 'NOT_CONFIGURED'}
@@ -956,8 +958,10 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">data.gov.in (OGD)</span>
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                    integrationsHealth?.external_data?.datagov_schemes?.configured
+                    integrationsHealth?.external_data?.datagov_schemes?.status === 'ONLINE'
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
+                      : integrationsHealth?.external_data?.datagov_schemes?.status === 'CONFIGURED'
+                      ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}>
                     {integrationsHealth?.external_data?.datagov_schemes?.status || 'NOT_CONFIGURED'}

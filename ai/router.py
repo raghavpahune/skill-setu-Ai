@@ -35,6 +35,25 @@ SUPPORTED_AI_TASKS = [
 ]
 
 
+def resolve_workload_gemini_provider(task_category: str) -> GeminiProvider | None:
+    try:
+        from app.core.providers_config import (
+            get_workload_ai_key,
+            is_workload_ai_configured,
+            get_workload_provider,
+        )
+        if get_workload_provider(task_category) != "gemini":
+            return None
+        if is_workload_ai_configured(task_category):
+            key = get_workload_ai_key(task_category)
+            prov = GeminiProvider(api_key=key)
+            if prov.api_key:
+                return prov
+    except Exception as e:
+        logger.warning(f"[AIRouter] Failed initializing GeminiProvider for '{task_category}': {e}")
+    return None
+
+
 class AIRouter:
     def __init__(self):
         self._deterministic_fallback = DemoProvider()
@@ -42,22 +61,7 @@ class AIRouter:
         self._task_counts: dict[str, int] = {t: 0 for t in SUPPORTED_AI_TASKS}
 
     def _resolve_gemini_for_task(self, task_category: str) -> GeminiProvider | None:
-        try:
-            from app.core.providers_config import (
-                get_workload_ai_key,
-                is_workload_ai_configured,
-                get_workload_provider,
-            )
-            if get_workload_provider(task_category) != "gemini":
-                return None
-            if is_workload_ai_configured(task_category):
-                key = get_workload_ai_key(task_category)
-                prov = GeminiProvider(api_key=key)
-                if prov.api_key:
-                    return prov
-        except Exception as e:
-            logger.warning(f"[AIRouter] Failed initializing GeminiProvider for '{task_category}': {e}")
-        return None
+        return resolve_workload_gemini_provider(task_category)
 
     def get_last_error_category(self) -> str:
         return self._last_error_category

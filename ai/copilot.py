@@ -51,22 +51,14 @@ KNOWN_EXTERNAL_TECHS = {
 }
 
 
-def _get_provider(is_demo: bool | None = None) -> LLMProvider | None:
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        try:
-            from app.config import settings
-            api_key = settings.gemini_api_key or ""
-        except Exception:
-            pass
+def _get_provider(is_demo: bool | None = None, task_category: str = "career_copilot") -> LLMProvider | None:
+    if is_demo is True or is_explicit_demo_mode(is_demo):
+        return DemoProvider()
 
-    if api_key and api_key.strip():
-        try:
-            prov = GeminiProvider()
-            if prov.api_key:
-                return prov
-        except Exception as e:
-            logger.error(f"[Copilot] GeminiProvider initialization failed: {e}")
+    from ai.router import resolve_workload_gemini_provider
+    gemini_prov = resolve_workload_gemini_provider(task_category)
+    if gemini_prov is not None:
+        return gemini_prov
 
     if is_demo is False:
         return None
@@ -500,6 +492,7 @@ async def handle_question(
     context_data: dict | None = None,
     current_user: dict | None = None,
     is_demo: bool | None = None,
+    task_category: str = "career_copilot",
 ) -> dict[str, Any]:
     if is_demo is False:
         is_demo_mode = False
@@ -507,7 +500,7 @@ async def handle_question(
         is_demo_mode = True
     else:
         is_demo_mode = student_id is not None and is_demo_student_id(student_id)
-    provider = _get_provider(is_demo=is_demo_mode)
+    provider = _get_provider(is_demo=is_demo_mode, task_category=task_category)
     context = _build_context(role, question, district, student_id, context_data, current_user, is_demo=is_demo_mode)
     is_live_ai = isinstance(provider, GeminiProvider)
 
