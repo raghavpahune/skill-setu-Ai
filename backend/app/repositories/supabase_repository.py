@@ -1711,7 +1711,7 @@ def get_scheme(scheme_id: str) -> dict[str, Any] | None:
 def list_schemes(
     scheme_type: str | None = None,
     status: str | None = None,
-    limit: int = 100,
+    limit: int | None = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Authoritatively list student welfare and government schemes from Supabase."""
@@ -1723,9 +1723,22 @@ def list_schemes(
         if status:
             query = query.eq("status", status.lower())
 
-        res = query.order("id").range(offset, offset + limit - 1).execute()
-        schemes = getattr(res, "data", []) or []
-        return schemes
+        if limit is not None and limit <= 1000:
+            res = query.order("id").range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+
+        all_schemes = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_schemes)) if limit is not None else page_size
+            res = query.order("id").range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_schemes.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_schemes) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_schemes
     except SupabaseRepositoryError:
         raise
     except Exception as e:

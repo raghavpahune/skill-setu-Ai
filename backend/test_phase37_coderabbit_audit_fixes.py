@@ -529,3 +529,35 @@ def test_save_user_reraises_on_arbitrary_upsert_failure():
         with pytest.raises(SupabaseRepositoryError, match="Supabase connection timeout"):
             save_user(user_data)
         assert mock_client.table.return_value.upsert.call_count == 1
+
+
+def test_list_schemes_chunked_pagination_and_none_limit():
+    from app.repositories.supabase_repository import list_schemes
+    mock_client = MagicMock()
+    mock_query = MagicMock()
+    mock_client.table.return_value = mock_query
+    mock_query.select.return_value = mock_query
+    mock_query.order.return_value = mock_query
+    mock_query.range.return_value = mock_query
+
+    with patch("app.repositories.supabase_repository.get_client", return_value=mock_client):
+        mock_query.execute.side_effect = [
+            MagicMock(data=[{"id": f"sch-{i}"} for i in range(1000)]),
+            MagicMock(data=[{"id": f"sch-{i}"} for i in range(1000, 1350)]),
+        ]
+        res_none = list_schemes(limit=None)
+        assert len(res_none) == 1350
+        assert mock_query.range.call_args_list[0][0] == (0, 999)
+        assert mock_query.range.call_args_list[1][0] == (1000, 1999)
+
+        mock_query.range.reset_mock()
+        mock_query.execute.side_effect = [
+            MagicMock(data=[{"id": f"sch-{i}"} for i in range(1000)]),
+            MagicMock(data=[{"id": f"sch-{i}"} for i in range(1000, 2000)]),
+            MagicMock(data=[{"id": f"sch-{i}"} for i in range(2000, 2500)]),
+        ]
+        res_large = list_schemes(limit=2500, offset=100)
+        assert len(res_large) == 2500
+        assert mock_query.range.call_args_list[0][0] == (100, 1099)
+        assert mock_query.range.call_args_list[1][0] == (1100, 2099)
+        assert mock_query.range.call_args_list[2][0] == (2100, 2599)
