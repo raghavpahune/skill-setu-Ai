@@ -1,7 +1,7 @@
 """Schemes API — student welfare and government schemes."""
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
-from app.core.data_mode import is_explicit_demo_mode, is_demo_scheme_id
+from app.core.data_mode import is_explicit_demo_mode
 from app.core.security import get_optional_current_user, is_demo_student_id
 from app.db import get_demo
 from app.repositories.supabase_repository import SupabaseRepositoryError
@@ -275,15 +275,13 @@ async def recommended_schemes(
 @router.get("/schemes/{scheme_id}")
 async def get_scheme(scheme_id: str, is_demo: bool | None = None):
     """Get single scheme details by ID or scheme code."""
-    # 1. Explicit demo requested or demo ID prefix
-    if is_demo is not False and (is_explicit_demo_mode(is_demo) or is_demo_scheme_id(scheme_id)):
+    if is_explicit_demo_mode(is_demo):
         schemes = get_demo("schemes")
         for s in schemes:
             if s.get("id") == scheme_id or s.get("scheme_code", "").lower() == scheme_id.lower():
                 return s
         raise HTTPException(status_code=404, detail="Scheme not found")
 
-    # 2. Query authoritative repository
     try:
         from app.repositories.supabase_repository import get_scheme as get_scheme_repo
         record = get_scheme_repo(scheme_id)
@@ -291,15 +289,7 @@ async def get_scheme(scheme_id: str, is_demo: bool | None = None):
             return record
     except Exception as e:
         logger.warning("Repository error fetching scheme '%s': %s", scheme_id, e)
-        if is_demo is False:
-            raise HTTPException(status_code=503, detail="Authoritative scheme database unavailable")
-
-    # 3. Fallback to demo fixtures when is_demo was not explicitly False
-    if is_demo is None:
-        schemes = get_demo("schemes")
-        for s in schemes:
-            if s.get("id") == scheme_id or s.get("scheme_code", "").lower() == scheme_id.lower():
-                return s
+        raise HTTPException(status_code=503, detail="Authoritative scheme database unavailable")
 
     raise HTTPException(status_code=404, detail="Scheme not found")
 

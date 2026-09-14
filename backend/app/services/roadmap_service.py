@@ -417,10 +417,12 @@ def compute_adaptive_roadmap(
             courses_list = supabase_repository.list_courses() or []
         except Exception as e:
             logger.warning("[Roadmap] Failed loading real courses: %s", e)
+            raise RuntimeError(f"Roadmap courses unavailable from authoritative repository for student '{student_id}': {e}") from e
         try:
             signals_list = supabase_repository.list_industry_signals() or []
         except Exception as e:
             logger.warning("[Roadmap] Failed loading real industry signals: %s", e)
+            raise RuntimeError(f"Roadmap industry signals unavailable from authoritative repository for student '{student_id}': {e}") from e
 
     steps: list[dict[str, Any]] = []
     total_estimated_hours = 0

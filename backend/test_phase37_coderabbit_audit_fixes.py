@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.security import create_access_token, hash_password
-from app.db import save_user, get_demo, set_demo
+from app.db import save_user, get_demo, set_demo, _cache
 from app.ingestion.sync_engine import SyncEngine
 from app.ingestion.source_orchestrator import (
     SourceOrchestrator,
@@ -191,16 +191,22 @@ def test_issue3_real_mode_sync_fails_closed_when_supabase_unavailable():
 
 def test_issue3_explicit_demo_mode_writes_locally_and_never_calls_supabase():
     engine = SyncEngine()
-    with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=True):
-        with patch("app.repositories.supabase_repository.upsert_schemes") as mock_supa_s:
-            with patch("app.repositories.supabase_repository.upsert_jobs") as mock_supa_j:
-                with patch("app.repositories.supabase_repository.batch_create_job_skills") as mock_supa_js:
-                    engine._upsert_schemes([{"id": "demo-s-1", "title": "Demo Scheme"}])
-                    engine._upsert_jobs([{"id": "demo-j-1", "title": "Demo Job"}])
-                    engine._upsert_job_skills([{"id": "demo-j-1", "skill_ids": ["sk-demo-1"]}])
-                    mock_supa_s.assert_not_called()
-                    mock_supa_j.assert_not_called()
-                    mock_supa_js.assert_not_called()
+    orig_schemes = list(_cache.get("schemes", []))
+    orig_jobs = list(_cache.get("jobs", []))
+    try:
+        with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=True):
+            with patch("app.repositories.supabase_repository.upsert_schemes") as mock_supa_s:
+                with patch("app.repositories.supabase_repository.upsert_jobs") as mock_supa_j:
+                    with patch("app.repositories.supabase_repository.batch_create_job_skills") as mock_supa_js:
+                        engine._upsert_schemes([{"id": "demo-s-1", "title": "Demo Scheme"}])
+                        engine._upsert_jobs([{"id": "demo-j-1", "title": "Demo Job"}])
+                        engine._upsert_job_skills([{"id": "demo-j-1", "skill_ids": ["sk-demo-1"]}])
+                        mock_supa_s.assert_not_called()
+                        mock_supa_j.assert_not_called()
+                        mock_supa_js.assert_not_called()
+    finally:
+        _cache["schemes"] = orig_schemes
+        _cache["jobs"] = orig_jobs
 
 
 def test_issue4_sync_engine_shares_singleton_orchestrator():
@@ -561,3 +567,74 @@ def test_list_schemes_chunked_pagination_and_none_limit():
         assert mock_query.range.call_args_list[0][0] == (100, 1099)
         assert mock_query.range.call_args_list[1][0] == (1100, 2099)
         assert mock_query.range.call_args_list[2][0] == (2100, 2599)
+
+
+def test_schemes_detail_default_request_demo_id_returns_404_without_demo_call():
+    with patch("app.repositories.supabase_repository.get_scheme", return_value=None):
+        with patch("app.routers.schemes.get_demo") as mock_demo:
+            res = client.get("/api/schemes/sch-demo-001")
+            assert res.status_code == 404
+            mock_demo.assert_not_called()
+
+
+def test_schemes_detail_is_demo_false_returns_404_without_demo_call():
+    with patch("app.repositories.supabase_repository.get_scheme", return_value=None):
+        with patch("app.routers.schemes.get_demo") as mock_demo:
+            res = client.get("/api/schemes/sch-demo-001?is_demo=false")
+            assert res.status_code == 404
+            mock_demo.assert_not_called()
+
+
+def test_schemes_detail_is_demo_true_returns_demo_scheme():
+    mock_scheme = {"id": "sch-demo-001", "scheme_code": "SCH-DEMO-001", "name": "Demo Scheme", "status": "active"}
+    with patch("app.routers.schemes.get_demo", return_value=[mock_scheme]):
+        with patch("app.repositories.supabase_repository.get_scheme") as mock_repo:
+            res = client.get("/api/schemes/sch-demo-001?is_demo=true")
+            assert res.status_code == 200
+            assert res.json()["id"] == "sch-demo-001"
+            mock_repo.assert_not_called()
+
+
+def test_schemes_detail_real_mode_repository_failure_returns_503():
+    with patch("app.repositories.supabase_repository.get_scheme", side_effect=Exception("Database failure")):
+        with patch("app.routers.schemes.get_demo") as mock_demo:
+            res = client.get("/api/schemes/sch-real-001")
+            assert res.status_code == 503
+            mock_demo.assert_not_called()
+
+
+def test_adaptive_roadmap_real_mode_courses_failure_fails_closed():
+    mock_profile = {
+        "user_id": "usr-real-fail-courses",
+        "target_role": "AI Engineer",
+        "is_demo": False,
+    }
+    with patch("app.repositories.supabase_repository.get_student_profile", return_value=mock_profile):
+        with patch("app.repositories.supabase_repository.get_student_assessment_by_user", return_value=None):
+            with patch("app.repositories.supabase_repository.get_student_assessment", return_value=None):
+                with patch("app.repositories.supabase_repository.list_skills", return_value=[{"id": "sk-1", "name": "Python"}]):
+                    with patch("app.repositories.supabase_repository.list_skill_forecasts", return_value=[]):
+                        with patch("app.repositories.supabase_repository.list_courses", side_effect=RuntimeError("Course catalog unavailable")):
+                            with patch("app.services.roadmap_service.get_demo") as mock_demo:
+                                with pytest.raises(RuntimeError, match="Roadmap courses unavailable"):
+                                    compute_adaptive_roadmap("usr-real-fail-courses", is_demo=False, persist=False)
+                                mock_demo.assert_not_called()
+
+
+def test_adaptive_roadmap_real_mode_industry_signals_failure_fails_closed():
+    mock_profile = {
+        "user_id": "usr-real-fail-signals",
+        "target_role": "AI Engineer",
+        "is_demo": False,
+    }
+    with patch("app.repositories.supabase_repository.get_student_profile", return_value=mock_profile):
+        with patch("app.repositories.supabase_repository.get_student_assessment_by_user", return_value=None):
+            with patch("app.repositories.supabase_repository.get_student_assessment", return_value=None):
+                with patch("app.repositories.supabase_repository.list_skills", return_value=[{"id": "sk-1", "name": "Python"}]):
+                    with patch("app.repositories.supabase_repository.list_skill_forecasts", return_value=[]):
+                        with patch("app.repositories.supabase_repository.list_courses", return_value=[]):
+                            with patch("app.repositories.supabase_repository.list_industry_signals", side_effect=RuntimeError("Signals catalog unavailable")):
+                                with patch("app.services.roadmap_service.get_demo") as mock_demo:
+                                    with pytest.raises(RuntimeError, match="Roadmap industry signals unavailable"):
+                                        compute_adaptive_roadmap("usr-real-fail-signals", is_demo=False, persist=False)
+                                    mock_demo.assert_not_called()
