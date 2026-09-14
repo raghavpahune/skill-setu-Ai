@@ -53,18 +53,22 @@ class SyncEngine:
         adzuna_connector: AdzunaConnector | None = None,
         source_orchestrator: SourceOrchestrator | None = None,
     ):
-        self.datagov_connector = datagov_connector or DataGovConnector()
-        self.adzuna_connector = adzuna_connector or AdzunaConnector()
-        self.connector = self.datagov_connector
         if source_orchestrator is not None:
             self.source_orchestrator = source_orchestrator
+            self.datagov_connector = datagov_connector or getattr(source_orchestrator, "_datagov_connector", None) or DataGovConnector()
+            self.adzuna_connector = adzuna_connector or getattr(source_orchestrator, "_adzuna_connector", None) or AdzunaConnector()
         elif datagov_connector is None and adzuna_connector is None:
             self.source_orchestrator = default_source_orchestrator
+            self.datagov_connector = default_source_orchestrator._datagov_connector
+            self.adzuna_connector = default_source_orchestrator._adzuna_connector
         else:
+            self.datagov_connector = datagov_connector or DataGovConnector()
+            self.adzuna_connector = adzuna_connector or AdzunaConnector()
             self.source_orchestrator = SourceOrchestrator(
                 adzuna_connector=self.adzuna_connector,
                 datagov_connector=self.datagov_connector,
             )
+        self.connector = self.datagov_connector
 
     def run_sync(self, source_name: str = "all") -> dict[str, Any]:
         sync_id = str(uuid.uuid4())

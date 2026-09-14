@@ -1548,7 +1548,7 @@ def list_job_skills(job_ids: list[str] | None = None) -> list[dict[str, Any]]:
         page_size = 1000
         curr_offset = 0
         while True:
-            res = client.table("job_skills").select("*").order("job_id").range(curr_offset, curr_offset + page_size - 1).execute()
+            res = client.table("job_skills").select("*").order("job_id").order("skill_id").range(curr_offset, curr_offset + page_size - 1).execute()
             batch = getattr(res, "data", []) or []
             all_skills.extend(batch)
             if len(batch) < page_size:
@@ -1581,7 +1581,7 @@ def list_course_skills(course_ids: list[str] | None = None) -> list[dict[str, An
         page_size = 1000
         curr_offset = 0
         while True:
-            res = client.table("course_skills").select("*").order("course_id").range(curr_offset, curr_offset + page_size - 1).execute()
+            res = client.table("course_skills").select("*").order("course_id").order("skill_id").range(curr_offset, curr_offset + page_size - 1).execute()
             batch = getattr(res, "data", []) or []
             all_skills.extend(batch)
             if len(batch) < page_size:

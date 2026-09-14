@@ -59,7 +59,10 @@ def get_workload_provider(workload: str) -> str:
     cleaned = str(workload).strip().lower()
     env_provider = os.getenv(f"AI_PROVIDER_{cleaned.upper()}")
     if env_provider:
-        return env_provider.strip().lower()
+        prov = env_provider.strip().lower()
+        if prov in ("gemini", "deterministic_fallback", "demo_fallback", "demo"):
+            return prov
+        return "unsupported"
     return "gemini"
 
 
@@ -197,17 +200,21 @@ def get_safe_integration_diagnostics() -> dict[str, Any]:
         dg_avail = "UNKNOWN"
         dg_prov = "CONFIGURED"
 
+    effective_ai_configured = gemini_ok or any(
+        cfg.get("effective_configured") for cfg in workload_routing.values()
+    )
+
     return {
         "status": "success",
         "timestamp": os.getenv("DIAGNOSTICS_TIMESTAMP", "live"),
         "ai": {
             "real_provider": "gemini",
             "model": "gemini-3.6-flash",
-            "configured": gemini_ok,
-            "available": gemini_ok,
+            "configured": effective_ai_configured,
+            "available": effective_ai_configured,
             "fallback_mechanism": "deterministic_fallback",
             "fallback_available": True,
-            "last_failure_category": last_ai_error or ("NONE" if gemini_ok else "NOT_CONFIGURED"),
+            "last_failure_category": last_ai_error or ("NONE" if effective_ai_configured else "NOT_CONFIGURED"),
             "supported_tasks": list(SUPPORTED_WORKLOADS),
             "workload_routing": workload_routing,
         },

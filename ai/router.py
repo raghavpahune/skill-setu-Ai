@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import time
 import logging
@@ -55,10 +56,11 @@ def resolve_workload_gemini_provider(task_category: str) -> GeminiProvider | Non
 
 
 class AIRouter:
+
     def __init__(self):
         self._deterministic_fallback = DemoProvider()
-        self._last_error_category = "NONE"
-        self._task_counts: dict[str, int] = {t: 0 for t in SUPPORTED_AI_TASKS}
+        self._last_error_category: str = "NONE"
+        self._task_counts: dict[str, int] = {task: 0 for task in SUPPORTED_AI_TASKS}
 
     def _resolve_gemini_for_task(self, task_category: str) -> GeminiProvider | None:
         return resolve_workload_gemini_provider(task_category)
@@ -112,7 +114,10 @@ class AIRouter:
             gemini_prov = self._resolve_gemini_for_task(task_category)
             if gemini_prov is not None:
                 try:
-                    answer = await gemini_prov.generate(prompt, context)
+                    answer = await asyncio.wait_for(
+                        gemini_prov.generate(prompt, context),
+                        timeout=timeout_seconds,
+                    )
                     elapsed_ms = (time.perf_counter() - start_time) * 1000.0
                     self._last_error_category = "NONE"
                     return {
@@ -128,10 +133,10 @@ class AIRouter:
                     }
                 except Exception as e:
                     err_str = str(e).lower()
-                    if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
-                        request_error_category = "QUOTA_EXCEEDED"
-                    elif "timeout" in err_str or "timed out" in err_str:
+                    if isinstance(e, asyncio.TimeoutError) or "timeout" in err_str or "timed out" in err_str:
                         request_error_category = "TIMEOUT"
+                    elif "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                        request_error_category = "QUOTA_EXCEEDED"
                     elif "401" in err_str or "403" in err_str or "api_key" in err_str:
                         request_error_category = "AUTH_FAILURE"
                     else:
@@ -141,6 +146,11 @@ class AIRouter:
             else:
                 request_error_category = "NOT_CONFIGURED"
                 self._last_error_category = "NOT_CONFIGURED"
+        elif configured_provider in ("deterministic_fallback", "demo_fallback", "demo"):
+            request_error_category = "NONE"
+        else:
+            request_error_category = "UNSUPPORTED_PROVIDER"
+            self._last_error_category = "UNSUPPORTED_PROVIDER"
 
         fallback_start = time.perf_counter()
         fallback_answer = await self._deterministic_fallback.generate(prompt, context)
@@ -159,8 +169,8 @@ class AIRouter:
         }
 
     def get_diagnostics(self) -> dict[str, Any]:
-        from app.core.providers_config import is_gemini_configured
-        gemini_ok = is_gemini_configured()
+        from app.core.providers_config import is_gemini_configured, is_workload_ai_configured
+        gemini_ok = is_gemini_configured() or any(is_workload_ai_configured(t) for t in SUPPORTED_AI_TASKS)
         return {
             "real_provider": "gemini",
             "real_provider_configured": gemini_ok,

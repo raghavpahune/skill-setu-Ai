@@ -913,7 +913,7 @@ export default function AdminDashboard() {
                     ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
                     : 'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
                 }`}>
-                  AI: {integrationsHealth?.ai?.configured ? 'Gemini Active' : 'Deterministic Fallback'}
+                  AI: {integrationsHealth?.ai?.configured ? 'Gemini Configured' : 'Deterministic Fallback'}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300 border border-teal-300 dark:border-teal-800 font-mono font-bold text-[11px]">
                   Tasks: 8 Categories
@@ -930,7 +930,7 @@ export default function AdminDashboard() {
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
-                  <div>Status: <span className="font-semibold text-slate-800 dark:text-slate-200">{integrationsHealth?.ai?.configured ? 'Configured & Online' : 'Deterministic Fallback Engaged'}</span></div>
+                  <div>Status: <span className="font-semibold text-slate-800 dark:text-slate-200">{integrationsHealth?.ai?.configured ? 'Configured' : 'Deterministic Fallback Engaged'}</span></div>
                   <div>Fallback Engine: <span className="font-semibold text-emerald-600 dark:text-emerald-400">Rule-Based Deterministic</span></div>
                 </div>
               </div>

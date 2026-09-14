@@ -1284,6 +1284,8 @@ def get_user_by_email(email: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
+            if str(u.get("id", "")).startswith("usr-employee") or clean_email.startswith("employee"):
+                u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
         if clean_email in NON_ADMIN_DEMO_EMAILS:
@@ -1331,6 +1333,8 @@ def get_user_by_id(user_id: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
+            if str(u.get("id", "")).startswith("usr-employee") or user_id == "usr-employee-001" or str(u.get("email", "")).lower().startswith("employee"):
+                u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
         if user_id in NON_ADMIN_DEMO_IDS:

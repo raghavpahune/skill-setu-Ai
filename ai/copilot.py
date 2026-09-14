@@ -52,9 +52,6 @@ KNOWN_EXTERNAL_TECHS = {
 
 
 def _get_provider(is_demo: bool | None = None, task_category: str = "career_copilot") -> LLMProvider | None:
-    if is_demo is True or is_explicit_demo_mode(is_demo):
-        return DemoProvider()
-
     from ai.router import resolve_workload_gemini_provider
     gemini_prov = resolve_workload_gemini_provider(task_category)
     if gemini_prov is not None:
@@ -63,6 +60,7 @@ def _get_provider(is_demo: bool | None = None, task_category: str = "career_copi
     if is_demo is False:
         return None
     return DemoProvider()
+
 
 
 def extract_queried_skill(question: str, skills_list: list[dict]) -> dict | None:

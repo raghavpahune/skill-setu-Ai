@@ -412,6 +412,7 @@ def compute_adaptive_roadmap(
                     forecast_map[f["skill_id"]] = f
         except Exception as e:
             logger.warning("[Roadmap] Failed loading real skill forecasts: %s", e)
+            raise RuntimeError(f"Roadmap skill forecasts unavailable from authoritative repository for student '{student_id}': {e}") from e
         try:
             courses_list = supabase_repository.list_courses() or []
         except Exception as e:

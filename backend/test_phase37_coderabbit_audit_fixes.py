@@ -351,3 +351,108 @@ def test_issue7_list_jobs_paginates_beyond_page_size():
         all_jobs = list_jobs(limit=None)
         assert len(all_jobs) == 1020
         assert call_index["idx"] == 2
+
+
+def test_ai_router_timeout_handling():
+    from ai.router import ai_router
+    import asyncio
+    mock_prov = MagicMock()
+
+    async def slow_generate(p, c):
+        await asyncio.sleep(0.5)
+        return "slow"
+
+    mock_prov.generate.side_effect = slow_generate
+    with patch.object(ai_router, "_resolve_gemini_for_task", return_value=mock_prov):
+        with patch("app.core.providers_config.get_workload_provider", return_value="gemini"):
+            res = asyncio.run(
+                ai_router.route_task(
+                    task_category="career_copilot",
+                    prompt="test prompt",
+                    timeout_seconds=0.01,
+                )
+            )
+            assert res["status"] == "success"
+            assert res["fallback_used"] is True
+            assert res["error"] == "Failover triggered: TIMEOUT"
+            assert ai_router.get_last_error_category() == "TIMEOUT"
+
+
+def test_get_workload_provider_rejects_unsupported():
+    from app.core.providers_config import get_workload_provider
+    with patch.dict("os.environ", {"AI_PROVIDER_CAREER_COPILOT": "gemni_typo"}):
+        assert get_workload_provider("career_copilot") == "unsupported"
+    with patch.dict("os.environ", {"AI_PROVIDER_CAREER_COPILOT": "GEMINI"}):
+        assert get_workload_provider("career_copilot") == "gemini"
+    with patch.dict("os.environ", {"AI_PROVIDER_CAREER_COPILOT": "deterministic_fallback"}):
+        assert get_workload_provider("career_copilot") == "deterministic_fallback"
+
+
+def test_get_safe_integration_diagnostics_effective_ai_configured():
+    from app.core.providers_config import get_safe_integration_diagnostics
+    with patch("app.core.providers_config.is_gemini_configured", return_value=False):
+        with patch("app.core.providers_config.is_workload_ai_configured", return_value=True):
+            diag = get_safe_integration_diagnostics()
+            assert diag["ai"]["configured"] is True
+            assert diag["ai"]["available"] is True
+
+
+def test_cached_employee_role_restoration():
+    from app.db import _cache, get_user_by_email, get_user_by_id
+    _cache["users"] = [{
+        "id": "usr-employee-test-99",
+        "email": "employee99@skillsetu.gov.in",
+        "role": "STUDENT",
+        "full_name": "Test Employee",
+    }]
+    u_by_email = get_user_by_email("employee99@skillsetu.gov.in")
+    assert u_by_email is not None
+    assert u_by_email["role"] == "EMPLOYEE"
+
+    u_by_id = get_user_by_id("usr-employee-test-99")
+    assert u_by_id is not None
+    assert u_by_id["role"] == "EMPLOYEE"
+
+
+def test_source_orchestrator_demo_datagov_exception_returns_unavailable():
+    mock_connector = MagicMock()
+    mock_connector.fetch_raw.side_effect = RuntimeError("Simulated connector boom")
+    orch = SourceOrchestrator(datagov_connector=mock_connector)
+    resp = orch.fetch_data(
+        workload=WORKLOAD_GOVERNMENT_SCHEMES,
+        is_demo=True,
+        resource_id="any-resource",
+    )
+    assert resp.status == "UNAVAILABLE"
+    assert resp.records == []
+    assert resp.is_demo is True
+    assert "Simulated connector boom" in resp.error
+
+
+def test_job_skills_and_course_skills_total_ordering():
+    mock_client = MagicMock()
+    mock_exec = MagicMock()
+    mock_exec.execute.return_value = MagicMock(data=[])
+    mock_client.table.return_value.select.return_value.order.return_value.order.return_value.range.return_value = mock_exec
+
+    with patch("app.repositories.supabase_repository.get_client", return_value=mock_client):
+        list_job_skills()
+        assert mock_client.table.call_args[0][0] == "job_skills"
+
+        list_course_skills()
+        assert mock_client.table.call_args[0][0] == "course_skills"
+
+
+def test_adaptive_roadmap_real_mode_forecast_failure_fails_closed():
+    mock_profile = {
+        "user_id": "usr-real-fail-forecast",
+        "target_role": "AI Engineer",
+        "is_demo": False,
+    }
+    with patch("app.repositories.supabase_repository.get_student_profile", return_value=mock_profile):
+        with patch("app.repositories.supabase_repository.get_student_assessment_by_user", return_value=None):
+            with patch("app.repositories.supabase_repository.get_student_assessment", return_value=None):
+                with patch("app.repositories.supabase_repository.list_skills", return_value=[{"id": "sk-1", "name": "Python"}]):
+                    with patch("app.repositories.supabase_repository.list_skill_forecasts", side_effect=RuntimeError("DB outage")):
+                        with pytest.raises(RuntimeError, match="Roadmap skill forecasts unavailable"):
+                            compute_adaptive_roadmap("usr-real-fail-forecast", is_demo=False, persist=False)
