@@ -75,7 +75,7 @@ def test_schemes_endpoint():
     print(f"  OK: /api/schemes/categories returned metadata: {meta['scheme_types']}")
 
     # Test single scheme lookup
-    res_single = client.get("/api/schemes/sch-001")
+    res_single = client.get("/api/schemes/sch-001?is_demo=true")
     assert res_single.status_code == 200
     assert res_single.json()["id"] == "sch-001"
 

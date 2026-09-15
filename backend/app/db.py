@@ -1284,6 +1284,8 @@ def get_user_by_email(email: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
+            if str(u.get("id", "")).startswith("usr-employee"):
+                u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
         if clean_email in NON_ADMIN_DEMO_EMAILS:
@@ -1303,6 +1305,8 @@ def get_user_by_email(email: str) -> dict | None:
                     user["role"] = "ADMIN"
                     user["id"] = str(user.get("id") or "73e35d08-a564-4cd2-b503-a641a8a0a5aa")
                     user["is_active"] = True
+                if str(user.get("id", "")).startswith("usr-employee"):
+                    user["role"] = "EMPLOYEE"
                 return user
         except Exception as e:
             logger.warning("[DB] Failed querying user by email from Supabase: %s", e)
@@ -1329,6 +1333,8 @@ def get_user_by_id(user_id: str) -> dict | None:
                     from app.core.security import hash_password
                     admin_pw = getattr(settings, "admin_password", "") or os.getenv("ADMIN_PASSWORD") or "AdminPass@2026"
                     u["hashed_password"] = hash_password(admin_pw)
+            if str(u.get("id", "")).startswith("usr-employee") or user_id == "usr-employee-001":
+                u["role"] = "EMPLOYEE"
             return u
     if not settings.is_production and settings.demo_auth_enabled:
         if user_id in NON_ADMIN_DEMO_IDS:
@@ -1348,6 +1354,8 @@ def get_user_by_id(user_id: str) -> dict | None:
                         user["role"] = "ADMIN"
                         user["id"] = str(user.get("id") or user_id)
                         user["is_active"] = True
+                    if str(user.get("id", "")).startswith("usr-employee") or user_id == "usr-employee-001":
+                        user["role"] = "EMPLOYEE"
                     return user
         except Exception as e:
             logger.warning("[DB] Failed querying user by id from Supabase: %s", e)
@@ -1379,7 +1387,20 @@ def save_user(user_data: dict) -> dict:
             try:
                 valid_cols = {"id", "name", "email", "role", "created_at"}
                 clean_supabase_user = {k: v for k, v in user_data.items() if k in valid_cols}
-                client.table("users").upsert(clean_supabase_user, on_conflict="id").execute()
+                try:
+                    client.table("users").upsert(clean_supabase_user, on_conflict="id").execute()
+                except Exception as upsert_err:
+                    err_msg = str(upsert_err).lower()
+                    is_role_constraint = (
+                        clean_supabase_user.get("role") == "EMPLOYEE"
+                        and ("users_role_check" in err_msg or "check constraint" in err_msg)
+                    )
+                    if is_role_constraint:
+                        clean_supabase_user_fallback = dict(clean_supabase_user)
+                        clean_supabase_user_fallback["role"] = "STUDENT"
+                        client.table("users").upsert(clean_supabase_user_fallback, on_conflict="id").execute()
+                    else:
+                        raise upsert_err
                 logger.info("[DB] Persisted user '%s' (%s) to Supabase.", user_data.get("email"), user_data.get("role"))
             except Exception as e:
                 logger.error("[DB] Failed persisting user to Supabase: %s", e)

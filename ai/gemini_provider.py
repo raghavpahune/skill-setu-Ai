@@ -1,6 +1,7 @@
 """Gemini LLM provider implementation with safe diagnostics, REST support, and google-genai SDK."""
 import os
 import json
+import asyncio
 import logging
 import httpx
 from ai.provider import LLMProvider
@@ -14,14 +15,14 @@ MODELS = ["gemini-3.6-flash"]
 class GeminiProvider(LLMProvider):
     """Robust Google Gemini provider supporting google-genai SDK (async/sync) and Direct REST HTTP failover."""
 
-    def __init__(self):
-        self.api_key = self._resolve_api_key()
+    def __init__(self, api_key: str | None = None):
+        resolved_key = self._resolve_api_key() if api_key is None else api_key
+        self.api_key = resolved_key.strip().strip("'\"")
         self.client = None
         self.model = "gemini-3.6-flash"
         self._sdk = None
 
         if not self.api_key:
-            logger.info("[GeminiProvider] No GEMINI_API_KEY or GOOGLE_API_KEY detected in runtime environment.")
             return
 
         # Initialize official google-genai SDK client if installed, otherwise fallback to direct REST
@@ -168,14 +169,21 @@ class GeminiProvider(LLMProvider):
                 clean_model = model_name.replace("models/", "")
                 try:
                     if hasattr(self.client, "aio") and hasattr(self.client.aio, "models"):
-                        response = await self.client.aio.models.generate_content(
-                            model=clean_model,
-                            contents=full_prompt,
+                        response = await asyncio.wait_for(
+                            self.client.aio.models.generate_content(
+                                model=clean_model,
+                                contents=full_prompt,
+                            ),
+                            timeout=10.0,
                         )
                     else:
-                        response = self.client.models.generate_content(
-                            model=clean_model,
-                            contents=full_prompt,
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self.client.models.generate_content,
+                                model=clean_model,
+                                contents=full_prompt,
+                            ),
+                            timeout=10.0,
                         )
                     if response and response.text:
                         self.model = clean_model
@@ -185,8 +193,7 @@ class GeminiProvider(LLMProvider):
                     logger.warning(f"[GeminiProvider] google-genai SDK {clean_model} error: {e}")
                     last_error = str(e)
 
-        # Strategy 2: Direct Async REST Call via httpx
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
+        async with httpx.AsyncClient(timeout=10.0) as http_client:
             for model_name in MODELS:
                 clean_model = model_name.replace("models/", "")
                 try:

@@ -173,11 +173,10 @@ def _load_skills_map(is_demo: bool) -> tuple[dict[str, dict[str, Any]], dict[str
         skills_list = get_demo("skills") or []
     else:
         try:
-            skills_list = supabase_repository.list_skills(limit=10000) or []
-            if not skills_list:
-                skills_list = get_demo("skills") or []
-        except Exception:
-            skills_list = get_demo("skills") or []
+            skills_list = supabase_repository.list_skills(limit=None) or []
+        except Exception as e:
+            logger.warning("[Roadmap] Failed querying authoritative skills from Supabase: %s", e)
+            skills_list = []
 
     by_id: dict[str, dict[str, Any]] = {}
     by_name: dict[str, dict[str, Any]] = {}
@@ -378,6 +377,8 @@ def compute_adaptive_roadmap(
         }
 
     skills_by_id, skills_by_name = _load_skills_map(is_demo_req)
+    if not is_demo_req and not skills_by_id:
+        raise RuntimeError(f"Roadmap catalog skills unavailable from authoritative repository for student '{student_id}'")
     resolved_role = _get_target_role(student_id, target_role, profile, assessment)
     role_key = resolved_role.lower().strip()
 
@@ -394,30 +395,34 @@ def compute_adaptive_roadmap(
     ordered_skill_ids = _expand_and_topological_sort(core_skill_ids, skills_by_id)
 
     forecast_map = {}
-    try:
-        forecasts = supabase_repository.list_skill_forecasts() or []
-        for f in forecasts:
+    courses_list = []
+    signals_list = []
+
+    if is_demo_req:
+        for f in get_demo("skill_forecasts") or []:
             if f.get("skill_id") and f["skill_id"] not in forecast_map:
                 forecast_map[f["skill_id"]] = f
-    except Exception:
-        if is_demo_req:
-            for f in get_demo("skill_forecasts") or []:
+        courses_list = get_demo("courses") or []
+        signals_list = get_demo("industry_signals") or []
+    else:
+        try:
+            forecasts = supabase_repository.list_skill_forecasts() or []
+            for f in forecasts:
                 if f.get("skill_id") and f["skill_id"] not in forecast_map:
                     forecast_map[f["skill_id"]] = f
-
-    courses_list = []
-    try:
-        courses_list = supabase_repository.list_courses() or []
-    except Exception:
-        if is_demo_req:
-            courses_list = get_demo("courses") or []
-
-    signals_list = []
-    try:
-        signals_list = supabase_repository.list_industry_signals() or []
-    except Exception:
-        if is_demo_req:
-            signals_list = get_demo("industry_signals") or []
+        except Exception as e:
+            logger.warning("[Roadmap] Failed loading real skill forecasts: %s", e)
+            raise RuntimeError(f"Roadmap skill forecasts unavailable from authoritative repository for student '{student_id}': {e}") from e
+        try:
+            courses_list = supabase_repository.list_courses() or []
+        except Exception as e:
+            logger.warning("[Roadmap] Failed loading real courses: %s", e)
+            raise RuntimeError(f"Roadmap courses unavailable from authoritative repository for student '{student_id}': {e}") from e
+        try:
+            signals_list = supabase_repository.list_industry_signals() or []
+        except Exception as e:
+            logger.warning("[Roadmap] Failed loading real industry signals: %s", e)
+            raise RuntimeError(f"Roadmap industry signals unavailable from authoritative repository for student '{student_id}': {e}") from e
 
     steps: list[dict[str, Any]] = []
     total_estimated_hours = 0
@@ -570,12 +575,7 @@ def compute_adaptive_roadmap(
         "is_demo": is_demo_req,
     }
 
-    if persist and is_demo_req:
-        try:
-            supabase_repository.upsert_student_roadmap(result)
-        except Exception as e:
-            logger.warning("Demo roadmap write suppressed: %s", e)
-    elif persist:
+    if persist and not is_demo_req:
         try:
             supabase_repository.upsert_student_roadmap(result)
         except Exception as e:

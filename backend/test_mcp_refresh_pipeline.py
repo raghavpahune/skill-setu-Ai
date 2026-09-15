@@ -372,11 +372,17 @@ def test_api_sync_endpoints():
         assert "refresh_interval_minutes" in data
         assert data["refresh_interval_minutes"] == settings.effective_refresh_interval_minutes
 
-        bad_trigger = client.post("/api/sync/trigger?source=invalid_external_source")
+        bad_trigger = client.post(
+            "/api/sync/trigger?source=invalid_external_source",
+            headers={"X-Admin-Key": "demo-admin-key-2026"},
+        )
         assert bad_trigger.status_code == 400
         assert "Invalid sync source selector" in bad_trigger.json()["detail"]
 
-        good_trigger = client.post("/api/sync/trigger?source=data.gov.in")
+        good_trigger = client.post(
+            "/api/sync/trigger?source=data.gov.in",
+            headers={"X-Admin-Key": "demo-admin-key-2026"},
+        )
         assert good_trigger.status_code == 200
         trig_data = good_trigger.json()
         assert trig_data["status"] in ("success", "skipped", "failed")

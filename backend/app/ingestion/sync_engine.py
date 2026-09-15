@@ -25,6 +25,7 @@ from app.db import (
     persist_schemes_to_supabase,
     persist_jobs_to_supabase,
 )
+from app.ingestion.base_adapter import SOURCE_TYPE_LIVE_API
 from app.ingestion.adzuna_connector import AdzunaConnector
 from app.ingestion.datagov_connector import (
     DataGovConnector,
@@ -32,6 +33,13 @@ from app.ingestion.datagov_connector import (
     RESOURCE_ITI_CRAFTSMEN,
     RESOURCE_NAPS_APPRENTICESHIP,
     RESOURCE_PMKVY_SKILL,
+)
+from app.ingestion.source_orchestrator import (
+    SourceOrchestrator,
+    WORKLOAD_JOBS,
+    WORKLOAD_GOVERNMENT_SCHEMES,
+    WORKLOAD_GOVERNMENT_DATASETS,
+    source_orchestrator as default_source_orchestrator,
 )
 
 logger = logging.getLogger("skillsetu.ingestion.sync_engine")
@@ -43,9 +51,23 @@ class SyncEngine:
         self,
         datagov_connector: DataGovConnector | None = None,
         adzuna_connector: AdzunaConnector | None = None,
+        source_orchestrator: SourceOrchestrator | None = None,
     ):
-        self.datagov_connector = datagov_connector or DataGovConnector()
-        self.adzuna_connector = adzuna_connector or AdzunaConnector()
+        if source_orchestrator is not None:
+            self.source_orchestrator = source_orchestrator
+            self.datagov_connector = datagov_connector or getattr(source_orchestrator, "_datagov_connector", None) or DataGovConnector()
+            self.adzuna_connector = adzuna_connector or getattr(source_orchestrator, "_adzuna_connector", None) or AdzunaConnector()
+        elif datagov_connector is None and adzuna_connector is None:
+            self.source_orchestrator = default_source_orchestrator
+            self.datagov_connector = default_source_orchestrator._datagov_connector
+            self.adzuna_connector = default_source_orchestrator._adzuna_connector
+        else:
+            self.datagov_connector = datagov_connector or DataGovConnector()
+            self.adzuna_connector = adzuna_connector or AdzunaConnector()
+            self.source_orchestrator = SourceOrchestrator(
+                adzuna_connector=self.adzuna_connector,
+                datagov_connector=self.datagov_connector,
+            )
         self.connector = self.datagov_connector
 
     def run_sync(self, source_name: str = "all") -> dict[str, Any]:
@@ -106,36 +128,38 @@ class SyncEngine:
                     dg_errors = []
 
                     res_list = [
-                        (RESOURCE_SCHOLARSHIP_ALLOCATION, "scholarship"),
-                        (RESOURCE_ITI_CRAFTSMEN, "cts"),
-                        (RESOURCE_NAPS_APPRENTICESHIP, "naps"),
-                        (RESOURCE_PMKVY_SKILL, "pmkvy"),
+                        (RESOURCE_SCHOLARSHIP_ALLOCATION, "scholarship", WORKLOAD_GOVERNMENT_SCHEMES),
+                        (RESOURCE_ITI_CRAFTSMEN, "cts", WORKLOAD_GOVERNMENT_SCHEMES),
+                        (RESOURCE_NAPS_APPRENTICESHIP, "naps", WORKLOAD_GOVERNMENT_DATASETS),
+                        (RESOURCE_PMKVY_SKILL, "pmkvy", WORKLOAD_GOVERNMENT_DATASETS),
                     ]
                     all_transformed_schemes = []
                     all_transformed_opps = []
 
-                    for r_id, r_type in res_list:
-                        raw_res = self.datagov_connector.fetch_resource(r_id)
-                        res_status = raw_res.get("status")
-                        if res_status in ("NOT_CONFIGURED", "FAILED"):
-                            dg_errors.append(f"{r_id}: {raw_res.get('error')}")
+                    for r_id, r_type, workload in res_list:
+                        orch_resp = self.source_orchestrator.fetch_data(
+                            workload=workload,
+                            limit=50,
+                            resource_id=r_id,
+                            resource_type=r_type,
+                            is_demo=is_explicit_demo_mode(),
+                        )
+                        if orch_resp.status != "SUCCESS":
+                            dg_errors.append(f"{r_id}: {orch_resp.error or orch_resp.status}")
                             continue
-                        recs = raw_res.get("records", [])
+
+                        recs = orch_resp.records
                         dg_fetched += len(recs)
-                        if r_type in ("scholarship", "cts"):
-                            if r_type == "scholarship":
-                                trans = self.datagov_connector.transform_scholarship_schemes(recs)
+                        if orch_resp.is_demo:
+                            if r_type in ("scholarship", "cts"):
+                                all_transformed_schemes.extend(recs)
                             else:
-                                trans = self.datagov_connector.transform_cts_schemes(recs)
-                            dg_skipped += max(0, len(recs) - len(trans))
-                            all_transformed_schemes.extend(trans)
-                        else:
-                            if r_type == "naps":
-                                trans = self.datagov_connector.transform_naps_opportunities(recs)
+                                all_transformed_opps.extend(recs)
+                        elif orch_resp.provenance == SOURCE_TYPE_LIVE_API:
+                            if r_type in ("scholarship", "cts"):
+                                all_transformed_schemes.extend(recs)
                             else:
-                                trans = self.datagov_connector.transform_pmkvy_opportunities(recs)
-                            dg_skipped += max(0, len(recs) - len(trans))
-                            all_transformed_opps.extend(trans)
+                                all_transformed_opps.extend(recs)
 
                     if all_transformed_schemes:
                         added_s, updated_s = self._upsert_schemes(all_transformed_schemes)
@@ -191,30 +215,39 @@ class SyncEngine:
 
             if src_norm in ("all", "adzuna", "jobs"):
                 try:
-                    logger.info("[SyncEngine] Ingesting live job vacancies from Adzuna India...")
-                    adzuna_raw = self.adzuna_connector.fetch_raw(page=1, results_per_page=25, where="Maharashtra")
-                    adz_fetched = len(adzuna_raw)
+                    logger.info("[SyncEngine] Ingesting live job vacancies from Adzuna India via SourceOrchestrator...")
+                    orch_resp = self.source_orchestrator.fetch_data(
+                        workload=WORKLOAD_JOBS,
+                        limit=25,
+                        where="Maharashtra",
+                        is_demo=is_explicit_demo_mode(),
+                    )
+                    adz_fetched = orch_resp.records_count
                     adz_added = 0
                     adz_updated = 0
                     adz_skipped = 0
 
-                    if adzuna_raw:
-                        adzuna_jobs = self.adzuna_connector.validate_and_transform(adzuna_raw)
-                        adz_skipped = max(0, adz_fetched - len(adzuna_jobs))
-                        added_j, updated_j = self._upsert_jobs(adzuna_jobs)
-                        adz_added += added_j
-                        adz_updated += updated_j
-                        self._upsert_job_skills(adzuna_jobs)
+                    if orch_resp.status == "SUCCESS":
+                        if orch_resp.is_demo:
+                            added_j, updated_j = self._upsert_jobs(orch_resp.records)
+                            adz_added += added_j
+                            adz_updated += updated_j
+                            self._upsert_job_skills(orch_resp.records)
+                        elif orch_resp.provenance == SOURCE_TYPE_LIVE_API:
+                            added_j, updated_j = self._upsert_jobs(orch_resp.records)
+                            adz_added += added_j
+                            adz_updated += updated_j
+                            self._upsert_job_skills(orch_resp.records)
 
                     total_fetched += adz_fetched
                     total_added += adz_added
                     total_updated += adz_updated
                     total_skipped += adz_skipped
 
-                    adz_status = self.adzuna_connector.last_status
-                    adz_err = self.adzuna_connector.last_error
+                    adz_status = orch_resp.status
+                    adz_err = orch_resp.error
 
-                    if adz_status in ("NOT_CONFIGURED", "FAILED"):
+                    if adz_status in ("NOT_CONFIGURED", "UNAVAILABLE", "VALIDATION_FAILED", "FAILED"):
                         source_errors.append(f"adzuna: {adz_status} - {adz_err}")
                     else:
                         source_successes.append("adzuna")
@@ -365,7 +398,10 @@ class SyncEngine:
 
         if is_demo:
             persisted_schemes = list(get_demo("schemes"))
-        elif supabase_ready:
+        else:
+            if not supabase_ready:
+                from app.repositories.supabase_repository import SupabaseConnectionError
+                raise SupabaseConnectionError("Supabase connection required for real-mode sync")
             from app.repositories.supabase_repository import list_schemes
             persisted_schemes = []
             page_size = 1000
@@ -376,11 +412,6 @@ class SyncEngine:
                 if len(batch) < page_size:
                     break
                 offset += page_size
-        elif not settings.use_demo_data:
-            from app.repositories.supabase_repository import SupabaseConnectionError
-            raise SupabaseConnectionError("Supabase connection required for real-mode sync")
-        else:
-            persisted_schemes = list(get_demo("schemes"))
 
         source_id_index = {
             (s.get("source"), s.get("external_id")): s
@@ -425,11 +456,11 @@ class SyncEngine:
                     hash_index[c_hash] = s
                 added += 1
 
-        if supabase_ready and not is_demo:
+        if is_demo:
+            set_demo("schemes", persisted_schemes)
+        else:
             from app.repositories.supabase_repository import upsert_schemes
             upsert_schemes(incoming_schemes)
-        else:
-            set_demo("schemes", persisted_schemes)
 
         return added, updated
 
@@ -439,7 +470,10 @@ class SyncEngine:
 
         if is_demo:
             persisted_jobs = list(get_demo("jobs"))
-        elif supabase_ready:
+        else:
+            if not supabase_ready:
+                from app.repositories.supabase_repository import SupabaseConnectionError
+                raise SupabaseConnectionError("Supabase connection required for real-mode sync")
             from app.repositories.supabase_repository import list_jobs
             persisted_jobs = []
             page_size = 1000
@@ -450,11 +484,6 @@ class SyncEngine:
                 if len(batch) < page_size:
                     break
                 offset += page_size
-        elif not settings.use_demo_data:
-            from app.repositories.supabase_repository import SupabaseConnectionError
-            raise SupabaseConnectionError("Supabase connection required for real-mode sync")
-        else:
-            persisted_jobs = list(get_demo("jobs"))
 
         source_id_index = {
             (j.get("source"), (j.get("external_id") or j.get("ext_id"))): j
@@ -501,11 +530,11 @@ class SyncEngine:
                     hash_index[c_hash] = job
                 added += 1
 
-        if supabase_ready and not is_demo:
+        if is_demo:
+            set_demo("jobs", persisted_jobs)
+        else:
             from app.repositories.supabase_repository import upsert_jobs
             upsert_jobs(incoming_jobs)
-        else:
-            set_demo("jobs", persisted_jobs)
 
         return added, updated
 
@@ -519,15 +548,12 @@ class SyncEngine:
         if is_demo:
             current_js = list(get_demo("job_skills"))
             existing_keys = {(js.get("job_id"), js.get("skill_id")) for js in current_js}
-        elif supabase_ready:
+        else:
+            if not supabase_ready:
+                from app.repositories.supabase_repository import SupabaseConnectionError
+                raise SupabaseConnectionError("Supabase connection required for real-mode sync")
             from app.repositories.supabase_repository import list_job_skills
             current_js = list_job_skills(job_ids=incoming_job_ids) or []
-            existing_keys = {(js.get("job_id"), js.get("skill_id")) for js in current_js}
-        elif not settings.use_demo_data:
-            from app.repositories.supabase_repository import SupabaseConnectionError
-            raise SupabaseConnectionError("Supabase connection required for real-mode sync")
-        else:
-            current_js = list(get_demo("job_skills"))
             existing_keys = {(js.get("job_id"), js.get("skill_id")) for js in current_js}
 
         new_links = []
@@ -546,12 +572,12 @@ class SyncEngine:
                     new_links.append(link)
 
         if new_links:
-            if supabase_ready and not is_demo:
-                from app.repositories.supabase_repository import batch_create_job_skills
-                batch_create_job_skills(new_links)
-            else:
+            if is_demo:
                 demo_js = list(get_demo("job_skills"))
                 demo_js.extend(new_links)
                 set_demo("job_skills", demo_js)
+            else:
+                from app.repositories.supabase_repository import batch_create_job_skills
+                batch_create_job_skills(new_links)
 
         return len(new_links)

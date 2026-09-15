@@ -1,7 +1,6 @@
-"""AI Copilot API — conversational assistant grounded in SkillSetu data."""
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, StrictStr
-from app.core.security import get_optional_current_user
+from app.core.security import get_optional_current_user, get_current_user
 
 router = APIRouter()
 
@@ -60,6 +59,7 @@ async def ask_copilot(
         context_data=ctx_data,
         current_user=current_user,
         is_demo=query.is_demo,
+        task_category="career_copilot",
     )
     return answer
 
@@ -84,13 +84,14 @@ async def explain_career(
         student_id=query.student_id,
         current_user=current_user,
         is_demo=query.is_demo,
+        task_category="career_copilot",
     )
     return answer
 
 
 class TaskRouteQuery(BaseModel):
     task_category: str
-    prompt: str
+    prompt: str = Field(..., min_length=1, max_length=5000)
     context: dict | None = None
     is_demo: bool | None = None
 
@@ -98,13 +99,29 @@ class TaskRouteQuery(BaseModel):
 @router.post("/copilot/route-task")
 async def route_ai_task(
     query: TaskRouteQuery,
-    current_user: dict | None = Depends(get_optional_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
-    from ai.router import ai_router
-    return await ai_router.route_task(
+    from ai.router import ai_router, SUPPORTED_AI_TASKS
+    if query.task_category not in SUPPORTED_AI_TASKS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid task_category '{query.task_category}'. Must be one of: {SUPPORTED_AI_TASKS}",
+        )
+    result = await ai_router.route_task(
         task_category=query.task_category,
         prompt=query.prompt,
         context=query.context,
         is_demo=query.is_demo,
     )
+    return {
+        "status": result.get("status", "success"),
+        "answer": result.get("answer", ""),
+        "provider": result.get("provider", "deterministic_fallback"),
+        "model": result.get("model", ""),
+        "task_category": result.get("task_category", query.task_category),
+        "fallback_used": result.get("fallback_used", False),
+        "advisory": True,
+        "latency_ms": result.get("latency_ms", 0.0),
+        "error": result.get("error"),
+    }
 

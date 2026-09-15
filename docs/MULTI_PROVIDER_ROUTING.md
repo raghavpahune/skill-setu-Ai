@@ -1,28 +1,47 @@
-# Multi-Provider AI & External API Key Routing (Phase 37.3)
+# AI Workload Routing & External Ingestion Architecture (Phase 37.3)
 
-SkillSetu employs a centralized, multi-provider routing and resilient fallback architecture. Rather than treating third-party services as monolithic external dependencies, AI tasks and external datasets are decoupled into independent provider connectors with automated failover policies.
-
----
-
-## 1. Environment Variable Matrix
-
-| Service | Purpose | Environment Variable(s) | Type | Fallback Policy |
-|---|---|---|---|---|
-| **Google Gemini AI** | Primary generative AI inference for Career Copilot and personalized contextual explainability | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Optional in Dev / Recommended in Prod | `DemoProvider` (Rule-based grounded intelligence) |
-| **Adzuna India** | Live vacancy telemetry across Maharashtra 36 districts | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | Optional | Verified Local Snapshot (`data/real/jobs.json`) &rarr; Immutable Baseline |
-| **data.gov.in (OGD)** | Open Government Data portal feeds (PMKVY, NAPS, ITI apprenticeships) | `DATA_GOV_API_KEY` | Optional | Verified Local Snapshot (`data/real/`) &rarr; Immutable Baseline |
-| **Supabase Managed Postgres** | Authoritative cloud database with RLS policies | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_ANON_KEY`) | Required in Prod | In-Memory Verified Cache (`data/real/` disk store) |
-| **Admin Authorization** | Administration and integration health diagnostics access | `ADMIN_API_KEY` | Optional (Bearer JWT supported) | Strict 401/403 RBAC rejection |
-| **JWT Session Secret** | Cryptographic token signing for user authentication | `JWT_SECRET_KEY` | Required | Platform startup default (Dev only) |
-| **Environment Mode** | Production vs Development deployment flag | `ENVIRONMENT` (or `RENDER`) | Required in Prod | `development` |
+SkillSetu implements workload-based AI routing with deterministic fallback and robust external connector telemetry. Rather than treating external dependencies as an opaque monolithic stack, AI tasks and external datasets are decoupled into distinct workloads, credential boundaries, and explicit provenance states.
 
 ---
 
-## 2. Supported AI Task Categories
+## 1. Provenance & Operational State Taxonomy
 
-SkillSetu routes AI requests to 8 distinct task categories managed by `ai.router.AIRouter`:
+SkillSetu strictly enforces provenance boundaries across all services:
 
-1. `career_copilot`: Natural language conversational career advisory grounded in student skills and target goals.
+| Classification | Meaning | When Permitted |
+|---|---|---|
+| **REAL PROVIDER** | Active generative AI model (Google Gemini `gemini-3.6-flash`) | Valid API key configured and upstream online |
+| **DETERMINISTIC FALLBACK** | Local rule-based advisory synthesis (`deterministic_fallback`) | Triggered on primary quota (429), timeout, auth failure, or unconfigured key |
+| **LIVE_API** | Real-time external stream directly from an upstream API feed (Adzuna, Data.gov.in) | Valid credentials configured and API call succeeds |
+| **VERIFIED_SNAPSHOT** | Authenticated historical snapshot with explicit timestamp and checksum | Permitted only when explicitly labeled as snapshot |
+| **DEMO_SYNTHETIC** | Seed demonstration records (`data/demo/`) | Allowed ONLY when explicit demo mode is active (`is_demo=True` or `SKILLSETU_DATA_MODE=demo`) |
+
+> [!IMPORTANT]
+> External live-data failure in production NEVER silently falls back to local seed data or demo files.
+> For migrated authoritative domains, Supabase PostgreSQL is the sole authoritative persistence layer. If Supabase is unavailable, the application raises a database/service error—never a silent local SQLite, cache, or synthetic fallback.
+
+---
+
+## 2. Environment Variable Matrix
+
+| Service | Environment Variable(s) | Role | Production Fallback Policy |
+|---|---|---|---|
+| **Primary AI Inference** | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) | Primary generative AI inference across workloads | `deterministic_fallback` (advisory output) |
+| **Workload-Specific AI Keys** | `GEMINI_API_KEY_<WORKLOAD>` (e.g. `GEMINI_API_KEY_CAREER_COPILOT`) | Dedicated quota/key isolation per workload | Falls back to primary `GEMINI_API_KEY` |
+| **Workload Provider Mapping** | `AI_PROVIDER_<WORKLOAD>` | Configured AI provider for workload (defaults to `gemini`) | Primary `gemini` &rarr; `deterministic_fallback` |
+| **Adzuna India Jobs** | `ADZUNA_APP_ID`, `ADZUNA_APP_KEY` | Real-time vacancy ingestion across Maharashtra | Fail-closed: reports connector unavailable (no synthetic substitution) |
+| **data.gov.in (OGD)** | `DATA_GOV_API_KEY` | Official OGD training programs and schemes | Fail-closed: reports connector unavailable (no synthetic substitution) |
+| **Supabase PostgreSQL** | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_KEY`) | Authoritative persistence for migrated domains | Fail-closed: raises database connection error |
+| **Admin Authorization** | `ADMIN_API_KEY` (or Bearer JWT) | RBAC-protected endpoints and telemetry | Fail-closed: strict 401 Unauthorized in production |
+| **JWT Session Secret** | `JWT_SECRET_KEY` | Cryptographic session signing | Mandatory: fails on startup if absent in production |
+
+---
+
+## 3. Supported AI Workload Categories
+
+SkillSetu routes AI requests to 8 distinct workload categories via `ai.router.AIRouter`:
+
+1. `career_copilot`: Conversational career advisory grounded in student skills and target goals.
 2. `skill_gap_analysis`: Differential analysis between candidate competencies and industry demand vectors.
 3. `learning_roadmap`: NSQF-aligned milestone generation linking bridging courses to identified gaps.
 4. `employee_transition`: Mid-career skill adjacency and transferability delta evaluation.
@@ -31,55 +50,56 @@ SkillSetu routes AI requests to 8 distinct task categories managed by `ai.router
 7. `government_policy_analysis`: Regional training subsidy and incentive shift projections.
 8. `data_insight_generation`: District-level labor telemetry and high-growth domain summaries.
 
+> [!NOTE]
+> AI is strictly advisory. AI does NOT control authentication, authorization, scoring, ranking, matching, recommendation eligibility, provenance, or data integrity. Authoritative calculations remain deterministic.
+
 ---
 
-## 3. Failover & Fallback Architecture
+## 4. Failover & Routing Architecture
 
-### AI Routing Fallback Chain
+### AI Workload Routing Flow
 ```text
-Task Request
+Task Request (workload_category)
   │
   ▼
-GeminiProvider (Configured & Available?)
-  ├── Yes ──► Call Google Gemini API (gemini-3.6-flash)
-  │             ├── Success ──► Return Grounded AI Output (fallback_used: False)
-  │             └── Error (429/Timeout/Quota) ──┐
-  │                                             │
-  └── No ───────────────────────────────────────┴──► DemoProvider Fallback
-                                                       (Rule-based deterministic engine,
-                                                        fallback_used: True)
-```
-
-### External Data Ingestion Fallback Chain
-```text
-Connector Fetch
-  │
-  ▼
-Live External API (Adzuna / data.gov.in)
-  ├── Configured & Success ──► Transform, Dedupe (SHA-256), Persist (source: LIVE_API)
-  │
-  └── Unconfigured / Network Error
+Resolve Workload Credential
+  ├── Specific Key: GEMINI_API_KEY_<WORKLOAD> (if set)
+  └── Default Key:  GEMINI_API_KEY
         │
         ▼
-      Authoritative Database (Supabase Cached Records)
-        │
-        └── Empty / Disconnected
-              │
-              ▼
-            Verified Local Snapshot (data/real/ store)
-              │
-              └── Demo Mode Explicitly Enabled
-                    │
-                    ▼
-                  Baseline Immutable Dataset (data/demo/)
+Is Gemini Configured?
+  ├── Yes ──► Execute Google Gemini (gemini-3.6-flash)
+  │             ├── HTTP 200 ──► Return Output (provider: "gemini", fallback_used: False, advisory: True)
+  │             └── Error (429/Timeout/Quota/Network) ──┐
+  │                                                     │
+  └── No ───────────────────────────────────────────────┴──► Execute Deterministic Fallback
+                                                              (provider: "deterministic_fallback",
+                                                               fallback_used: True,
+                                                               advisory: True)
+```
+
+### External Connector Routing Flow
+```text
+Connector Request (Adzuna / Data.gov.in)
+  │
+  ├── Is Explicit Demo Mode Active?
+  │     └── Yes ──► Return Demo Records (stamped: source="DEMO_SYNTHETIC", is_demo=True)
+  │
+  └── Production Mode (is_demo=False)
+        ├── Are Credentials Configured?
+        │     ├── No  ──► Report NOT_CONFIGURED (return empty, status: "NOT_CONFIGURED")
+        │     └── Yes ──► Execute Live API Fetch
+        │                   ├── Success ──► Return Live Records (source="LIVE_API", is_demo=False)
+        │                   └── Failure ──► Report UNAVAILABLE (return empty, status: "UNAVAILABLE")
+        │                                   (NEVER silently substitute local seed files as live data)
 ```
 
 ---
 
-## 4. Diagnostics & Observability
+## 5. Diagnostics & Observability
 
-Administrators can inspect live provider health via:
+Live integration telemetry is exposed via:
 - **API Endpoint**: `GET /api/admin/integrations/health` (Protected by `verify_admin_key`)
-- **Dashboard UI**: Admin Dashboard &rarr; Overview Tab &rarr; *Multi-Provider AI & External Data Routing* card.
+- **Dashboard UI**: Admin Dashboard &rarr; Overview Tab &rarr; *AI Engine & External Ingestion Routing* card.
 
-The diagnostics payload never returns raw API keys, bearer tokens, or sensitive authorization headers.
+The diagnostics payload never returns raw API keys, bearer tokens, service-role keys, or secrets.

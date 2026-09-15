@@ -189,32 +189,55 @@ is_live_employer_demand = _is_live_employer_demand
 get_validated_employer_demands = _get_validated_employer_demands
 
 
+AUTHORITATIVE_SKILL_ALIASES = {
+    "tableau / power bi": {"tableau", "power bi", "tableau / power bi"},
+    "aws / azure": {"aws", "azure", "aws / azure"},
+    "javascript / react": {"javascript", "react", "javascript / react"},
+    "mqtt / lorawan": {"mqtt", "lorawan", "mqtt / lorawan"},
+}
+
+
+def _normalize_skill_text(text: str) -> str:
+    return " ".join((text or "").lower().split())
+
+
 def _match_skills(student_skills: list[dict[str, Any]], required_skill_names: list[str]) -> tuple[list[str], list[str], int]:
-    """Calculate matched skills, missing skills, and match percentage."""
-    normalized_student = {}
+    prof_weights = {"expert": 1.0, "advanced": 1.0, "intermediate": 0.8, "beginner": 0.5, "none": 0.0}
+    normalized_student: dict[str, str] = {}
     for s in student_skills:
-        name = (s.get("skill_name") or s.get("name") or s.get("skill_id") or "").lower()
-        prof = (s.get("proficiency") or "intermediate").lower()
-        normalized_student[name] = prof
+        raw_name = s.get("skill_name") or s.get("name") or s.get("skill_id") or ""
+        norm_name = _normalize_skill_text(str(raw_name))
+        if not norm_name:
+            continue
+        prof = str(s.get("proficiency") or "intermediate").lower().strip()
+        if norm_name in normalized_student:
+            prev_weight = prof_weights.get(normalized_student[norm_name], 0.0)
+            curr_weight = prof_weights.get(prof, 0.0)
+            if curr_weight > prev_weight:
+                normalized_student[norm_name] = prof
+        else:
+            normalized_student[norm_name] = prof
 
     matched = []
     missing = []
     weighted_score = 0.0
 
-    prof_weights = {"expert": 1.0, "advanced": 1.0, "intermediate": 0.8, "beginner": 0.5, "none": 0.0}
-
     for req in required_skill_names:
-        req_clean = req.lower()
-        # Find exact or substring match
-        matched_key = None
-        for sk_name, prof in normalized_student.items():
-            if sk_name in req_clean or req_clean in sk_name:
-                matched_key = (sk_name, prof)
-                break
+        req_norm = _normalize_skill_text(req)
+        targets = AUTHORITATIVE_SKILL_ALIASES.get(req_norm, {req_norm})
+        best_prof = None
+        best_weight = -1.0
+        for t in targets:
+            if t in normalized_student:
+                p = normalized_student[t]
+                w = prof_weights.get(p, 0.75)
+                if w > best_weight:
+                    best_weight = w
+                    best_prof = p
 
-        if matched_key:
+        if best_prof is not None:
             matched.append(req)
-            weighted_score += prof_weights.get(matched_key[1], 0.75)
+            weighted_score += best_weight
         else:
             missing.append(req)
 
@@ -241,7 +264,7 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
     else:
         try:
             from app.repositories.supabase_repository import list_skills
-            repo_skills = list_skills(limit=10000) or []
+            repo_skills = list_skills(limit=None) or []
             skills_map = {s["id"]: s for s in repo_skills if "id" in s}
         except Exception:
             skills_map = {}
@@ -317,7 +340,7 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
             if all_courses:
                 course_ids = [c["id"] for c in all_courses if c.get("id")]
                 cs_links = list_course_skills(course_ids=course_ids) or []
-                skills_repo = list_skills(limit=10000) or []
+                skills_repo = list_skills(limit=None) or []
                 skill_name_map = {s["id"]: s.get("name", "") for s in skills_repo if s.get("id")}
                 skills_by_course: dict[str, list[str]] = {}
                 for cs in cs_links:

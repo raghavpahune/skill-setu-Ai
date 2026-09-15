@@ -25,7 +25,7 @@ def get_curriculum_recommendations(is_demo: bool | None = None) -> list[dict]:
         except Exception:
             signals = []
         try:
-            repo_skills = list_skills(limit=10000) or []
+            repo_skills = list_skills(limit=None) or []
             skills_map = {s["id"]: s for s in repo_skills if "id" in s}
         except Exception:
             skills_map = {}

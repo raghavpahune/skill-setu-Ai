@@ -194,19 +194,22 @@ Select your stakeholder role above or explore one of the verified inquiries belo
     }
   }, [initialDistrict]);
 
-  // Load student list for candidate selector context
   useEffect(() => {
     api.getStudents()
       .then((res) => {
         if (Array.isArray(res) && res.length > 0) {
           setStudents(res);
           if (!studentId && role === 'student') {
-            setStudentId(res[0].user_id);
+            if (isAuthenticated && authRole?.toLowerCase() === 'student' && user?.id) {
+              setStudentId(user.id);
+            } else if (systemHealth.demo_mode) {
+              setStudentId(res[0].user_id);
+            }
           }
         }
       })
       .catch(() => {});
-  }, []);
+  }, [isAuthenticated, authRole, user?.id, systemHealth.demo_mode]);
 
   // If initialStudentId provided, update state
   useEffect(() => {
