@@ -75,7 +75,8 @@ def test_copilot_live_generation_success():
             
             res = client.post("/api/copilot/ask", json={
                 "question": "What is the demand trend for Python?",
-                "role": "student"
+                "role": "student",
+                "is_demo": False
             })
             assert res.status_code == 200
             data = res.json()

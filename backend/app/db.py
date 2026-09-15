@@ -1393,7 +1393,7 @@ def save_user(user_data: dict) -> dict:
                     err_msg = str(upsert_err).lower()
                     is_role_constraint = (
                         clean_supabase_user.get("role") == "EMPLOYEE"
-                        and ("users_role_check" in err_msg or "check constraint" in err_msg or "role" in err_msg)
+                        and ("users_role_check" in err_msg or "check constraint" in err_msg)
                     )
                     if is_role_constraint:
                         clean_supabase_user_fallback = dict(clean_supabase_user)

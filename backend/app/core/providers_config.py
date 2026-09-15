@@ -150,9 +150,11 @@ def get_safe_integration_diagnostics() -> dict[str, Any]:
 
     workload_routing = {}
     for w in SUPPORTED_WORKLOADS:
+        dedicated_key = str(os.getenv(f"GEMINI_API_KEY_{w.upper()}") or "").strip().strip("'\"")
+        has_dedicated = dedicated_key not in ("", "your_key_here")
         workload_routing[w] = {
             "configured_provider": get_workload_provider(w),
-            "has_dedicated_key": bool(os.getenv(f"GEMINI_API_KEY_{w.upper()}")),
+            "has_dedicated_key": has_dedicated,
             "effective_configured": is_workload_ai_configured(w),
             "fallback_mechanism": "deterministic_fallback",
         }

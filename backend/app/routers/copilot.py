@@ -122,5 +122,6 @@ async def route_ai_task(
         "fallback_used": result.get("fallback_used", False),
         "advisory": True,
         "latency_ms": result.get("latency_ms", 0.0),
+        "error": result.get("error"),
     }
 

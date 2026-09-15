@@ -62,7 +62,8 @@ def test_provider_config_discovery():
     assert get_workload_provider("career_copilot") == "gemini"
 
 
-def test_workload_specific_ai_key_resolution():
+def test_workload_specific_ai_key_resolution(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY_SKILL_GAP_ANALYSIS", raising=False)
     with patch.dict(os.environ, {"GEMINI_API_KEY": "shared-default-key", "GEMINI_API_KEY_CAREER_COPILOT": "dedicated-copilot-key"}, clear=False):
         assert get_workload_ai_key("career_copilot") == "dedicated-copilot-key"
         assert get_workload_ai_key("skill_gap_analysis") == "shared-default-key"

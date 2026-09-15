@@ -4,7 +4,16 @@ from app.db import get_demo
 from app.services.career_recommendation_engine import is_live_employer_demand
 
 
-def compute_gaps(district: str | None = None, is_demo: bool | None = None) -> list[dict]:
+def compute_gaps(
+    district: str | None = None,
+    is_demo: bool | None = None,
+    jobs: list[dict] | None = None,
+    job_skills: list[dict] | None = None,
+    courses: list[dict] | None = None,
+    course_skills_data: list[dict] | None = None,
+    skills_map: dict[str, dict] | None = None,
+    employer_demands: list[dict] | None = None,
+) -> list[dict]:
     """Compute skill gaps: demand_score - coverage_score per skill.
 
     Demand score: % of job postings requiring this skill (0-100).
@@ -15,44 +24,48 @@ def compute_gaps(district: str | None = None, is_demo: bool | None = None) -> li
     is_demo_mode = is_explicit_demo_mode(is_demo)
 
     if is_demo_mode:
-        jobs = get_demo("jobs")
-        job_skills = get_demo("job_skills")
-        courses = get_demo("courses")
-        course_skills_data = get_demo("course_skills")
-        skills_map = {s["id"]: s for s in get_demo("skills")}
-        employer_demands = get_demo("employer_demands")
+        jobs = jobs if jobs is not None else get_demo("jobs")
+        job_skills = job_skills if job_skills is not None else get_demo("job_skills")
+        courses = courses if courses is not None else get_demo("courses")
+        course_skills_data = course_skills_data if course_skills_data is not None else get_demo("course_skills")
+        skills_map = skills_map if skills_map is not None else {s["id"]: s for s in get_demo("skills")}
+        employer_demands = employer_demands if employer_demands is not None else get_demo("employer_demands")
     else:
-        try:
-            from app.repositories.supabase_repository import list_jobs, list_job_skills
-            jobs = list_jobs(limit=None) or []
-            job_ids = {j.get("id") for j in jobs if j.get("id")}
-            repo_js = list_job_skills(job_ids=list(job_ids)) if job_ids else []
-            job_skills = [js for js in (repo_js or []) if js.get("job_id") in job_ids]
-        except Exception:
-            jobs = []
-            job_skills = []
+        if jobs is None or job_skills is None:
+            try:
+                from app.repositories.supabase_repository import list_jobs, list_job_skills
+                jobs = list_jobs(limit=None) or []
+                job_ids = {j.get("id") for j in jobs if j.get("id")}
+                repo_js = list_job_skills(job_ids=list(job_ids)) if job_ids else []
+                job_skills = [js for js in (repo_js or []) if js.get("job_id") in job_ids]
+            except Exception:
+                jobs = []
+                job_skills = []
 
-        try:
-            from app.repositories.supabase_repository import list_courses, list_course_skills
-            courses = list_courses() or []
-            c_ids = [c["id"] for c in courses if c.get("id")]
-            course_skills_data = list_course_skills(course_ids=c_ids) if c_ids else []
-        except Exception:
-            courses = []
-            course_skills_data = []
+        if courses is None or course_skills_data is None:
+            try:
+                from app.repositories.supabase_repository import list_courses, list_course_skills
+                courses = list_courses() or []
+                c_ids = [c["id"] for c in courses if c.get("id")]
+                course_skills_data = list_course_skills(course_ids=c_ids) if c_ids else []
+            except Exception:
+                courses = []
+                course_skills_data = []
 
-        try:
-            from app.repositories.supabase_repository import list_skills
-            repo_skills = list_skills(limit=None) or []
-            skills_map = {s["id"]: s for s in repo_skills if "id" in s}
-        except Exception:
-            skills_map = {}
+        if skills_map is None:
+            try:
+                from app.repositories.supabase_repository import list_skills
+                repo_skills = list_skills(limit=None) or []
+                skills_map = {s["id"]: s for s in repo_skills if "id" in s}
+            except Exception:
+                skills_map = {}
 
-        try:
-            from app.repositories.supabase_repository import list_employer_demands
-            employer_demands = list_employer_demands(is_demo=False) or []
-        except Exception:
-            employer_demands = []
+        if employer_demands is None:
+            try:
+                from app.repositories.supabase_repository import list_employer_demands
+                employer_demands = list_employer_demands(is_demo=False) or []
+            except Exception:
+                employer_demands = []
 
     if not is_demo_mode and (not jobs or not skills_map):
         return []

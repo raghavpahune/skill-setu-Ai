@@ -77,7 +77,7 @@ class AIRouter:
         prompt: str,
         context: dict | None = None,
         is_demo: bool | None = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = 12.0,
     ) -> dict[str, Any]:
         if task_category not in SUPPORTED_AI_TASKS:
             raise ValueError(f"Unsupported AI task category: {task_category}. Supported categories: {SUPPORTED_AI_TASKS}")
@@ -152,9 +152,8 @@ class AIRouter:
             request_error_category = "UNSUPPORTED_PROVIDER"
             self._last_error_category = "UNSUPPORTED_PROVIDER"
 
-        fallback_start = time.perf_counter()
         fallback_answer = await self._deterministic_fallback.generate(prompt, context)
-        elapsed_ms = (time.perf_counter() - fallback_start) * 1000.0
+        elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
         return {
             "status": "success",

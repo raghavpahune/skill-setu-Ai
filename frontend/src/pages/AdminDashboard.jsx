@@ -154,6 +154,7 @@ export default function AdminDashboard() {
   const [signalAdminNotesInput, setSignalAdminNotesInput] = useState('');
   const [governanceData, setGovernanceData] = useState(null);
   const [integrationsHealth, setIntegrationsHealth] = useState(null);
+  const [diagnosticsSuccess, setDiagnosticsSuccess] = useState(false);
 
   // Load Student Assessment Data & Data Governance
   const fetchData = useCallback(() => {
@@ -197,6 +198,9 @@ export default function AdminDashboard() {
 
       if (integRes.status === 'fulfilled' && integRes.value?.status === 'success') {
         setIntegrationsHealth(integRes.value);
+        setDiagnosticsSuccess(true);
+      } else {
+        setDiagnosticsSuccess(false);
       }
 
       setLoading(false);
@@ -909,11 +913,13 @@ export default function AdminDashboard() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className={`px-2.5 py-1 rounded-lg font-mono font-bold text-[11px] border ${
-                  integrationsHealth?.ai?.configured
+                  !diagnosticsSuccess
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-700'
+                    : integrationsHealth?.ai?.configured
                     ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
                     : 'bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
                 }`}>
-                  AI: {integrationsHealth?.ai?.configured ? 'Gemini Configured' : 'Deterministic Fallback'}
+                  AI: {!diagnosticsSuccess ? 'Diagnostics Unavailable' : integrationsHealth?.ai?.configured ? 'Gemini Configured' : 'Deterministic Fallback'}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/80 text-teal-700 dark:text-teal-300 border border-teal-300 dark:border-teal-800 font-mono font-bold text-[11px]">
                   Tasks: 8 Categories
@@ -926,11 +932,11 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">AI Provider Engine</span>
                   <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300">
-                    {integrationsHealth?.ai?.model || 'gemini-3.6-flash'}
+                    {!diagnosticsSuccess ? 'Diagnostics Unavailable' : (integrationsHealth?.ai?.model || 'gemini-3.6-flash')}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
-                  <div>Status: <span className="font-semibold text-slate-800 dark:text-slate-200">{integrationsHealth?.ai?.configured ? 'Configured' : 'Deterministic Fallback Engaged'}</span></div>
+                  <div>Status: <span className="font-semibold text-slate-800 dark:text-slate-200">{!diagnosticsSuccess ? 'Diagnostics Unavailable' : integrationsHealth?.ai?.configured ? 'Configured' : 'Deterministic Fallback Engaged'}</span></div>
                   <div>Fallback Engine: <span className="font-semibold text-emerald-600 dark:text-emerald-400">Rule-Based Deterministic</span></div>
                 </div>
               </div>
@@ -939,13 +945,15 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Adzuna Jobs Feed</span>
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                    integrationsHealth?.external_data?.adzuna_jobs?.status === 'ONLINE'
+                    !diagnosticsSuccess
+                      ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                      : integrationsHealth?.external_data?.adzuna_jobs?.status === 'ONLINE'
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
                       : integrationsHealth?.external_data?.adzuna_jobs?.status === 'CONFIGURED'
                       ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}>
-                    {integrationsHealth?.external_data?.adzuna_jobs?.status || 'NOT_CONFIGURED'}
+                    {!diagnosticsSuccess ? 'Diagnostics Unavailable' : (integrationsHealth?.external_data?.adzuna_jobs?.status || 'NOT_CONFIGURED')}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
@@ -958,13 +966,15 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">data.gov.in (OGD)</span>
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                    integrationsHealth?.external_data?.datagov_schemes?.status === 'ONLINE'
+                    !diagnosticsSuccess
+                      ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                      : integrationsHealth?.external_data?.datagov_schemes?.status === 'ONLINE'
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
                       : integrationsHealth?.external_data?.datagov_schemes?.status === 'CONFIGURED'
                       ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300'
                       : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
                   }`}>
-                    {integrationsHealth?.external_data?.datagov_schemes?.status || 'NOT_CONFIGURED'}
+                    {!diagnosticsSuccess ? 'Diagnostics Unavailable' : (integrationsHealth?.external_data?.datagov_schemes?.status || 'NOT_CONFIGURED')}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
@@ -977,11 +987,13 @@ export default function AdminDashboard() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">Supabase DB</span>
                   <span className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded ${
-                    integrationsHealth?.external_data?.supabase_database?.connected
+                    !diagnosticsSuccess
+                      ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                      : integrationsHealth?.external_data?.supabase_database?.connected
                       ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
                       : 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300'
                   }`}>
-                    {integrationsHealth?.external_data?.supabase_database?.status || 'UNKNOWN'}
+                    {!diagnosticsSuccess ? 'Diagnostics Unavailable' : (integrationsHealth?.external_data?.supabase_database?.status || 'UNKNOWN')}
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500 dark:text-slate-400 space-y-1">

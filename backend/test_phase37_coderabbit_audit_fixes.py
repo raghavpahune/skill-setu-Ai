@@ -403,14 +403,14 @@ def test_get_safe_integration_diagnostics_effective_ai_configured():
             assert diag["ai"]["available"] is True
 
 
-def test_cached_employee_role_restoration():
+def test_cached_employee_role_restoration(monkeypatch):
     from app.db import _cache, get_user_by_email, get_user_by_id
-    _cache["users"] = [{
+    monkeypatch.setitem(_cache, "users", [{
         "id": "usr-employee-test-99",
         "email": "employee99@skillsetu.gov.in",
         "role": "STUDENT",
         "full_name": "Test Employee",
-    }]
+    }])
     u_by_email = get_user_by_email("employee99@skillsetu.gov.in")
     assert u_by_email is not None
     assert u_by_email["role"] == "EMPLOYEE"
@@ -479,14 +479,14 @@ def test_ai_router_diagnostics_requires_gemini_provider_selected():
                 assert diag["real_provider_configured"] is True
 
 
-def test_student_with_employee_prefixed_email_retains_student_role():
+def test_student_with_employee_prefixed_email_retains_student_role(monkeypatch):
     from app.db import get_user_by_email, get_user_by_id, _cache
-    _cache["users"] = [{
+    monkeypatch.setitem(_cache, "users", [{
         "id": "usr-std-employee-prefix-1",
         "email": "employee.jane@domain.com",
         "role": "STUDENT",
         "name": "Jane Doe",
-    }]
+    }])
     mock_client = MagicMock()
     mock_res = MagicMock()
     mock_res.data = [{
@@ -503,17 +503,17 @@ def test_student_with_employee_prefixed_email_retains_student_role():
         assert u_cache is not None
         assert u_cache["role"] == "STUDENT"
 
-        _cache["users"] = []
+        monkeypatch.setitem(_cache, "users", [])
         u_supa = get_user_by_email("employee.jane@domain.com")
         assert u_supa is not None
         assert u_supa["role"] == "STUDENT"
 
-        _cache["users"] = [{
+        monkeypatch.setitem(_cache, "users", [{
             "id": "usr-std-employee-prefix-1",
             "email": "employee.jane@domain.com",
             "role": "STUDENT",
             "name": "Jane Doe",
-        }]
+        }])
         u_id = get_user_by_id("usr-std-employee-prefix-1")
         assert u_id is not None
         assert u_id["role"] == "STUDENT"
@@ -638,3 +638,214 @@ def test_adaptive_roadmap_real_mode_industry_signals_failure_fails_closed():
                                     with pytest.raises(RuntimeError, match="Roadmap industry signals unavailable"):
                                         compute_adaptive_roadmap("usr-real-fail-signals", is_demo=False, persist=False)
                                     mock_demo.assert_not_called()
+
+
+def test_explicit_demo_mode_selects_demo_provider_even_if_gemini_configured():
+    from ai.copilot import _get_provider
+    from ai.demo_provider import DemoProvider
+    mock_gemini = MagicMock()
+    with patch("ai.router.resolve_workload_gemini_provider", return_value=mock_gemini):
+        provider = _get_provider(is_demo=True, task_category="career_copilot")
+        assert isinstance(provider, DemoProvider)
+        assert provider is not mock_gemini
+
+
+def test_gemini_provider_empty_string_key_handling():
+    import os
+    from ai.gemini_provider import GeminiProvider
+    with patch.dict(os.environ, {"GEMINI_API_KEY": "env-gemini-key"}):
+        prov_none = GeminiProvider(api_key=None)
+        assert prov_none.api_key == "env-gemini-key"
+
+        prov_empty = GeminiProvider(api_key="")
+        assert prov_empty.api_key == ""
+        assert prov_empty.client is None
+
+
+def test_fallback_latency_measures_from_start_time():
+    import asyncio
+    from ai.router import AIRouter
+    router = AIRouter()
+
+    class FailingGemini:
+        model = "gemini-test"
+        async def generate(self, prompt, context=None):
+            await asyncio.sleep(0.05)
+            raise RuntimeError("Gemini network error")
+
+    with patch.object(router, "_resolve_gemini_for_task", return_value=FailingGemini()):
+        with patch("app.core.providers_config.get_workload_provider", return_value="gemini"):
+            res = asyncio.run(router.route_task("career_copilot", "test prompt", is_demo=False))
+            assert res["fallback_used"] is True
+            assert res["latency_ms"] >= 40.0
+            assert "Failover triggered: NETWORK_ERROR" in str(res["error"])
+
+
+def test_has_dedicated_key_normalization_and_placeholder_filtering():
+    import os
+    from app.core.providers_config import get_safe_integration_diagnostics
+
+    test_cases = [
+        ({"GEMINI_API_KEY_CAREER_COPILOT": ""}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": "   "}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": "''"}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": '""'}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": "your_key_here"}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": " 'your_key_here' "}, False),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": "valid-dedicated-key"}, True),
+        ({"GEMINI_API_KEY_CAREER_COPILOT": "  'valid-dedicated-key'  "}, True),
+    ]
+
+    for env_patch, expected in test_cases:
+        with patch.dict(os.environ, env_patch, clear=False):
+            diag = get_safe_integration_diagnostics()
+            routing = diag["ai"]["workload_routing"]["career_copilot"]
+            assert routing["has_dedicated_key"] is expected, f"Failed for {env_patch}: got {routing['has_dedicated_key']}"
+
+
+def test_save_user_role_constraint_matching_precision():
+    from app.db import save_user
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+
+    mock_client = MagicMock()
+    mock_client.table.return_value.upsert.return_value.execute.side_effect = [
+        RuntimeError('new row for relation "users" violates check constraint "users_role_check"'),
+        MagicMock(data=[]),
+    ]
+    with patch("app.db.get_supabase_client", return_value=mock_client):
+        user_data = {
+            "id": "usr-emp-role-check",
+            "email": "emp_check@domain.com",
+            "role": "EMPLOYEE",
+            "name": "Check Test",
+        }
+        save_user(user_data)
+        assert mock_client.table.return_value.upsert.call_count == 2
+        second_call = mock_client.table.return_value.upsert.call_args_list[1]
+        assert second_call[0][0]["role"] == "STUDENT"
+
+    mock_client_arb = MagicMock()
+    mock_client_arb.table.return_value.upsert.return_value.execute.side_effect = RuntimeError(
+        'permission denied for role "postgres"'
+    )
+    with patch("app.db.get_supabase_client", return_value=mock_client_arb):
+        with pytest.raises(SupabaseRepositoryError, match='permission denied for role'):
+            save_user({
+                "id": "usr-emp-arb-role",
+                "email": "emp_arb@domain.com",
+                "role": "EMPLOYEE",
+                "name": "Arb Test",
+            })
+        assert mock_client_arb.table.return_value.upsert.call_count == 1
+
+
+def test_copilot_router_includes_safe_error_field(monkeypatch):
+    monkeypatch.setitem(_cache, "users", [{
+        "id": "test-student-123",
+        "email": "std123@skillsetu.gov.in",
+        "role": "STUDENT",
+        "is_active": True,
+    }])
+    token = create_access_token({"sub": "test-student-123", "email": "std123@skillsetu.gov.in", "role": "STUDENT"})
+    headers = {"Authorization": f"Bearer {token}"}
+    with patch("ai.router.ai_router.route_task") as mock_route:
+        mock_route.return_value = {
+            "status": "success",
+            "answer": "Fallback response",
+            "provider": "deterministic_fallback",
+            "model": "rule-based-deterministic",
+            "task_category": "career_copilot",
+            "fallback_used": True,
+            "advisory": True,
+            "latency_ms": 15.0,
+            "error": "Failover triggered: TIMEOUT",
+        }
+        res = client.post(
+            "/api/copilot/route-task",
+            json={"prompt": "test prompt", "task_category": "career_copilot"},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["error"] == "Failover triggered: TIMEOUT"
+        assert data["fallback_used"] is True
+
+
+def test_compute_gaps_uses_preloaded_data_without_repository_calls():
+    from app.services.gap_engine import compute_gaps
+    custom_jobs = [{"id": "cj-1", "district": "Pune"}]
+    custom_job_skills = [{"job_id": "cj-1", "skill_id": "sk-custom-1"}]
+    custom_courses = [{"id": "cc-1", "district": "Pune", "enrolment_capacity": 50}]
+    custom_course_skills = [{"course_id": "cc-1", "skill_id": "sk-custom-1"}]
+    custom_skills = {"sk-custom-1": {"id": "sk-custom-1", "name": "Custom Skill", "category": "Tech"}}
+
+    with patch("app.repositories.supabase_repository.list_jobs") as mock_jobs:
+        with patch("app.repositories.supabase_repository.list_skills") as mock_skills:
+            gaps = compute_gaps(
+                is_demo=False,
+                jobs=custom_jobs,
+                job_skills=custom_job_skills,
+                courses=custom_courses,
+                course_skills_data=custom_course_skills,
+                skills_map=custom_skills,
+                employer_demands=[],
+            )
+            assert len(gaps) == 1
+            assert gaps[0]["skill_id"] == "sk-custom-1"
+            mock_jobs.assert_not_called()
+            mock_skills.assert_not_called()
+
+
+def test_copilot_handle_question_real_mode_timeout_bounds():
+    import asyncio
+    from ai.copilot import handle_question
+
+    class SlowProvider:
+        model = "gemini-test"
+        async def generate(self, prompt, context=None):
+            await asyncio.sleep(20.0)
+            return "slow answer"
+
+    slow_prov = SlowProvider()
+    with patch("ai.copilot._get_provider", return_value=slow_prov):
+        with patch("ai.copilot.isinstance", side_effect=lambda obj, cls: True if obj is slow_prov else isinstance(obj, cls)):
+            with patch("ai.copilot._build_context", return_value={"query_type": "general"}):
+                with patch("asyncio.wait_for") as mock_wait:
+                    mock_wait.side_effect = asyncio.TimeoutError()
+                    res = asyncio.run(
+                        handle_question(
+                            question="Test question",
+                            role="student",
+                            is_demo=False,
+                        )
+                    )
+                    assert "timed out" in res["answer"]
+                    assert res["model"] == "Real Data Service (Timeout)"
+                    assert res["demo_mode"] is False
+
+
+def test_copilot_handle_question_demo_mode_timeout_failover():
+    import asyncio
+    from ai.copilot import handle_question
+
+    class SlowLiveProvider:
+        model = "gemini-test"
+        async def generate(self, prompt, context=None):
+            await asyncio.sleep(20.0)
+            return "slow answer"
+
+    slow_prov = SlowLiveProvider()
+    with patch("ai.copilot._get_provider", return_value=slow_prov):
+        with patch("ai.copilot.isinstance", side_effect=lambda obj, cls: True if obj is slow_prov else isinstance(obj, cls)):
+            with patch("ai.copilot._build_context", return_value={"query_type": "general"}):
+                with patch("asyncio.wait_for") as mock_wait:
+                    mock_wait.side_effect = asyncio.TimeoutError()
+                    res = asyncio.run(
+                        handle_question(
+                            question="Why learn Python?",
+                            role="student",
+                            is_demo=True,
+                        )
+                    )
+                    assert res["demo_mode"] is True
+                    assert res["model"] == "Rule-Based Offline Intelligence"
