@@ -942,6 +942,7 @@ def list_courses(
     category: str | None = None,
     source: str | None = None,
     status: str | None = None,
+    is_demo: bool | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """List course records directly from Supabase.
@@ -960,6 +961,8 @@ def list_courses(
             query = query.eq("source", source.strip())
         if status and status.lower() != "all":
             query = query.eq("status", status.strip())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
 
         if limit is not None and limit <= 1000:
             res = query.order("id").range(0, limit - 1).execute()
@@ -1035,9 +1038,14 @@ def update_course_repo(course_id: str, updates: dict[str, Any]) -> dict[str, Any
 def delete_course_repo(course_id: str) -> bool:
     """Authoritatively delete a course record from Supabase."""
     try:
+        if not course_id:
+            return False
         client = get_client()
         res = client.table("courses").delete().eq("id", course_id).execute()
         deleted = bool(getattr(res, "data", []))
+        if not deleted:
+            res_cid = client.table("courses").delete().eq("course_id", course_id).execute()
+            deleted = bool(getattr(res_cid, "data", []))
         if deleted:
             logger.info("[SupabaseRepo] Confirmed Supabase deletion for course '%s'", course_id)
         return deleted
@@ -1072,10 +1080,11 @@ def list_industry_signals(
     industry: str | None = None,
     status: str | None = None,
     is_active: bool | None = None,
+    is_demo: bool | None = None,
+    source: str | None = None,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    from app.db import _cache
     try:
         client = get_client()
         query = client.table("industry_signals").select("*")
@@ -1085,32 +1094,28 @@ def list_industry_signals(
             query = query.eq("validation_status", status)
         if is_active is not None:
             query = query.eq("is_active", is_active)
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        if source and source.lower() != "all":
+            query = query.eq("source", source)
 
         res = query.execute()
         signals = getattr(res, "data", []) or []
-        cached_signals = {s.get("id"): s for s in _cache.get("industry_signals", []) if s.get("id")}
-        enriched_signals = []
-        for s in signals:
-            sid = s.get("id")
-            if sid in cached_signals:
-                enriched_signals.append({**cached_signals[sid], **s})
-            else:
-                enriched_signals.append(s)
 
         if industry and industry.lower() != "all":
             ind_lower = industry.lower()
-            enriched_signals = [
-                s for s in enriched_signals
+            signals = [
+                s for s in signals
                 if ind_lower in (s.get("industry") or "").lower()
                 or ind_lower in (s.get("technology") or "").lower()
             ]
 
         if offset > 0:
-            enriched_signals = enriched_signals[offset:]
+            signals = signals[offset:]
         if limit is not None:
-            enriched_signals = enriched_signals[:limit]
+            signals = signals[:limit]
 
-        return enriched_signals
+        return signals
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -1187,6 +1192,8 @@ def update_industry_signal_repo(signal_id: str, updates: dict[str, Any]) -> dict
 def delete_industry_signal_repo(signal_id: str) -> bool:
     """Authoritatively delete an industry signal record from Supabase."""
     try:
+        if not signal_id or not str(signal_id).strip():
+            return False
         client = get_client()
         res = client.table("industry_signals").delete().eq("id", signal_id).execute()
         deleted = bool(getattr(res, "data", []))
@@ -1234,8 +1241,8 @@ def _resolve_canonical_skill_uuid(identifier: str) -> str | None:
             if isinstance(syn, str) and syn.strip().lower() == clean_lower:
                 return str(s_id)
 
-    from app.db import _cache
-    demo_skills = _cache.get("skills", [])
+    from app.db import _cache, get_demo
+    demo_skills = _cache.get("skills") or get_demo("skills") or []
     demo_name = None
     for ds in demo_skills:
         if str(ds.get("id", "")).strip().lower() == clean_lower:
@@ -1258,6 +1265,8 @@ def _resolve_canonical_skill_uuid(identifier: str) -> str | None:
 
 def get_skill_forecast(forecast_id: str) -> dict[str, Any] | None:
     try:
+        if not forecast_id or not str(forecast_id).strip():
+            return None
         client = get_client()
         if not _is_valid_uuid(forecast_id) and not type(client).__name__.startswith("Mock"):
             return None
@@ -1394,6 +1403,8 @@ def update_skill_forecast_repo(forecast_id: str, updates: dict[str, Any]) -> dic
 
 def delete_skill_forecast_repo(forecast_id: str) -> bool:
     try:
+        if not forecast_id or not str(forecast_id).strip():
+            return False
         client = get_client()
         if not _is_valid_uuid(forecast_id) and not type(client).__name__.startswith("Mock"):
             return False

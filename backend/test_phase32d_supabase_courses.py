@@ -444,19 +444,73 @@ def test_11_downstream_intelligence_reflects_supabase_courses():
 
 def test_12_phase32a_phase32b_phase32c_remain_functional():
     """Verify previous migrations (feedback, demands, student data) remain intact and passing."""
-    # Phase 32A Feedback check
     from app.repositories.supabase_repository import list_employer_feedback
     feedbacks = list_employer_feedback()
     assert isinstance(feedbacks, list)
 
-    # Phase 32B Demand check
     from app.repositories.supabase_repository import list_employer_demands
     demands = list_employer_demands()
     assert isinstance(demands, list)
 
-    # Phase 32C Student check
     from app.repositories.supabase_repository import list_student_profiles, list_student_assessments
     profiles = list_student_profiles()
     assessments = list_student_assessments()
     assert isinstance(profiles, list)
     assert isinstance(assessments, list)
+
+
+def test_13_student_cannot_probe_nonexistent_course():
+    fake_id = f"cr-missing-{uuid.uuid4().hex[:8]}"
+    resp_patch = client.patch(f"/api/institute/courses/{fake_id}", json={"name": "Hacked"}, headers=STUDENT_HEADERS)
+    assert resp_patch.status_code == 403
+
+    resp_del = client.delete(f"/api/institute/courses/{fake_id}", headers=STUDENT_HEADERS)
+    assert resp_del.status_code == 403
+
+
+def test_14_delete_course_by_course_id_column():
+    cid = f"cr-col-{uuid.uuid4().hex[:8]}"
+    row = {
+        "id": f"row-{uuid.uuid4().hex[:8]}",
+        "course_id": cid,
+        "name": "Distinct ID Course",
+        "district": "Pune",
+        "category": "Tech",
+        "status": "active",
+        "is_demo": False,
+    }
+    get_client().table("courses").insert(row).execute()
+    assert get_course(cid) is not None
+
+    deleted = delete_course_repo(cid)
+    assert deleted is True
+    assert get_course(cid) is None
+
+
+def test_15_list_courses_with_is_demo_filter():
+    cid_real = f"cr-real-{uuid.uuid4().hex[:8]}"
+    cid_demo = f"cr-demo-{uuid.uuid4().hex[:8]}"
+    get_client().table("courses").insert({
+        "id": cid_real,
+        "name": "Real Course Filter Test",
+        "is_demo": False,
+    }).execute()
+    get_client().table("courses").insert({
+        "id": cid_demo,
+        "name": "Demo Course Filter Test",
+        "is_demo": True,
+    }).execute()
+
+    real_courses = list_courses(is_demo=False)
+    real_ids = [c["id"] for c in real_courses]
+    assert cid_real in real_ids
+    assert cid_demo not in real_ids
+
+    demo_courses = list_courses(is_demo=True)
+    demo_ids = [c["id"] for c in demo_courses]
+    assert cid_demo in demo_ids
+    assert cid_real not in demo_ids
+
+
+def test_16_delete_course_repo_empty_id_returns_false():
+    assert delete_course_repo("") is False

@@ -113,9 +113,8 @@ async def create_institute_course(
             detail="Database persistence failed for course.",
         )
 
-    # Sync cache/local table if cache is active
     try:
-        save_course(course_record)
+        save_course(course_record, sync_repo=False)
     except Exception:
         pass
 
@@ -242,7 +241,7 @@ async def get_institute_course(course_id: str):
 async def update_my_course(
     course_id: str,
     updates: InstituteCourseUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "ADMIN"])),
 ):
     """Update training course record with ownership authorization."""
     try:
@@ -257,9 +256,11 @@ async def update_my_course(
         raise HTTPException(status_code=404, detail=f"Course '{course_id}' not found.")
 
     user_role = (current_user.get("role") or "").upper()
-    is_owner = (
-        matched.get("user_id") == current_user.get("id")
-        or (current_user.get("organization_id") and matched.get("institute_id") == current_user.get("organization_id"))
+    user_id = current_user.get("id")
+    org_id = current_user.get("organization_id")
+    is_owner = bool(
+        (user_id and matched.get("user_id") == user_id)
+        or (org_id and matched.get("institute_id") == org_id)
     )
 
     if user_role != "ADMIN" and not is_owner:
@@ -295,7 +296,7 @@ async def update_my_course(
         )
 
     try:
-        update_course(course_id, patch_data)
+        update_course(course_id, patch_data, sync_repo=False)
     except Exception:
         pass
 
@@ -305,7 +306,7 @@ async def update_my_course(
 @router.delete("/institute/courses/{course_id}")
 async def delete_my_course(
     course_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "ADMIN"])),
 ):
     """Delete training course offering with ownership authorization."""
     try:
@@ -320,9 +321,11 @@ async def delete_my_course(
         raise HTTPException(status_code=404, detail=f"Course '{course_id}' not found.")
 
     user_role = (current_user.get("role") or "").upper()
-    is_owner = (
-        matched.get("user_id") == current_user.get("id")
-        or (current_user.get("organization_id") and matched.get("institute_id") == current_user.get("organization_id"))
+    user_id = current_user.get("id")
+    org_id = current_user.get("organization_id")
+    is_owner = bool(
+        (user_id and matched.get("user_id") == user_id)
+        or (org_id and matched.get("institute_id") == org_id)
     )
 
     if user_role != "ADMIN" and not is_owner:
@@ -340,8 +343,11 @@ async def delete_my_course(
             detail="Database deletion failed for course.",
         )
 
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Course '{course_id}' not found.")
+
     try:
-        delete_course(course_id)
+        delete_course(course_id, sync_repo=False)
     except Exception:
         pass
 

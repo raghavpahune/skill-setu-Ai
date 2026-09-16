@@ -100,7 +100,7 @@ export default function CopilotChat({
   recommendationContext = null,
   autoSend = false,
 }) {
-  const { role: authRole, isAuthenticated } = useAuth();
+  const { role: authRole, isAuthenticated, user } = useAuth();
   const hasAutoSentRef = useRef(false);
 
   const effectiveDefaultRole = useMemo(() => {
