@@ -83,16 +83,18 @@ def test_02_deterministic_calculation_stability():
 
 
 def test_03_validated_employer_demand_influence():
-    base_fc = get_skill_forecast_trajectory("sk-001", is_demo=False)
-    base_proj_24m = base_fc["projected_24m"] if base_fc else 50.0
+    base_fc = get_skill_forecast_trajectory("sk-040", is_demo=False)
+    assert base_fc is not None
+    base_proj_24m = base_fc["projected_24m"]
+    assert base_proj_24m < 100.0
 
     dem_id = f"dem-prod-{uuid.uuid4().hex[:8]}"
     create_employer_demand({
         "id": dem_id,
         "organization_id": "org-prod-001",
         "company_name": "Prod Tech Corp",
-        "job_role": "Python Developer",
-        "required_skills": ["sk-001"],
+        "job_role": "Prompt Engineer",
+        "required_skills": ["Prompt Engineering"],
         "hiring_demand": "CRITICAL",
         "status": "VALIDATED",
         "validation_status": "VALIDATED",
@@ -101,9 +103,9 @@ def test_03_validated_employer_demand_influence():
         "is_active": True,
     })
     try:
-        boosted_fc = get_skill_forecast_trajectory("sk-001", is_demo=False)
+        boosted_fc = get_skill_forecast_trajectory("sk-040", is_demo=False)
         assert boosted_fc is not None
-        assert boosted_fc["projected_24m"] >= base_proj_24m
+        assert boosted_fc["projected_24m"] > base_proj_24m
     finally:
         delete_employer_demand_repo(dem_id)
 
@@ -183,14 +185,16 @@ def test_06_pending_industry_signal_isolation():
 
 
 def test_07_approved_industry_signal_influence():
-    base_fc = get_skill_forecast_trajectory("sk-001", is_demo=False)
-    base_proj_24m = base_fc["projected_24m"] if base_fc else 50.0
+    base_fc = get_skill_forecast_trajectory("sk-040", is_demo=False)
+    assert base_fc is not None
+    base_proj_24m = base_fc["projected_24m"]
+    assert base_proj_24m < 100.0
 
     sig_id = f"sig-appr-{uuid.uuid4().hex[:8]}"
     create_industry_signal({
         "id": sig_id,
-        "title": "Approved Python Expansion",
-        "skills": ["Python"],
+        "title": "Approved Prompt Engineering Expansion",
+        "skills": ["Prompt Engineering"],
         "impact_level": "CRITICAL",
         "validation_status": "APPROVED",
         "is_active": True,
@@ -199,9 +203,9 @@ def test_07_approved_industry_signal_influence():
         "data_provenance": "VERIFIED_EXTERNAL_FEED",
     })
     try:
-        after_fc = get_skill_forecast_trajectory("sk-001", is_demo=False)
+        after_fc = get_skill_forecast_trajectory("sk-040", is_demo=False)
         assert after_fc is not None
-        assert after_fc["projected_24m"] >= base_proj_24m
+        assert after_fc["projected_24m"] > base_proj_24m
     finally:
         delete_industry_signal_repo(sig_id)
 

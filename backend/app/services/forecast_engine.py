@@ -79,7 +79,12 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
             sid = f.get("skill_id")
             if not sid:
                 continue
-            if not is_demo_mode and f.get("is_demo"):
+            if not is_demo_mode and (
+                f.get("is_demo")
+                or f.get("data_provenance") == "DEMO_SYNTHETIC"
+                or f.get("source") == "DEMO_SYNTHETIC"
+                or f.get("source_label") == "DEMO_SYNTHETIC"
+            ):
                 continue
             if sid not in stored_forecasts or f.get("confidence", 0) > stored_forecasts[sid].get("confidence", 0):
                 stored_forecasts[sid] = f

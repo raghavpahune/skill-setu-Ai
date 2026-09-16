@@ -378,23 +378,26 @@ def test_20_repository_delete_empty_returns_false():
 def test_21_repository_list_filter_is_demo_and_source():
     real_id = f"sig-real-{uuid.uuid4().hex[:6]}"
     demo_id = f"sig-demo-{uuid.uuid4().hex[:6]}"
-    create_industry_signal({
-        "id": real_id,
-        "title": "Real Source Filter Test",
-        "is_demo": False,
-        "source": "REAL_SRC",
-        "validation_status": "APPROVED",
-        "is_active": True,
-    })
-    create_industry_signal({
-        "id": demo_id,
-        "title": "Demo Source Filter Test",
-        "is_demo": True,
-        "source": "DEMO_SRC",
-        "validation_status": "APPROVED",
-        "is_active": True,
-    })
+    created_ids = []
     try:
+        create_industry_signal({
+            "id": real_id,
+            "title": "Real Source Filter Test",
+            "is_demo": False,
+            "source": "REAL_SRC",
+            "validation_status": "APPROVED",
+            "is_active": True,
+        })
+        created_ids.append(real_id)
+        create_industry_signal({
+            "id": demo_id,
+            "title": "Demo Source Filter Test",
+            "is_demo": True,
+            "source": "DEMO_SRC",
+            "validation_status": "APPROVED",
+            "is_active": True,
+        })
+        created_ids.append(demo_id)
         real_only = list_industry_signals(is_demo=False)
         demo_only = list_industry_signals(is_demo=True)
         src_only = list_industry_signals(source="REAL_SRC")
@@ -408,8 +411,8 @@ def test_21_repository_list_filter_is_demo_and_source():
         assert any(s["id"] == real_id for s in src_only)
         assert not any(s["id"] == demo_id for s in src_only)
     finally:
-        delete_industry_signal_repo(real_id)
-        delete_industry_signal_repo(demo_id)
+        for cid in created_ids:
+            delete_industry_signal_repo(cid)
 
 
 def test_22_admin_update_signal_supabase_failure_returns_500():
