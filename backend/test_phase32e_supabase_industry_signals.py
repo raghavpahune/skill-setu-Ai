@@ -368,3 +368,70 @@ def test_19_phase32d_courses_regression():
     """Phase 32D courses endpoint remains functional."""
     resp = client.get("/api/courses")
     assert resp.status_code == 200
+
+
+def test_20_repository_delete_empty_returns_false():
+    assert delete_industry_signal_repo("") is False
+    assert delete_industry_signal_repo("   ") is False
+
+
+def test_21_repository_list_filter_is_demo_and_source():
+    real_id = f"sig-real-{uuid.uuid4().hex[:6]}"
+    demo_id = f"sig-demo-{uuid.uuid4().hex[:6]}"
+    create_industry_signal({
+        "id": real_id,
+        "title": "Real Source Filter Test",
+        "is_demo": False,
+        "source": "REAL_SRC",
+        "validation_status": "APPROVED",
+        "is_active": True,
+    })
+    create_industry_signal({
+        "id": demo_id,
+        "title": "Demo Source Filter Test",
+        "is_demo": True,
+        "source": "DEMO_SRC",
+        "validation_status": "APPROVED",
+        "is_active": True,
+    })
+    try:
+        real_only = list_industry_signals(is_demo=False)
+        demo_only = list_industry_signals(is_demo=True)
+        src_only = list_industry_signals(source="REAL_SRC")
+
+        assert any(s["id"] == real_id for s in real_only)
+        assert not any(s["id"] == demo_id for s in real_only)
+
+        assert any(s["id"] == demo_id for s in demo_only)
+        assert not any(s["id"] == real_id for s in demo_only)
+
+        assert any(s["id"] == real_id for s in src_only)
+        assert not any(s["id"] == demo_id for s in src_only)
+    finally:
+        delete_industry_signal_repo(real_id)
+        delete_industry_signal_repo(demo_id)
+
+
+def test_22_admin_update_signal_supabase_failure_returns_500():
+    with patch(
+        "app.routers.admin.get_industry_signal_by_id",
+        side_effect=SupabaseRepositoryError("DB failed"),
+    ):
+        resp = client.patch(
+            "/api/admin/industry/signals/sig-test-fail",
+            json={"validation_status": "APPROVED"},
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 500
+
+
+def test_23_admin_delete_signal_supabase_failure_returns_500():
+    with patch(
+        "app.routers.admin.delete_industry_signal",
+        side_effect=SupabaseRepositoryError("DB failed"),
+    ):
+        resp = client.delete(
+            "/api/admin/industry/signals/sig-test-fail",
+            headers=ADMIN_HEADERS,
+        )
+        assert resp.status_code == 500

@@ -31,7 +31,13 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
         try:
             from app.repositories.supabase_repository import list_jobs, list_job_skills, list_skills, SupabaseRepositoryError
             skills = list_skills(limit=10000) or []
-            jobs = list_jobs(limit=10000) or []
+            raw_jobs = list_jobs(limit=10000) or []
+            jobs = [
+                j for j in raw_jobs
+                if not j.get("is_demo")
+                and j.get("source_label") != "DEMO_SYNTHETIC"
+                and j.get("source") != "DEMO_SYNTHETIC"
+            ]
             job_ids = {j.get("id") for j in jobs if j.get("id")}
             repo_js = list_job_skills(job_ids=list(job_ids)) if job_ids else []
             job_skills = [js for js in (repo_js or []) if js.get("job_id") in job_ids]
@@ -44,15 +50,19 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
             job_skills = []
 
         try:
-            from app.repositories.supabase_repository import list_employer_demands
+            from app.repositories.supabase_repository import list_employer_demands, SupabaseRepositoryError
             employer_demands = list_employer_demands() or []
+        except SupabaseRepositoryError:
+            raise
         except Exception as e:
             logger.warning("[ForecastEngine] Employer demands unavailable: %s", e)
             employer_demands = []
 
         try:
-            from app.repositories.supabase_repository import list_industry_signals as list_industry_signals_repo
+            from app.repositories.supabase_repository import list_industry_signals as list_industry_signals_repo, SupabaseRepositoryError
             industry_signals = list_industry_signals_repo() or []
+        except SupabaseRepositoryError:
+            raise
         except Exception:
             industry_signals = []
 
@@ -69,13 +79,14 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
             sid = f.get("skill_id")
             if not sid:
                 continue
+            if not is_demo_mode and f.get("is_demo"):
+                continue
             if sid not in stored_forecasts or f.get("confidence", 0) > stored_forecasts[sid].get("confidence", 0):
                 stored_forecasts[sid] = f
 
     if not skills:
         return []
 
-    # 1. Calculate Current Job Demand Velocity per skill
     total_jobs = max(1, len(jobs))
     skill_job_counts: dict[str, int] = {}
     for js in job_skills:
@@ -83,7 +94,6 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
         if sid:
             skill_job_counts[sid] = skill_job_counts.get(sid, 0) + 1
 
-    # 2. Calculate Employer Demand Pull (strictly live validated/approved records)
     employer_pull: dict[str, float] = {}
     for ed in employer_demands:
         if not is_live_employer_demand(ed):
@@ -100,23 +110,39 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
             s_name = req_skill.lower()
             employer_pull[s_name] = employer_pull.get(s_name, 0.0) + demand_weight
 
-    # 3. Calculate Industry Signal Acceleration
     signal_impact: dict[str, dict[str, Any]] = {}
     for sig in industry_signals:
-        if sig.get("is_active", True) and sig.get("validation_status") != "REJECTED":
-            impact_factor = {"HIGH": 2.5, "CRITICAL": 3.5, "MEDIUM": 1.5, "LOW": 0.5}.get(
-                str(sig.get("impact_level", "")).upper(), 1.5
-            )
-            for s_name in sig.get("skills", []) + sig.get("tools", []):
-                sn_clean = s_name.lower().strip()
-                if sn_clean not in signal_impact:
-                    signal_impact[sn_clean] = {"score": 0.0, "drivers": [], "titles": []}
-                signal_impact[sn_clean]["score"] += impact_factor
-                driver = f"{sig.get('category', 'INDUSTRY')}: {sig.get('title')}"
-                if driver not in signal_impact[sn_clean]["drivers"]:
-                    signal_impact[sn_clean]["drivers"].append(driver)
-                if sig.get("title") not in signal_impact[sn_clean]["titles"]:
-                    signal_impact[sn_clean]["titles"].append(sig.get("title"))
+        is_active = sig.get("is_active") is not False
+        if not is_active:
+            continue
+        if not is_demo_mode:
+            if (
+                sig.get("is_demo")
+                or sig.get("source") == "DEMO_SYNTHETIC"
+                or sig.get("source_label") == "DEMO_SYNTHETIC"
+                or sig.get("source_type") == "DEMO_SYNTHETIC"
+                or sig.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                continue
+            if sig.get("validation_status") != "APPROVED":
+                continue
+        else:
+            if sig.get("validation_status") == "REJECTED":
+                continue
+
+        impact_factor = {"HIGH": 2.5, "CRITICAL": 3.5, "MEDIUM": 1.5, "LOW": 0.5}.get(
+            str(sig.get("impact_level", "")).upper(), 1.5
+        )
+        for s_name in sig.get("skills", []) + sig.get("tools", []):
+            sn_clean = s_name.lower().strip()
+            if sn_clean not in signal_impact:
+                signal_impact[sn_clean] = {"score": 0.0, "drivers": [], "titles": []}
+            signal_impact[sn_clean]["score"] += impact_factor
+            driver = f"{sig.get('category', 'INDUSTRY')}: {sig.get('title')}"
+            if driver not in signal_impact[sn_clean]["drivers"]:
+                signal_impact[sn_clean]["drivers"].append(driver)
+            if sig.get("title") not in signal_impact[sn_clean]["titles"]:
+                signal_impact[sn_clean]["titles"].append(sig.get("title"))
 
     forecast_results = []
 
@@ -198,6 +224,8 @@ def compute_multi_horizon_forecasts(is_demo: bool | None = None) -> list[dict[st
             "confidence_score": confidence,
             "key_drivers": drivers,
             "related_signals": sig_data["titles"][:3],
+            "is_demo": is_demo_mode,
+            "data_provenance": "DEMO_SYNTHETIC" if is_demo_mode else "AUTHORITATIVE_PROJECTION",
             "horizon_breakdown": {
                 "6_months": {"score": proj_6m, "demand_level": "CRITICAL" if proj_6m > 80 else ("HIGH" if proj_6m > 60 else "MEDIUM")},
                 "12_months": {"score": proj_12m, "demand_level": "CRITICAL" if proj_12m > 85 else ("HIGH" if proj_12m > 65 else "MEDIUM")},

@@ -719,7 +719,7 @@ async def update_admin_course(course_id: str, data: AdminCourseUpdate):
         )
 
     try:
-        update_course(course_id, updates)
+        update_course(course_id, updates, sync_repo=False)
     except Exception:
         pass
 
@@ -749,7 +749,7 @@ async def delete_admin_course(course_id: str):
 
     if deleted:
         try:
-            delete_course(course_id)
+            delete_course(course_id, sync_repo=False)
         except Exception:
             pass
         return {
@@ -909,7 +909,11 @@ async def list_admin_industry_signals(
 @router.patch("/admin/industry/signals/{signal_id}", dependencies=[Depends(verify_admin_key)])
 async def update_admin_industry_signal(signal_id: str, updates: IndustrySignalAdminUpdate):
     """Admin endpoint to approve, reject, archive, activate, or edit an industry signal."""
-    matched = get_industry_signal_by_id(signal_id)
+    try:
+        matched = get_industry_signal_by_id(signal_id)
+    except SupabaseRepositoryError as e:
+        logger.exception("[AdminSignals] Failed querying signal: %s", e)
+        raise HTTPException(status_code=500, detail="Industry signals database unavailable.")
     if not matched:
         raise HTTPException(status_code=404, detail=f"Industry signal '{signal_id}' not found.")
 
@@ -920,13 +924,16 @@ async def update_admin_industry_signal(signal_id: str, updates: IndustrySignalAd
     now_iso = datetime.now(timezone.utc).isoformat()
     patch_dict["updated_at"] = now_iso
 
-    # Recalculate freshness if status or active flag updated
     is_act = patch_dict.get("is_active", matched.get("is_active", True))
     val_st = patch_dict.get("validation_status", matched.get("validation_status", "APPROVED"))
     pub = matched.get("published_at") or now_iso
     patch_dict["freshness"] = calculate_freshness(pub, is_act, val_st)
 
-    updated = update_industry_signal(signal_id, patch_dict)
+    try:
+        updated = update_industry_signal(signal_id, patch_dict)
+    except SupabaseRepositoryError as e:
+        logger.exception("[AdminSignals] Failed updating signal: %s", e)
+        raise HTTPException(status_code=500, detail="Industry signals database update failed.")
     return {
         "status": "success",
         "message": f"Industry signal '{signal_id}' updated.",
@@ -937,7 +944,11 @@ async def update_admin_industry_signal(signal_id: str, updates: IndustrySignalAd
 @router.delete("/admin/industry/signals/{signal_id}", dependencies=[Depends(verify_admin_key)])
 async def delete_admin_industry_signal(signal_id: str):
     """Admin endpoint to permanently delete an industry signal record."""
-    deleted = delete_industry_signal(signal_id)
+    try:
+        deleted = delete_industry_signal(signal_id)
+    except SupabaseRepositoryError as e:
+        logger.exception("[AdminSignals] Failed deleting signal: %s", e)
+        raise HTTPException(status_code=500, detail="Industry signals database delete failed.")
     if deleted:
         return {
             "status": "success",
