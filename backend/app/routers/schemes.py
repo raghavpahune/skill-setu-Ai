@@ -40,7 +40,7 @@ async def list_schemes(
     else:
         try:
             from app.repositories.supabase_repository import list_schemes as list_schemes_repo
-            schemes = list_schemes_repo(scheme_type=scheme_type, status=status, limit=1000) or []
+            schemes = list_schemes_repo(scheme_type=scheme_type, limit=1000) or []
         except SupabaseRepositoryError as e:
             logger.warning("[Schemes] Supabase unavailable: %s", e)
             raise HTTPException(
@@ -56,13 +56,15 @@ async def list_schemes(
         if is_demo is False:
             if s.get("is_demo") is True or s.get("source") == "DEMO_SYNTHETIC" or s.get("data_provenance") == "DEMO_SYNTHETIC":
                 continue
-
-        if status:
-            s_status = s.get("status", "active").lower()
-            if _is_expired(s.get("deadline_date")) and s_status == "active":
-                s_status = "closed"
-            if s_status != status.lower():
+            if s.get("verification_status") == "REJECTED" or s.get("status") == "rejected":
                 continue
+
+        eff_status = (s.get("status") or "active").lower()
+        if _is_expired(s.get("deadline_date")) and eff_status == "active":
+            eff_status = "closed"
+
+        if status and eff_status != status.lower():
+            continue
 
         # Beneficiary category filter (e.g. SC, ST, OBC, EWS, Women)
         if category:
@@ -235,6 +237,8 @@ async def recommended_schemes(
                     if s.get("is_demo") is not True
                     and s.get("source") != "DEMO_SYNTHETIC"
                     and s.get("data_provenance") != "DEMO_SYNTHETIC"
+                    and s.get("verification_status") != "REJECTED"
+                    and s.get("status") != "rejected"
                 ]
             else:
                 schemes = db_schemes or []
@@ -319,7 +323,13 @@ async def get_scheme(scheme_id: str, is_demo: bool | None = None):
         from app.repositories.supabase_repository import get_scheme as get_scheme_repo
         record = get_scheme_repo(scheme_id)
         if record:
-            if record.get("is_demo") is True or record.get("source") == "DEMO_SYNTHETIC" or record.get("data_provenance") == "DEMO_SYNTHETIC":
+            if is_demo is False and (
+                record.get("is_demo") is True
+                or record.get("source") == "DEMO_SYNTHETIC"
+                or record.get("data_provenance") == "DEMO_SYNTHETIC"
+                or record.get("verification_status") == "REJECTED"
+                or record.get("status") == "rejected"
+            ):
                 raise HTTPException(status_code=404, detail="Scheme not found")
             return record
     except HTTPException:

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -54,25 +55,9 @@ async def create_gov_opportunity(
     current_user: dict = Depends(require_roles(["GOVERNMENT", "ADMIN"])),
 ):
     now_iso = datetime.now(timezone.utc).isoformat()
-    target_name = data.name.strip().lower()
-    target_dept = data.department.strip().lower()
-    existing_match = None
-    try:
-        from app.repositories.supabase_repository import list_gov_opportunities as list_gov_opps_repo
-        existing_opps = list_gov_opps_repo(limit=1000) or []
-        for eo in existing_opps:
-            if (eo.get("name") or "").strip().lower() == target_name and (eo.get("department") or "").strip().lower() == target_dept:
-                existing_match = eo
-                break
-    except Exception:
-        existing_match = None
-
-    if existing_match and existing_match.get("id"):
-        opp_id = existing_match["id"]
-        created_at = existing_match.get("created_at") or now_iso
-    else:
-        opp_id = f"gov-{uuid.uuid4().hex[:8]}"
-        created_at = now_iso
+    clean_name = data.name.strip().lower()
+    clean_dept = data.department.strip().lower()
+    opp_id = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
 
     coverage = data.district_coverage
     if isinstance(coverage, str):
@@ -93,7 +78,7 @@ async def create_gov_opportunity(
         "source": "USER_SUBMITTED",
         "data_provenance": "GOVERNMENT_OFFICIAL",
         "is_demo": False,
-        "created_at": created_at,
+        "created_at": now_iso,
         "updated_at": now_iso,
         "user_id": current_user.get("id"),
         "user_email": current_user.get("email"),
@@ -131,6 +116,7 @@ def _is_authoritative_gov_opp(o: dict) -> bool:
         and o.get("source_type") not in ("SANDBOX_SIMULATION", "DEMO_SYNTHETIC")
         and o.get("source") != "DEMO_SYNTHETIC"
         and o.get("data_provenance") != "DEMO_SYNTHETIC"
+        and o.get("verification_status") != "REJECTED"
         and (
             o.get("data_provenance") in ("GOVERNMENT_OFFICIAL", "VERIFIED_SNAPSHOT")
             or o.get("source") in ("DATAGOV_IN", "OGD_DATAGOV_IN", "USER_SUBMITTED", "ADMIN_CREATED")

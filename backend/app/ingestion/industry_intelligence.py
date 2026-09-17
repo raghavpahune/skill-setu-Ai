@@ -384,6 +384,7 @@ class IndustryIntelligenceIngestor:
         }
 
     def fetch_external_feeds(self, timeout: float = 10.0) -> list[dict[str, Any]]:
+        self._last_fetch_errors = []
         feed_sources = [
             {
                 "url": "https://peps.python.org/peps.rss",
@@ -404,6 +405,7 @@ class IndustryIntelligenceIngestor:
                 "default_tools": ["Kubernetes", "Docker", "Prometheus"],
             },
         ]
+        self._configured_feed_count = len(feed_sources)
         fetched_items = []
         for src in feed_sources:
             try:
@@ -414,8 +416,13 @@ class IndustryIntelligenceIngestor:
                     follow_redirects=True,
                 )
                 if resp.status_code != 200:
+                    self._last_fetch_errors.append(f"HTTP {resp.status_code} from {src['url']}")
                     continue
-                root = ET.fromstring(resp.text)
+                try:
+                    root = ET.fromstring(resp.text)
+                except Exception as parse_ex:
+                    self._last_fetch_errors.append(f"Invalid XML from {src['url']}: {parse_ex}")
+                    continue
                 items = root.findall(".//item")
                 for it in items[:10]:
                     title_elem = it.find("title")
@@ -433,16 +440,26 @@ class IndustryIntelligenceIngestor:
                         clean_desc = f"{title} - Official release announcement from {src['source_name']}."
 
                     published_at = None
+                    valid_date = False
                     if pub_date_elem is not None and pub_date_elem.text:
                         try:
                             parsed_dt = email.utils.parsedate_to_datetime(pub_date_elem.text.strip())
                             if parsed_dt.tzinfo is None:
                                 parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
                             published_at = parsed_dt.isoformat()
+                            valid_date = True
                         except Exception:
-                            published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    if not published_at:
-                        published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                            valid_date = False
+
+                    if valid_date:
+                        val_status = STATUS_APPROVED
+                        data_prov = "VERIFIED_EXTERNAL_FEED"
+                        is_active_flag = True
+                    else:
+                        published_at = None
+                        val_status = STATUS_PENDING
+                        data_prov = "UNVERIFIED_EXTERNAL_SOURCE"
+                        is_active_flag = False
 
                     ext_id = f"ext-{hashlib.sha256(link.encode('utf-8')).hexdigest()[:12]}"
 
@@ -479,14 +496,16 @@ class IndustryIntelligenceIngestor:
                         "source_url": link,
                         "source_name": src["source_name"],
                         "source_type": src["source_type"],
-                        "data_provenance": "VERIFIED_EXTERNAL_FEED",
-                        "validation_status": STATUS_APPROVED,
+                        "data_provenance": data_prov,
+                        "validation_status": val_status,
                         "is_demo": False,
                         "published_at": published_at,
+                        "is_active": is_active_flag,
                         "external_id": ext_id,
                     })
             except Exception as e:
                 logger.warning("Failed fetching feed from %s: %s", src["url"], e)
+                self._last_fetch_errors.append(f"Failed fetching {src['url']}: {e}")
                 continue
         return fetched_items
 
@@ -499,38 +518,38 @@ class IndustryIntelligenceIngestor:
                 or raw_data.get("data_provenance") == "DEMO_SYNTHETIC"
             )
             if is_demo_rec:
-                return None, "Synthetic demo records cannot be ingested in real mode"
+                return None, "Real mode rejects synthetic/demo industry signals."
 
         try:
             submission = IndustrySignalSubmission(**raw_data)
         except Exception as e:
-            return None, f"Validation error: {e}"
+            return None, f"Schema validation failed: {e}"
 
-        sig_id = submission.external_id or f"sig-{generate_signal_signature(submission.title, submission.source_url, submission.source_name)}"
-        published_at = submission.published_at or datetime.datetime.now(datetime.timezone.utc).isoformat()
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
+        sig_id = str(raw_data.get("id") or raw_data.get("external_id") or f"ind-sig-{uuid.uuid4().hex[:10]}")
         is_demo = bool(raw_data.get("is_demo") or raw_data.get("source_label") == "DEMO_SYNTHETIC" or raw_data.get("source_type") == "DEMO_SYNTHETIC" or raw_data.get("data_provenance") == "DEMO_SYNTHETIC")
         data_provenance = str(raw_data.get("data_provenance") or ("DEMO_SYNTHETIC" if is_demo else "UNVERIFIED_EXTERNAL_SOURCE"))
+        published_at = raw_data.get("published_at") or (now_iso if data_provenance == "LIVE_API" else None)
         val_status = str(raw_data.get("validation_status") or submission.validation_status)
         if data_provenance == "UNVERIFIED_EXTERNAL_SOURCE":
             val_status = STATUS_PENDING
             is_active_flag = False
         else:
-            is_active_flag = submission.is_active
+            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else submission.is_active
 
         freshness = calculate_freshness(published_at, is_active_flag, val_status)
 
         normalized_record: dict[str, Any] = {
             "id": sig_id,
-            "title": submission.title.strip(),
-            "description": submission.description.strip(),
+            "title": submission.title,
+            "description": submission.description,
             "category": submission.category,
-            "industry": submission.industry.strip(),
-            "skills": [s.strip() for s in submission.skills if s.strip()],
-            "tools": [t.strip() for t in submission.tools if t.strip()],
-            "source_url": submission.source_url.strip(),
-            "source_name": submission.source_name.strip(),
+            "industry": submission.industry,
+            "skills": submission.skills,
+            "tools": submission.tools,
+            "signature": generate_signal_signature(submission.title, str(submission.source_url), submission.source_name),
+            "source_url": str(submission.source_url),
+            "source_name": submission.source_name,
             "source_type": submission.source_type,
             "published_at": published_at,
             "collected_at": raw_data.get("collected_at") or now_iso,
@@ -540,13 +559,12 @@ class IndustryIntelligenceIngestor:
             "is_demo": is_demo,
             "data_provenance": data_provenance,
             "freshness": freshness,
-            "signature": generate_signal_signature(submission.title, submission.source_url, submission.source_name),
+            "growth_rate_pct": raw_data.get("growth_rate_pct"),
+            "region": raw_data.get("region"),
+            "sample_size": raw_data.get("sample_size"),
+            "external_id": raw_data.get("external_id") or sig_id,
             "is_ai_processed": False,
             "ai_metadata": None,
-            "technology": submission.industry,
-            "summary": submission.description,
-            "impact_level": "high",
-            "signal_date": published_at[:10],
             "source": submission.source_name,
         }
 
@@ -555,7 +573,8 @@ class IndustryIntelligenceIngestor:
                 normalized_record["is_ai_processed"] = True
                 normalized_record["ai_metadata"] = {
                     "summarized": True,
-                    "extracted_skills_count": len(normalized_record["skills"]),
+                    "model": settings.gemini_model,
+                    "processed_at": now_iso,
                 }
             except Exception as e:
                 logger.warning("Optional AI processing bypassed: %s", e)
@@ -583,35 +602,40 @@ class IndustryIntelligenceIngestor:
             feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
 
         if not feed_data:
+            fetch_errors = getattr(self, "_last_fetch_errors", [])
+            configured_count = getattr(self, "_configured_feed_count", 2)
+            has_failed_sources = feeds is None and bool(fetch_errors) and len(fetch_errors) >= configured_count
+            log_status = "FAILED" if has_failed_sources else "NO_DATA"
+            err_msg = "; ".join(fetch_errors) if has_failed_sources else None
             summary = {
-                "status": "NO_DATA",
+                "status": log_status,
                 "last_run": now_iso,
                 "records_fetched": 0,
                 "records_added": 0,
                 "records_updated": 0,
                 "records_duplicated": 0,
                 "records_rejected": 0,
-                "errors": [],
+                "errors": fetch_errors if has_failed_sources else [],
             }
             self._last_ingest_summary = summary
             save_sync_log({
                 "id": str(uuid.uuid4()),
                 "source_name": "industry_signals",
                 "job_type": "automated_industry_signal_ingestion",
-                "status": "NO_DATA",
+                "status": log_status,
                 "records_fetched": 0,
                 "records_added": 0,
                 "records_updated": 0,
                 "records_skipped": 0,
-                "error_message": None,
+                "error_message": err_msg,
                 "started_at": now_iso,
                 "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "duration_ms": 0,
                 "is_demo": False if is_demo is False else True,
                 "sources_detail": {
                     "industry_signals": {
-                        "status": "NO_DATA",
-                        "error": None,
+                        "status": log_status,
+                        "error": err_msg,
                         "records_fetched": 0,
                         "records_added": 0,
                         "records_updated": 0,
@@ -658,6 +682,9 @@ class IndustryIntelligenceIngestor:
                         "tools": normalized["tools"],
                         "updated_at": now_iso,
                         "freshness": normalized["freshness"],
+                        "data_provenance": normalized["data_provenance"],
+                        "validation_status": normalized["validation_status"],
+                        "is_active": normalized["is_active"],
                     })
                     update_industry_signal(matched["id"], matched)
                     updated += 1

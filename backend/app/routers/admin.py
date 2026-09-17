@@ -1,6 +1,7 @@
 """Admin Data Management API — inspection, filtering, aggregate analytics, and management of student assessments, employer demands, and government opportunities."""
 from collections import Counter
 from datetime import datetime, timezone
+import hashlib
 import logging
 from typing import Any
 import uuid
@@ -473,7 +474,7 @@ async def list_admin_gov_opportunities(
     else:
         try:
             from app.repositories.supabase_repository import list_gov_opportunities
-            raw_records = list_gov_opportunities(limit=1000) or []
+            raw_records = list_gov_opportunities(limit=1000, is_demo=False) or []
         except SupabaseRepositoryError as e:
             logger.exception("[AdminGovOpportunities] Repository failure loading opportunities: %s", e)
             raise HTTPException(
@@ -560,22 +561,10 @@ async def list_admin_gov_opportunities(
 
 @router.post("/admin/gov/opportunities", dependencies=[Depends(verify_admin_key)])
 async def create_admin_gov_opportunity(data: GovOpportunityCreate):
-    opp_id = None
+    clean_name = (data.name or "").strip().lower()
+    clean_dept = (data.department or "").strip().lower()
+    opp_id = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
     now_iso = datetime.now(timezone.utc).isoformat()
-    try:
-        from app.repositories.supabase_repository import list_gov_opportunities
-        existing_opps = list_gov_opportunities(limit=1000) or []
-        target_name = data.name.strip().lower()
-        target_dept = data.department.strip().lower()
-        for eo in existing_opps:
-            if (eo.get("name") or "").strip().lower() == target_name and (eo.get("department") or "").strip().lower() == target_dept:
-                opp_id = eo.get("id")
-                break
-    except Exception:
-        opp_id = None
-
-    if not opp_id:
-        opp_id = f"gov-{uuid.uuid4().hex[:8]}"
 
     record = {
         "id": opp_id,
@@ -619,8 +608,11 @@ async def update_admin_gov_opportunity(opp_id: str, data: GovOpportunityUpdate):
 
     updates["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
+    from app.repositories.supabase_repository import GovOpportunityNotFoundError
     try:
         updated = update_gov_opportunity(opp_id, updates)
+    except GovOpportunityNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Government opportunity '{opp_id}' not found.")
     except Exception as e:
         logger.exception("[AdminGovOpportunities] Failed updating opportunity: %s", e)
         raise HTTPException(

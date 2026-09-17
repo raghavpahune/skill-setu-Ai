@@ -360,7 +360,7 @@ def test_supabase_failure_propagation_fail_closed():
         assert res_types.status_code == 503
 
         res_rec = client.get("/api/gov/opportunities/recommended/stu-001?is_demo=false")
-        assert res_rec.status_code in (500, 503)
+        assert res_rec.status_code == 503
 
     with patch("app.repositories.supabase_repository.get_gov_opportunity", side_effect=SupabaseRepositoryError("DB read error")):
         res_get = client.get("/api/gov/opportunities/gov-some-id?is_demo=false")
@@ -549,3 +549,153 @@ def test_industry_signals_real_external_ingestion_and_provenance():
     assert norm["data_provenance"] == "UNVERIFIED_EXTERNAL_SOURCE"
     assert norm["validation_status"] == "PENDING"
     assert norm["is_active"] is False
+
+
+def test_industry_signals_all_sources_failed_reports_failure():
+    from unittest.mock import patch, MagicMock
+    from app.ingestion.industry_intelligence import industry_ingestor
+
+    fake_err_resp = MagicMock()
+    fake_err_resp.status_code = 503
+
+    with patch("app.ingestion.industry_intelligence.httpx.get", return_value=fake_err_resp):
+        summary = industry_ingestor.ingest_from_feeds(is_demo=False)
+        assert summary["status"] == "FAILED"
+        assert len(summary["errors"]) >= 1
+
+
+def test_industry_signals_missing_pubdate_becomes_pending_and_unverified():
+    from unittest.mock import patch, MagicMock
+    from app.ingestion.industry_intelligence import industry_ingestor
+
+    xml_no_pubdate = """<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Python PEPs</title>
+        <link>https://peps.python.org</link>
+        <item>
+          <title>PEP 1000: Quantum Typing System</title>
+          <link>https://peps.python.org/pep-1000/</link>
+          <description>Quantum typing specifications for next-gen runtime.</description>
+        </item>
+      </channel>
+    </rss>"""
+
+    fake_resp = MagicMock()
+    fake_resp.status_code = 200
+    fake_resp.text = xml_no_pubdate
+
+    with patch("app.ingestion.industry_intelligence.httpx.get", return_value=fake_resp):
+        items = industry_ingestor.fetch_external_feeds()
+        assert len(items) >= 1
+        item = items[0]
+        assert item["validation_status"] == "PENDING"
+        assert item["is_active"] is False
+        assert item["data_provenance"] == "UNVERIFIED_EXTERNAL_SOURCE"
+        assert item["published_at"] is None
+
+
+def test_industry_signals_existing_signal_update_propagates_trust_fields():
+    from app.ingestion.industry_intelligence import industry_ingestor
+    from app.db import save_industry_signal, get_industry_signal_by_id
+
+    initial_sig = {
+        "id": "ind-sig-trust-test-1",
+        "title": "Autonomous Robotics Framework",
+        "description": "Initial draft robotics framework",
+        "category": "TOOL_RELEASE",
+        "industry": "Robotics",
+        "skills": ["Robotics"],
+        "tools": ["ROS"],
+        "source_url": "https://robotics.example.com/v1",
+        "source_name": "Robotics Org",
+        "source_type": "TECH_DOCUMENTATION",
+        "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
+        "validation_status": "PENDING",
+        "is_active": False,
+        "is_demo": False,
+    }
+    save_industry_signal(initial_sig)
+
+    verified_update = [
+        {
+            "id": "ind-sig-trust-test-1",
+            "title": "Autonomous Robotics Framework",
+            "description": "Updated approved robotics framework specifications",
+            "category": "TOOL_RELEASE",
+            "industry": "Robotics",
+            "skills": ["Robotics", "ROS 2"],
+            "tools": ["ROS", "Gazebo"],
+            "source_url": "https://robotics.example.com/v1",
+            "source_name": "Robotics Org",
+            "source_type": "TECH_DOCUMENTATION",
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "validation_status": "APPROVED",
+            "is_active": True,
+            "is_demo": False,
+            "published_at": "2026-09-17T00:00:00Z",
+        }
+    ]
+
+    summary = industry_ingestor.ingest_from_feeds(feeds=verified_update, is_demo=False)
+    assert summary["records_updated"] >= 1
+
+    updated_rec = get_industry_signal_by_id("ind-sig-trust-test-1")
+    assert updated_rec is not None
+    assert updated_rec["data_provenance"] == "VERIFIED_EXTERNAL_FEED"
+    assert updated_rec["validation_status"] == "APPROVED"
+    assert updated_rec["is_active"] is True
+
+
+def test_admin_update_gov_opportunity_not_found_returns_404():
+    res = client.patch(
+        "/api/admin/gov/opportunities/gov-missing-id-9999",
+        json={"status": "inactive"},
+        headers={"X-Admin-Key": ADMIN_KEY},
+    )
+    assert res.status_code == 404
+
+
+def test_rejected_scheme_excluded_from_listing_and_detail():
+    scheme_data = {
+        "id": "55555555-5555-5555-5555-555555555555",
+        "scheme_code": "SCH-REJ-TEST-12",
+        "title": "Rejected Grant Scheme Detail",
+        "department": "Higher Education",
+        "scheme_type": "scholarship",
+        "benefit_description": "Grant for students",
+        "status": "rejected",
+        "verification_status": "REJECTED",
+        "source": "OGD_DATAGOV_IN",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    create_scheme(scheme_data)
+
+    res_list = client.get("/api/schemes?is_demo=false")
+    assert res_list.status_code == 200
+    matched_codes = [s.get("scheme_code") for s in res_list.json()]
+    assert "SCH-REJ-TEST-12" not in matched_codes
+
+    res_detail = client.get("/api/schemes/SCH-REJ-TEST-12?is_demo=false")
+    assert res_detail.status_code == 404
+
+
+def test_gov_opportunity_district_pagination_filtering():
+    for i in range(15):
+        opp = {
+            "id": f"gov-dist-pune-{i}",
+            "name": f"Pune Trainee Skill Opportunity {i}",
+            "department": "Technical Education",
+            "description": f"Training course number {i}",
+            "district_coverage": ["Pune"],
+            "opportunity_type": "APPRENTICESHIP",
+            "status": "active",
+            "source": "GOVERNMENT_OFFICIAL",
+            "data_provenance": "GOVERNMENT_OFFICIAL",
+            "is_demo": False,
+        }
+        create_gov_opportunity(opp)
+
+    paged = list_gov_opportunities(district="Pune", limit=5, offset=2)
+    assert len(paged) == 5

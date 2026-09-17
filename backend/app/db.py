@@ -769,18 +769,19 @@ def save_gov_opportunity(data: dict) -> dict:
     data["is_demo"] = False
 
     from app.repositories.supabase_repository import create_gov_opportunity
-    create_gov_opportunity(data)
+    persisted = create_gov_opportunity(data)
+    merged = {**data, **persisted}
 
     records = _cache.setdefault("gov_opportunities", [])
-    gid = data.get("id")
+    gid = merged.get("id")
     existing_idx = next((i for i, g in enumerate(records) if gid and g.get("id") == gid), None)
     if existing_idx is not None:
-        records[existing_idx] = data
+        records[existing_idx] = merged
     else:
-        records.insert(0, data)
+        records.insert(0, merged)
     _flush_real_table("gov_opportunities")
 
-    return data
+    return merged
 
 
 def update_gov_opportunity(opp_id: str, updates: dict) -> dict | None:

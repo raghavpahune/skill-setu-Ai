@@ -1692,7 +1692,7 @@ VALID_SCHEME_COLUMNS: set[str] = {
     "deadline_date", "status", "source", "source_label", "source_type", "source_url", "resource_id", "external_id",
     "last_synced_at", "fetched_at", "published_at", "snapshot_captured_at", "last_seen_at", "verified_at", "verification_status",
     "verification_method", "content_hash", "freshness_status",
-    "is_demo", "is_snapshot", "created_at",
+    "is_demo", "is_snapshot", "created_at", "data_provenance", "target_skills",
 }
 
 
@@ -1855,7 +1855,9 @@ VALID_GOV_OPPORTUNITY_COLUMNS: set[str] = {
     "deadline",
     "status",
     "source",
+    "source_type",
     "data_provenance",
+    "verification_status",
     "is_demo",
     "user_id",
     "user_email",
@@ -1896,10 +1898,10 @@ def list_gov_opportunities(
         if is_demo is not None:
             query = query.eq("is_demo", is_demo)
 
-        if limit is not None and limit <= 1000:
-            res = query.order("id").range(offset, offset + limit - 1).execute()
-            data = getattr(res, "data", []) or []
-        else:
+        if not district or district.lower() == "all":
+            if limit is not None and limit <= 1000:
+                res = query.order("id").range(offset, offset + limit - 1).execute()
+                return getattr(res, "data", []) or []
             all_opps = []
             page_size = 1000
             curr_offset = offset
@@ -1911,22 +1913,35 @@ def list_gov_opportunities(
                 if len(batch) < fetch_size or (limit is not None and len(all_opps) >= limit):
                     break
                 curr_offset += fetch_size
-            data = all_opps
+            return all_opps
 
-        if district and district.lower() != "all":
-            d_clean = district.lower()
-            filtered = []
-            for r in data:
+        d_clean = district.lower()
+        matched_opps = []
+        skipped = 0
+        curr_offset = 0
+        page_size = 100
+        while True:
+            res = query.order("id").range(curr_offset, curr_offset + page_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            if not batch:
+                break
+            for r in batch:
                 coverage = r.get("district_coverage", "")
                 if isinstance(coverage, list):
                     districts = [d.lower() for d in coverage]
                 else:
                     districts = [coverage.lower()] if coverage else []
                 if d_clean in districts or any("state-wide" in d or "maharashtra" in d or d == "all" for d in districts):
-                    filtered.append(r)
-            return filtered
-
-        return data
+                    if skipped < offset:
+                        skipped += 1
+                    else:
+                        matched_opps.append(r)
+                        if limit is not None and len(matched_opps) >= limit:
+                            return matched_opps
+            if len(batch) < page_size:
+                break
+            curr_offset += page_size
+        return matched_opps
     except SupabaseRepositoryError:
         raise
     except Exception as e:
