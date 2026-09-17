@@ -124,4 +124,5 @@ BEGIN
 END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_gov_opportunities_canonical_key
-ON gov_opportunities (lower(trim(name)), lower(trim(coalesce(department, ''))));
+ON gov_opportunities (lower(trim(name)), lower(trim(coalesce(department, ''))))
+WHERE name IS NOT NULL AND trim(name) <> '';

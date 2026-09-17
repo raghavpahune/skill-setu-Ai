@@ -1058,10 +1058,134 @@ def test_create_upsert_cannot_recreate_duplicate_canonical_opportunity():
 def test_sql_migration_file_exists_and_valid():
     from pathlib import Path
 
-    mig_file = Path("data/migrations/20260917_reconcile_gov_opportunity_canonical_ids.sql")
+    repo_root = Path(__file__).resolve().parent.parent
+    mig_file = repo_root / "data" / "migrations" / "20260917_reconcile_gov_opportunity_canonical_ids.sql"
     assert mig_file.exists()
     content = mig_file.read_text(encoding="utf-8")
     assert "canonical_gov_opportunity_id" in content
     assert "idx_gov_opportunities_canonical_key" in content
     assert "sha256" in content
     assert "CREATE UNIQUE INDEX IF NOT EXISTS" in content
+    assert "WHERE name IS NOT NULL AND trim(name) <> ''" in content
+
+
+def test_save_gov_opportunity_multiple_cache_matches_dedup():
+    from app.db import _cache, save_gov_opportunity
+    from app.repositories.supabase_repository import generate_gov_opportunity_id
+
+    records = _cache.setdefault("gov_opportunities", [])
+    test_name = "Precision Drone Inspection Fellowship"
+    test_dept = "Civil Aviation"
+    canonical_id = generate_gov_opportunity_id(test_name, test_dept)
+
+    records.insert(0, {
+        "id": "unrelated-gov-1",
+        "name": "Unrelated Opportunity",
+        "department": "Other Dept",
+        "description": "Keep me",
+        "status": "active",
+        "is_demo": False,
+    })
+    records.insert(1, {
+        "id": "legacy-id-dup-1",
+        "name": "precision drone inspection fellowship",
+        "department": "civil aviation",
+        "description": "Legacy duplicate 1",
+        "status": "active",
+        "is_demo": False,
+    })
+    records.insert(2, {
+        "id": "middle-unrelated",
+        "name": "Middle Unrelated",
+        "department": "Other Dept",
+        "description": "Keep me too",
+        "status": "active",
+        "is_demo": False,
+    })
+    records.insert(3, {
+        "id": canonical_id,
+        "name": test_name,
+        "department": test_dept,
+        "description": "Legacy duplicate 2",
+        "status": "pending",
+        "is_demo": False,
+    })
+
+    incoming = {
+        "name": test_name,
+        "department": test_dept,
+        "description": "Authoritative merged description",
+        "district_coverage": ["Pune"],
+        "status": "active",
+    }
+    saved = save_gov_opportunity(incoming)
+    assert saved["id"] == canonical_id
+    assert saved["description"] == "Authoritative merged description"
+
+    matching_in_cache = [r for r in records if r.get("id") == canonical_id]
+    assert len(matching_in_cache) == 1
+    assert matching_in_cache[0]["description"] == "Authoritative merged description"
+
+    name_matches = [
+        r for r in records
+        if (r.get("name") or "").strip().lower() == test_name.lower()
+        and (r.get("department") or "").strip().lower() == test_dept.lower()
+    ]
+    assert len(name_matches) == 1
+
+    assert any(r.get("id") == "unrelated-gov-1" for r in records)
+    assert any(r.get("id") == "middle-unrelated" for r in records)
+    assert not any(r.get("id") == "legacy-id-dup-1" for r in records)
+
+
+def test_update_gov_opportunity_repo_name_department_and_canonical_id():
+    from app.repositories.supabase_repository import (
+        create_gov_opportunity,
+        get_gov_opportunity,
+        update_gov_opportunity_repo,
+        generate_gov_opportunity_id,
+        GovOpportunityNotFoundError,
+    )
+
+    initial_name = "Automated Warehousing Apprenticeship"
+    initial_dept = "Logistics Council"
+    initial_id = generate_gov_opportunity_id(initial_name, initial_dept)
+
+    opp = create_gov_opportunity({
+        "id": initial_id,
+        "name": initial_name,
+        "department": initial_dept,
+        "description": "Warehousing logistics tech training",
+        "status": "active",
+        "target_skills": ["Supply Chain", "Automation"],
+        "is_demo": False,
+    })
+    assert opp["id"] == initial_id
+
+    new_name = "Smart Robotics Warehousing Apprenticeship"
+    new_id = generate_gov_opportunity_id(new_name, initial_dept)
+    assert new_id != initial_id
+
+    updated = update_gov_opportunity_repo(initial_id, {
+        "name": new_name,
+        "description": "Updated logistics curriculum",
+    })
+    assert updated["id"] == new_id
+    assert updated["name"] == new_name
+    assert updated["department"] == initial_dept
+    assert updated["description"] == "Updated logistics curriculum"
+    assert updated["status"] == "active"
+    assert updated["target_skills"] == ["Supply Chain", "Automation"]
+
+    assert get_gov_opportunity(initial_id) is None
+    new_fetched = get_gov_opportunity(new_id)
+    assert new_fetched is not None
+    assert new_fetched["name"] == new_name
+
+    non_key_updated = update_gov_opportunity_repo(new_id, {"status": "inactive"})
+    assert non_key_updated["id"] == new_id
+    assert non_key_updated["status"] == "inactive"
+    assert non_key_updated["name"] == new_name
+
+    with pytest.raises(GovOpportunityNotFoundError):
+        update_gov_opportunity_repo("gov-completely-absent-id", {"name": "Nonexistent"})

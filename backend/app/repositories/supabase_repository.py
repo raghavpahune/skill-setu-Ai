@@ -2076,6 +2076,16 @@ def update_gov_opportunity_repo(opp_id: str, updates: dict[str, Any]) -> dict[st
     try:
         client = get_client()
         clean_updates = {k: v for k, v in updates.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
+        if "name" in clean_updates or "department" in clean_updates:
+            existing_res = client.table("gov_opportunities").select("*").eq("id", opp_id).execute()
+            if not getattr(existing_res, "data", None) or len(existing_res.data) == 0:
+                raise GovOpportunityNotFoundError(f"Gov opportunity '{opp_id}' not found in Supabase.")
+            existing_row = existing_res.data[0]
+            new_name = clean_updates.get("name") if "name" in clean_updates else existing_row.get("name")
+            new_dept = clean_updates.get("department") if "department" in clean_updates else existing_row.get("department")
+            new_id = generate_gov_opportunity_id(new_name, new_dept)
+            if new_id != opp_id:
+                clean_updates["id"] = new_id
         res = client.table("gov_opportunities").update(clean_updates).eq("id", opp_id).execute()
         if not getattr(res, "data", None) or len(res.data) == 0:
             raise GovOpportunityNotFoundError(f"Gov opportunity '{opp_id}' not found in Supabase.")

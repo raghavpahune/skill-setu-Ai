@@ -776,20 +776,21 @@ def save_gov_opportunity(data: dict) -> dict:
     gid = merged.get("id")
     norm_name = (merged.get("name") or "").strip().lower()
     norm_dept = (merged.get("department") or "").strip().lower()
-    existing_idx = next(
-        (
-            i for i, g in enumerate(records)
-            if (gid and g.get("id") == gid)
-            or (
-                norm_name
-                and (g.get("name") or "").strip().lower() == norm_name
-                and (g.get("department") or "").strip().lower() == norm_dept
-            )
-        ),
-        None,
-    )
-    if existing_idx is not None:
-        records[existing_idx] = merged
+    matched_indices = [
+        i
+        for i, g in enumerate(records)
+        if (gid and g.get("id") == gid)
+        or (
+            norm_name
+            and (g.get("name") or "").strip().lower() == norm_name
+            and (g.get("department") or "").strip().lower() == norm_dept
+        )
+    ]
+    if matched_indices:
+        survivor_idx = matched_indices[0]
+        records[survivor_idx] = merged
+        for dup_idx in reversed(matched_indices[1:]):
+            del records[dup_idx]
     else:
         records.insert(0, merged)
     _flush_real_table("gov_opportunities")
@@ -813,6 +814,11 @@ def update_gov_opportunity(opp_id: str, updates: dict) -> dict | None:
     for r in records:
         if r.get("id") == opp_id:
             r.update(updates)
+            if repo_updated and repo_updated.get("id"):
+                r["id"] = repo_updated["id"]
+            elif "name" in updates or "department" in updates:
+                from app.repositories.supabase_repository import generate_gov_opportunity_id
+                r["id"] = generate_gov_opportunity_id(r.get("name"), r.get("department"))
             r["updated_at"] = datetime.now(timezone.utc).isoformat()
             matched = r
             break
