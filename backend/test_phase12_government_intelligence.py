@@ -776,3 +776,112 @@ def test_trigger_admin_industry_ingestion_async_behavior():
     assert data["status"] == "success"
     assert "summary" in data
     assert data["summary"]["records_added"] + data["summary"]["records_updated"] + data["summary"]["records_duplicated"] >= 1
+
+
+def test_generate_gov_opportunity_id_prevents_delimiter_collisions():
+    from app.repositories.supabase_repository import generate_gov_opportunity_id
+
+    id1 = generate_gov_opportunity_id("solar|energy", "renewables")
+    id2 = generate_gov_opportunity_id("solar", "energy|renewables")
+    assert id1 != id2
+    assert id1.startswith("gov-")
+    assert id2.startswith("gov-")
+    assert len(id1) == 36
+    assert len(id2) == 36
+
+
+def test_industry_signals_duplicate_update_persists_and_preserves_published_at():
+    from app.ingestion.industry_intelligence import industry_ingestor
+    from app.db import save_industry_signal, get_industry_signal_by_id
+
+    sig_id = "ind-sig-pubdate-test-1"
+    initial_sig = {
+        "id": sig_id,
+        "title": "Quantum Operating Architecture",
+        "description": "Initial draft quantum kernel",
+        "category": "TOOL_RELEASE",
+        "industry": "Computing",
+        "skills": ["Quantum"],
+        "tools": ["Qiskit"],
+        "source_url": "https://quantum.example.com/v1",
+        "source_name": "Quantum Foundation",
+        "source_type": "TECH_DOCUMENTATION",
+        "data_provenance": "UNVERIFIED_EXTERNAL_SOURCE",
+        "validation_status": "PENDING",
+        "is_active": False,
+        "is_demo": False,
+        "published_at": None,
+    }
+    save_industry_signal(initial_sig)
+
+    verified_update = [
+        {
+            "id": sig_id,
+            "title": "Quantum Operating Architecture",
+            "description": "Updated approved quantum kernel specifications",
+            "category": "TOOL_RELEASE",
+            "industry": "Computing",
+            "skills": ["Quantum"],
+            "tools": ["Qiskit"],
+            "source_url": "https://quantum.example.com/v1",
+            "source_name": "Quantum Foundation",
+            "source_type": "TECH_DOCUMENTATION",
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "validation_status": "APPROVED",
+            "is_active": True,
+            "is_demo": False,
+            "published_at": "2026-09-17T08:30:00Z",
+        }
+    ]
+    summary1 = industry_ingestor.ingest_from_feeds(feeds=verified_update, is_demo=False)
+    assert summary1["records_updated"] >= 1
+
+    rec1 = get_industry_signal_by_id(sig_id)
+    assert rec1 is not None
+    assert rec1["published_at"] == "2026-09-17T08:30:00Z"
+
+    no_date_update = [
+        {
+            "id": sig_id,
+            "title": "Quantum Operating Architecture",
+            "description": "Second update without published_at field",
+            "category": "TOOL_RELEASE",
+            "industry": "Computing",
+            "skills": ["Quantum"],
+            "tools": ["Qiskit"],
+            "source_url": "https://quantum.example.com/v1",
+            "source_name": "Quantum Foundation",
+            "source_type": "TECH_DOCUMENTATION",
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "validation_status": "APPROVED",
+            "is_active": True,
+            "is_demo": False,
+            "published_at": None,
+        }
+    ]
+    summary2 = industry_ingestor.ingest_from_feeds(feeds=no_date_update, is_demo=False)
+    assert summary2["records_updated"] >= 1
+
+    rec2 = get_industry_signal_by_id(sig_id)
+    assert rec2 is not None
+    assert rec2["published_at"] == "2026-09-17T08:30:00Z"
+
+
+def test_trigger_admin_industry_ingestion_failure_mapping():
+    from unittest.mock import patch, MagicMock
+
+    fake_err_resp = MagicMock()
+    fake_err_resp.status_code = 503
+
+    with patch("app.ingestion.industry_intelligence.httpx.get", return_value=fake_err_resp):
+        res = client.post(
+            "/api/admin/industry/ingest",
+            headers={"X-Admin-Key": ADMIN_KEY},
+            json=None,
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "failed"
+        assert "failed" in data["message"].lower()
+        assert data["summary"]["status"] == "FAILED"
+        assert len(data["summary"]["errors"]) >= 1

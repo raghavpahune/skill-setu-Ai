@@ -16,6 +16,7 @@ import email.utils
 import hashlib
 import logging
 import re
+import threading
 import uuid
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -336,6 +337,7 @@ class IndustryIntelligenceIngestor:
 
     def __init__(self):
         self.sources = TRUSTED_SOURCES
+        self._ingest_lock = threading.Lock()
         self._last_ingest_summary: dict[str, Any] = {
             "status": "idle",
             "last_run": None,
@@ -583,6 +585,10 @@ class IndustryIntelligenceIngestor:
         return normalized_record, None
 
     def ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None, is_demo: bool | None = None) -> dict[str, Any]:
+        with self._ingest_lock:
+            return self._run_ingest_from_feeds(feeds=feeds, is_demo=is_demo)
+
+    def _run_ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None, is_demo: bool | None = None) -> dict[str, Any]:
         from app.db import (
             get_demo,
             save_industry_signal,
@@ -687,6 +693,8 @@ class IndustryIntelligenceIngestor:
                         "validation_status": normalized["validation_status"],
                         "is_active": normalized["is_active"],
                     })
+                    if normalized.get("published_at"):
+                        matched["published_at"] = normalized["published_at"]
                     update_industry_signal(matched["id"], matched)
                     updated += 1
                 else:

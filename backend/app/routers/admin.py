@@ -832,9 +832,15 @@ async def trigger_admin_industry_ingestion(feeds: list[dict[str, Any]] | None = 
     """Admin endpoint to manually trigger automated ingestion across trusted industry feeds."""
     from app.core.data_mode import is_explicit_demo_mode
     result = await industry_ingestor.async_ingest_from_feeds(feeds, is_demo=is_explicit_demo_mode())
+    status_label = "failed" if (result.get("status") or "").upper() == "FAILED" else "success"
+    message = (
+        f"Industry ingestion run failed: {'; '.join(result.get('errors', [])) or 'All sources failed'}"
+        if status_label == "failed"
+        else f"Industry ingestion run finished: {result['records_added']} added, {result['records_updated']} updated, {result['records_duplicated']} duplicated, {result['records_rejected']} rejected."
+    )
     return {
-        "status": "success",
-        "message": f"Industry ingestion run finished: {result['records_added']} added, {result['records_updated']} updated, {result['records_duplicated']} duplicated, {result['records_rejected']} rejected.",
+        "status": status_label,
+        "message": message,
         "summary": result,
     }
 

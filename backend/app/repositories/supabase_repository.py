@@ -1952,7 +1952,8 @@ def list_gov_opportunities(
 def generate_gov_opportunity_id(name: str | None, department: str | None) -> str:
     clean_name = (name or "").strip().lower()
     clean_dept = (department or "").strip().lower()
-    return f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:32]}"
+    key = f"{len(clean_name)}:{clean_name}:{len(clean_dept)}:{clean_dept}".encode("utf-8")
+    return f"gov-{hashlib.sha256(key).hexdigest()[:32]}"
 
 
 def create_gov_opportunity(data: dict[str, Any]) -> dict[str, Any]:
