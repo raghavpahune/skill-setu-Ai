@@ -699,3 +699,80 @@ def test_gov_opportunity_district_pagination_filtering():
 
     paged = list_gov_opportunities(district="Pune", limit=5, offset=2)
     assert len(paged) == 5
+
+
+def test_gov_opportunity_deterministic_128bit_id_and_consistency():
+    from app.repositories.supabase_repository import generate_gov_opportunity_id
+
+    expected_id = generate_gov_opportunity_id("Solar Energy Trainee Program", "Department of Renewable Energy")
+    assert expected_id.startswith("gov-")
+    assert len(expected_id) == 36
+
+    opp_data = {
+        "name": "Solar Energy Trainee Program",
+        "department": "Department of Renewable Energy",
+        "description": "Comprehensive solar technician training course",
+        "status": "active",
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    repo_created = create_gov_opportunity(dict(opp_data))
+    assert repo_created["id"] == expected_id
+
+    batch_created = upsert_gov_opportunities([dict(opp_data)])
+    assert len(batch_created) == 1
+    assert batch_created[0]["id"] == expected_id
+
+    admin_opp = {
+        "name": "Solar Energy Trainee Program",
+        "department": "Department of Renewable Energy",
+        "description": "Comprehensive solar technician training course",
+        "status": "active",
+    }
+    res_admin = client.post(
+        "/api/admin/gov/opportunities",
+        headers={"X-Admin-Key": ADMIN_KEY},
+        json=admin_opp,
+    )
+    assert res_admin.status_code == 200
+    assert res_admin.json()["opportunity"]["id"] == expected_id
+
+
+def test_trigger_admin_industry_ingestion_async_behavior():
+    import asyncio
+    from app.ingestion.industry_intelligence import industry_ingestor
+
+    custom_feed = [
+        {
+            "id": "ind-sig-async-test-1",
+            "title": "Async Event-Loop Processing Engine",
+            "description": "High performance async event loop worker runtime",
+            "category": "TOOL_RELEASE",
+            "industry": "Software Engineering",
+            "skills": ["Async Programming", "Python"],
+            "tools": ["asyncio"],
+            "source_url": "https://python.org/async-engine",
+            "source_name": "Python Foundation",
+            "source_type": "TECH_DOCUMENTATION",
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "validation_status": "APPROVED",
+            "is_active": True,
+            "is_demo": False,
+            "published_at": "2026-09-17T12:00:00Z",
+        }
+    ]
+
+    direct_async_res = asyncio.run(industry_ingestor.async_ingest_from_feeds(feeds=custom_feed, is_demo=False))
+    assert direct_async_res["records_added"] >= 1 or direct_async_res["records_updated"] >= 1
+
+    api_res = client.post(
+        "/api/admin/industry/ingest",
+        headers={"X-Admin-Key": ADMIN_KEY},
+        json=custom_feed,
+    )
+    assert api_res.status_code == 200
+    data = api_res.json()
+    assert data["status"] == "success"
+    assert "summary" in data
+    assert data["summary"]["records_added"] + data["summary"]["records_updated"] + data["summary"]["records_duplicated"] >= 1

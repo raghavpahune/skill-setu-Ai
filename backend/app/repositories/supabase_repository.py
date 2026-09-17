@@ -1949,14 +1949,18 @@ def list_gov_opportunities(
         raise SupabaseRepositoryError(f"Database listing failed for gov_opportunities: {e}") from e
 
 
+def generate_gov_opportunity_id(name: str | None, department: str | None) -> str:
+    clean_name = (name or "").strip().lower()
+    clean_dept = (department or "").strip().lower()
+    return f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:32]}"
+
+
 def create_gov_opportunity(data: dict[str, Any]) -> dict[str, Any]:
     try:
         client = get_client()
         clean = {k: v for k, v in data.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
         if "id" not in clean or not clean["id"]:
-            clean_name = (clean.get("name") or "").strip().lower()
-            clean_dept = (clean.get("department") or "").strip().lower()
-            clean["id"] = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+            clean["id"] = generate_gov_opportunity_id(clean.get("name"), clean.get("department"))
         res = client.table("gov_opportunities").upsert(clean).execute()
         return res.data[0] if getattr(res, "data", None) else clean
     except SupabaseRepositoryError:
@@ -2004,9 +2008,7 @@ def upsert_gov_opportunities(opps_data: list[dict[str, Any]]) -> list[dict[str, 
         for o in opps_data:
             clean = {k: v for k, v in o.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
             if "id" not in clean or not clean["id"]:
-                clean_name = (clean.get("name") or "").strip().lower()
-                clean_dept = (clean.get("department") or "").strip().lower()
-                clean["id"] = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+                clean["id"] = generate_gov_opportunity_id(clean.get("name"), clean.get("department"))
             clean_opps.append(clean)
         res = client.table("gov_opportunities").upsert(clean_opps).execute()
         return getattr(res, "data", []) or clean_opps

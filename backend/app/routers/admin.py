@@ -1,12 +1,12 @@
 """Admin Data Management API — inspection, filtering, aggregate analytics, and management of student assessments, employer demands, and government opportunities."""
 from collections import Counter
 from datetime import datetime, timezone
-import hashlib
 import logging
 from typing import Any
 import uuid
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status as http_status
 from pydantic import BaseModel, Field
+from app.repositories.supabase_repository import generate_gov_opportunity_id
 
 logger = logging.getLogger("skillsetu.admin")
 from app.config import settings
@@ -561,9 +561,7 @@ async def list_admin_gov_opportunities(
 
 @router.post("/admin/gov/opportunities", dependencies=[Depends(verify_admin_key)])
 async def create_admin_gov_opportunity(data: GovOpportunityCreate):
-    clean_name = (data.name or "").strip().lower()
-    clean_dept = (data.department or "").strip().lower()
-    opp_id = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+    opp_id = generate_gov_opportunity_id(data.name, data.department)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     record = {
@@ -833,7 +831,7 @@ class IndustrySignalAdminUpdate(BaseModel):
 async def trigger_admin_industry_ingestion(feeds: list[dict[str, Any]] | None = None):
     """Admin endpoint to manually trigger automated ingestion across trusted industry feeds."""
     from app.core.data_mode import is_explicit_demo_mode
-    result = industry_ingestor.ingest_from_feeds(feeds, is_demo=is_explicit_demo_mode())
+    result = await industry_ingestor.async_ingest_from_feeds(feeds, is_demo=is_explicit_demo_mode())
     return {
         "status": "success",
         "message": f"Industry ingestion run finished: {result['records_added']} added, {result['records_updated']} updated, {result['records_duplicated']} duplicated, {result['records_rejected']} rejected.",

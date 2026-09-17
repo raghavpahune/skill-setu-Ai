@@ -1,4 +1,3 @@
-import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +8,7 @@ from app.core.data_mode import is_explicit_demo_mode
 from app.core.security import require_roles, get_optional_current_user, is_demo_student_id
 from app.core.time import parse_iso_timestamp, UTC_MIN
 from app.db import get_demo, save_gov_opportunity
+from app.repositories.supabase_repository import generate_gov_opportunity_id
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +55,7 @@ async def create_gov_opportunity(
     current_user: dict = Depends(require_roles(["GOVERNMENT", "ADMIN"])),
 ):
     now_iso = datetime.now(timezone.utc).isoformat()
-    clean_name = data.name.strip().lower()
-    clean_dept = data.department.strip().lower()
-    opp_id = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+    opp_id = generate_gov_opportunity_id(data.name, data.department)
 
     coverage = data.district_coverage
     if isinstance(coverage, str):

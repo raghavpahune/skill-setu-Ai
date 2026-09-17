@@ -10,6 +10,7 @@ Provides:
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 import email.utils
 import hashlib
@@ -736,6 +737,13 @@ class IndustryIntelligenceIngestor:
         })
 
         return summary
+
+    async def async_ingest_from_feeds(
+        self,
+        feeds: list[dict[str, Any]] | None = None,
+        is_demo: bool | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.ingest_from_feeds, feeds=feeds, is_demo=is_demo)
 
 
 industry_ingestor = IndustryIntelligenceIngestor()
