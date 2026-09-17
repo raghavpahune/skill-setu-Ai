@@ -11,11 +11,14 @@ Provides:
 from __future__ import annotations
 
 import datetime
+import email.utils
 import hashlib
 import logging
 import re
 import uuid
+import xml.etree.ElementTree as ET
 from typing import Any
+import httpx
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from app.config import settings
@@ -380,6 +383,113 @@ class IndustryIntelligenceIngestor:
             "last_ingestion": self._last_ingest_summary,
         }
 
+    def fetch_external_feeds(self, timeout: float = 10.0) -> list[dict[str, Any]]:
+        feed_sources = [
+            {
+                "url": "https://peps.python.org/peps.rss",
+                "source_name": "Python Software Foundation & Developer Ecosystem",
+                "source_type": SOURCE_TYPE_TECH_DOCUMENTATION,
+                "category": CATEGORY_TOOL_RELEASE,
+                "industry": "Information Technology & Software Development",
+                "default_skills": ["Python", "Software Engineering", "API Design"],
+                "default_tools": ["Python", "Git", "Standard Library"],
+            },
+            {
+                "url": "https://www.cncf.io/feed/",
+                "source_name": "Cloud Native Computing Foundation (CNCF) & Linux Foundation",
+                "source_type": SOURCE_TYPE_TECH_DOCUMENTATION,
+                "category": CATEGORY_TOOL_RELEASE,
+                "industry": "Cloud Computing & DevOps",
+                "default_skills": ["Kubernetes", "Cloud Computing", "DevOps"],
+                "default_tools": ["Kubernetes", "Docker", "Prometheus"],
+            },
+        ]
+        fetched_items = []
+        for src in feed_sources:
+            try:
+                resp = httpx.get(
+                    src["url"],
+                    headers={"User-Agent": "SkillSetu-Ingestor/1.0"},
+                    timeout=timeout,
+                    follow_redirects=True,
+                )
+                if resp.status_code != 200:
+                    continue
+                root = ET.fromstring(resp.text)
+                items = root.findall(".//item")
+                for it in items[:10]:
+                    title_elem = it.find("title")
+                    link_elem = it.find("link")
+                    desc_elem = it.find("description")
+                    pub_date_elem = it.find("pubDate")
+                    if title_elem is None or not title_elem.text or link_elem is None or not link_elem.text:
+                        continue
+                    title = title_elem.text.strip()
+                    link = link_elem.text.strip()
+                    desc = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else title
+                    clean_desc = re.sub(r"<[^>]+>", " ", desc)
+                    clean_desc = re.sub(r"\s+", " ", clean_desc).strip()
+                    if len(clean_desc) < 15:
+                        clean_desc = f"{title} - Official release announcement from {src['source_name']}."
+
+                    published_at = None
+                    if pub_date_elem is not None and pub_date_elem.text:
+                        try:
+                            parsed_dt = email.utils.parsedate_to_datetime(pub_date_elem.text.strip())
+                            if parsed_dt.tzinfo is None:
+                                parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
+                            published_at = parsed_dt.isoformat()
+                        except Exception:
+                            published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    if not published_at:
+                        published_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+                    ext_id = f"ext-{hashlib.sha256(link.encode('utf-8')).hexdigest()[:12]}"
+
+                    skills = list(src["default_skills"])
+                    tools = list(src["default_tools"])
+                    combined_text = f"{title} {clean_desc}".lower()
+                    keyword_skill_map = {
+                        "kubernetes": ("Kubernetes", "Kubernetes"),
+                        "docker": ("Containerization", "Docker"),
+                        "telemetry": ("OpenTelemetry", "OpenTelemetry"),
+                        "tracing": ("Distributed Tracing", "Jaeger"),
+                        "prometheus": ("Observability", "Prometheus"),
+                        "postgres": ("Database Administration", "PostgreSQL"),
+                        "security": ("Cybersecurity", "Zero Trust"),
+                        "api": ("REST API", "OpenAPI"),
+                        "asyncio": ("Async Programming", "Python asyncio"),
+                        "type hints": ("Type Safety", "mypy"),
+                        "cloud": ("Cloud Architecture", "Cloud Native"),
+                    }
+                    for kw, (sk, tl) in keyword_skill_map.items():
+                        if kw in combined_text:
+                            if sk not in skills:
+                                skills.append(sk)
+                            if tl not in tools:
+                                tools.append(tl)
+
+                    fetched_items.append({
+                        "title": title,
+                        "description": clean_desc[:2500],
+                        "category": src["category"],
+                        "industry": src["industry"],
+                        "skills": skills[:6],
+                        "tools": tools[:6],
+                        "source_url": link,
+                        "source_name": src["source_name"],
+                        "source_type": src["source_type"],
+                        "data_provenance": "VERIFIED_EXTERNAL_FEED",
+                        "validation_status": STATUS_APPROVED,
+                        "is_demo": False,
+                        "published_at": published_at,
+                        "external_id": ext_id,
+                    })
+            except Exception as e:
+                logger.warning("Failed fetching feed from %s: %s", src["url"], e)
+                continue
+        return fetched_items
+
     def validate_and_normalize(self, raw_data: dict[str, Any], is_demo: bool | None = None) -> tuple[dict[str, Any] | None, str | None]:
         if is_demo is False:
             is_demo_rec = bool(
@@ -403,8 +513,13 @@ class IndustryIntelligenceIngestor:
         is_demo = bool(raw_data.get("is_demo") or raw_data.get("source_label") == "DEMO_SYNTHETIC" or raw_data.get("source_type") == "DEMO_SYNTHETIC" or raw_data.get("data_provenance") == "DEMO_SYNTHETIC")
         data_provenance = str(raw_data.get("data_provenance") or ("DEMO_SYNTHETIC" if is_demo else "UNVERIFIED_EXTERNAL_SOURCE"))
         val_status = str(raw_data.get("validation_status") or submission.validation_status)
+        if data_provenance == "UNVERIFIED_EXTERNAL_SOURCE":
+            val_status = STATUS_PENDING
+            is_active_flag = False
+        else:
+            is_active_flag = submission.is_active
 
-        freshness = calculate_freshness(published_at, submission.is_active, val_status)
+        freshness = calculate_freshness(published_at, is_active_flag, val_status)
 
         normalized_record: dict[str, Any] = {
             "id": sig_id,
@@ -421,7 +536,7 @@ class IndustryIntelligenceIngestor:
             "collected_at": raw_data.get("collected_at") or now_iso,
             "updated_at": now_iso,
             "validation_status": val_status,
-            "is_active": submission.is_active,
+            "is_active": is_active_flag,
             "is_demo": is_demo,
             "data_provenance": data_provenance,
             "freshness": freshness,
@@ -435,10 +550,8 @@ class IndustryIntelligenceIngestor:
             "source": submission.source_name,
         }
 
-        # Optional AI Processing (strictly optional, only if AI is available)
         if settings.ai_available:
             try:
-                # Deterministic or AI keyword refinement
                 normalized_record["is_ai_processed"] = True
                 normalized_record["ai_metadata"] = {
                     "summarized": True,
@@ -461,8 +574,11 @@ class IndustryIntelligenceIngestor:
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if is_demo is None:
             is_demo = is_explicit_demo_mode()
-        if is_demo is False and feeds is None:
-            feed_data = []
+        if is_demo is False:
+            if feeds is not None:
+                feed_data = feeds
+            else:
+                feed_data = self.fetch_external_feeds()
         else:
             feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
 

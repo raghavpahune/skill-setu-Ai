@@ -1,8 +1,10 @@
-"""Schemes API — student welfare and government schemes."""
 import logging
+from datetime import datetime, timezone
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from app.core.data_mode import is_explicit_demo_mode
 from app.core.security import get_optional_current_user, is_demo_student_id
+from app.core.time import parse_iso_timestamp, UTC_MIN
 from app.db import get_demo
 from app.repositories.supabase_repository import SupabaseRepositoryError
 
@@ -10,6 +12,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _is_expired(deadline: Any) -> bool:
+    if not deadline or not isinstance(deadline, str) or not deadline.strip():
+        return False
+    dt = parse_iso_timestamp(deadline)
+    if dt == UTC_MIN:
+        return False
+    return dt < datetime.now(timezone.utc)
 
 
 @router.get("/schemes")
@@ -25,7 +35,6 @@ async def list_schemes(
     offset: int = Query(0, ge=0),
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    """List available student welfare, scholarship, and government schemes with optional filters."""
     if is_explicit_demo_mode(is_demo):
         schemes = get_demo("schemes")
     else:
@@ -44,9 +53,16 @@ async def list_schemes(
 
     filtered = []
     for s in schemes:
-        # Active status filter
-        if status and s.get("status", "active").lower() != status.lower():
-            continue
+        if is_demo is False:
+            if s.get("is_demo") is True or s.get("source") == "DEMO_SYNTHETIC" or s.get("data_provenance") == "DEMO_SYNTHETIC":
+                continue
+
+        if status:
+            s_status = s.get("status", "active").lower()
+            if _is_expired(s.get("deadline_date")) and s_status == "active":
+                s_status = "closed"
+            if s_status != status.lower():
+                continue
 
         # Beneficiary category filter (e.g. SC, ST, OBC, EWS, Women)
         if category:
@@ -135,9 +151,9 @@ async def get_scheme_metadata(
 async def recommended_schemes(
     student_id: str,
     limit: int = Query(10, ge=1, le=50),
+    is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
     current_user: dict | None = Depends(get_optional_current_user),
 ):
-    """Return schemes ranked by relevance to a student profile or assessment record."""
     resolved_id = student_id
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id") or "me"
@@ -199,14 +215,29 @@ async def recommended_schemes(
     student_district = (profile.get("district") or profile.get("preferred_location") or "").lower()
     student_education = (profile.get("education") or profile.get("degree") or profile.get("education_level") or "").lower()
 
-    if is_demo_student_id(resolved_id) or profile.get("is_demo") or profile.get("source") == "DEMO_SYNTHETIC":
+    if is_demo is True:
+        use_demo = True
+    elif is_demo is False:
+        use_demo = False
+    else:
+        use_demo = is_demo_student_id(resolved_id) or profile.get("is_demo") or profile.get("source") == "DEMO_SYNTHETIC"
+
+    if use_demo:
         schemes = get_demo("schemes")
         note = "Recommendations based on skill/education/district overlap with demo dataset. Verify eligibility on official portals before applying."
     else:
         try:
             from app.repositories.supabase_repository import list_schemes as list_schemes_repo
             db_schemes = list_schemes_repo(status="active", limit=100)
-            schemes = db_schemes or []
+            if is_demo is False:
+                schemes = [
+                    s for s in (db_schemes or [])
+                    if s.get("is_demo") is not True
+                    and s.get("source") != "DEMO_SYNTHETIC"
+                    and s.get("data_provenance") != "DEMO_SYNTHETIC"
+                ]
+            else:
+                schemes = db_schemes or []
         except SupabaseRepositoryError as e:
             logger.warning("Failed listing authoritative schemes for student '%s': %s", student_id, e)
             raise HTTPException(
@@ -215,24 +246,29 @@ async def recommended_schemes(
             ) from e
         except Exception as e:
             logger.warning("Failed listing schemes for student '%s': %s", student_id, e)
-            schemes = []
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Schemes repository is temporarily unavailable for recommendations.",
+            ) from e
         note = "Recommendations based on official government schemes repository. Verify eligibility on official portals before applying."
     scored = []
     for s in schemes:
         if s.get("status", "active").lower() != "active":
             continue
+        if s.get("verification_status") == "REJECTED":
+            continue
+        if _is_expired(s.get("deadline_date")):
+            continue
 
         score = 0
         reasons = []
 
-        # Skill/domain match
         scheme_skills = {sk.lower() for sk in (s.get("target_skills") or [])}
         matched = student_skills & scheme_skills
         if matched:
             score += len(matched) * 3
             reasons.append(f"Matches skills: {', '.join(sorted(matched)[:3])}")
 
-        # Course type match against education
         if student_education:
             for ct in s.get("eligible_course_types", []):
                 if ct.lower() in student_education:
@@ -240,7 +276,6 @@ async def recommended_schemes(
                     reasons.append(f"Eligible for {ct} students")
                     break
 
-        # District availability (state-wide schemes always match)
         coverage = s.get("district_coverage", "State-wide (Maharashtra)")
         if "state-wide" in coverage.lower():
             score += 1
@@ -249,7 +284,6 @@ async def recommended_schemes(
             score += 3
             reasons.append(f"Available in {student_district.title()}")
 
-        # Open category matches all students
         cats = [c.lower() for c in s.get("beneficiary_category", [])]
         if "open" in cats:
             score += 1
@@ -274,7 +308,6 @@ async def recommended_schemes(
 
 @router.get("/schemes/{scheme_id}")
 async def get_scheme(scheme_id: str, is_demo: bool | None = None):
-    """Get single scheme details by ID or scheme code."""
     if is_explicit_demo_mode(is_demo):
         schemes = get_demo("schemes")
         for s in schemes:
@@ -286,7 +319,11 @@ async def get_scheme(scheme_id: str, is_demo: bool | None = None):
         from app.repositories.supabase_repository import get_scheme as get_scheme_repo
         record = get_scheme_repo(scheme_id)
         if record:
+            if record.get("is_demo") is True or record.get("source") == "DEMO_SYNTHETIC" or record.get("data_provenance") == "DEMO_SYNTHETIC":
+                raise HTTPException(status_code=404, detail="Scheme not found")
             return record
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("Repository error fetching scheme '%s': %s", scheme_id, e)
         raise HTTPException(status_code=503, detail="Authoritative scheme database unavailable")

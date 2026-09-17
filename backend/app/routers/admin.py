@@ -468,13 +468,12 @@ async def list_admin_gov_opportunities(
     offset: int = Query(0, ge=0),
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    """List and filter government opportunities for administrative management."""
     if is_explicit_demo_mode(is_demo):
-        all_records = get_demo("gov_opportunities")
+        raw_records = get_demo("gov_opportunities")
     else:
         try:
             from app.repositories.supabase_repository import list_gov_opportunities
-            all_records = list_gov_opportunities(limit=1000) or []
+            raw_records = list_gov_opportunities(limit=1000) or []
         except SupabaseRepositoryError as e:
             logger.exception("[AdminGovOpportunities] Repository failure loading opportunities: %s", e)
             raise HTTPException(
@@ -483,8 +482,32 @@ async def list_admin_gov_opportunities(
             ) from e
         except Exception as e:
             logger.warning("[AdminGovOpportunities] Failed loading opportunities: %s", e)
-            all_records = []
+            raw_records = []
 
+    deduped_records = []
+    seen_keys = {}
+    for r in raw_records:
+        key = (
+            (r.get("name") or "").strip().lower(),
+            (r.get("department") or "").strip().lower(),
+        )
+        if not key[0]:
+            deduped_records.append(r)
+            continue
+        if key in seen_keys:
+            idx = seen_keys[key]
+            existing = deduped_records[idx]
+            existing_desc = (existing.get("description") or "").strip()
+            curr_desc = (r.get("description") or "").strip()
+            existing_time = existing.get("updated_at") or existing.get("created_at") or ""
+            curr_time = r.get("updated_at") or r.get("created_at") or ""
+            if curr_time > existing_time or (curr_time == existing_time and len(curr_desc) > len(existing_desc)):
+                deduped_records[idx] = r
+        else:
+            seen_keys[key] = len(deduped_records)
+            deduped_records.append(r)
+
+    all_records = deduped_records
     results = all_records
 
     if district and district.lower() != "all":
@@ -496,7 +519,7 @@ async def list_admin_gov_opportunities(
                 districts = [d.lower() for d in coverage]
             else:
                 districts = [coverage.lower()] if coverage else []
-            if d_clean in districts or any("state-wide" in d for d in districts):
+            if d_clean in districts or any("state-wide" in d or "maharashtra" in d or d == "all" for d in districts):
                 filtered.append(r)
         results = filtered
 
@@ -520,7 +543,7 @@ async def list_admin_gov_opportunities(
     total_all = len(all_records)
     active_count = sum(1 for r in all_records if r.get("status", "active").lower() == "active")
     inactive_count = total_all - active_count
-    demo_count = sum(1 for r in all_records if r.get("source") == "DEMO_SYNTHETIC")
+    demo_count = sum(1 for r in all_records if r.get("is_demo") is True or r.get("source") == "DEMO_SYNTHETIC" or r.get("data_provenance") == "DEMO_SYNTHETIC")
 
     return {
         "status": "success",
@@ -537,9 +560,25 @@ async def list_admin_gov_opportunities(
 
 @router.post("/admin/gov/opportunities", dependencies=[Depends(verify_admin_key)])
 async def create_admin_gov_opportunity(data: GovOpportunityCreate):
-    """Create a new government opportunity record."""
+    opp_id = None
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        from app.repositories.supabase_repository import list_gov_opportunities
+        existing_opps = list_gov_opportunities(limit=1000) or []
+        target_name = data.name.strip().lower()
+        target_dept = data.department.strip().lower()
+        for eo in existing_opps:
+            if (eo.get("name") or "").strip().lower() == target_name and (eo.get("department") or "").strip().lower() == target_dept:
+                opp_id = eo.get("id")
+                break
+    except Exception:
+        opp_id = None
+
+    if not opp_id:
+        opp_id = f"gov-{uuid.uuid4().hex[:8]}"
+
     record = {
-        "id": f"gov-{uuid.uuid4().hex[:8]}",
+        "id": opp_id,
         "name": data.name,
         "department": data.department,
         "description": data.description,
@@ -550,12 +589,21 @@ async def create_admin_gov_opportunity(data: GovOpportunityCreate):
         "application_url": data.application_url,
         "deadline": data.deadline,
         "source": "ADMIN_CREATED",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "status": data.status,
         "is_demo": False,
+        "updated_at": now_iso,
     }
 
-    saved = save_gov_opportunity(record)
+    try:
+        saved = save_gov_opportunity(record)
+    except Exception as e:
+        logger.exception("[AdminGovOpportunities] Failed creating opportunity: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed creating opportunity.",
+        ) from e
     return {
         "status": "success",
         "message": f"Government opportunity '{saved['id']}' created.",
@@ -565,14 +613,20 @@ async def create_admin_gov_opportunity(data: GovOpportunityCreate):
 
 @router.patch("/admin/gov/opportunities/{opp_id}", dependencies=[Depends(verify_admin_key)])
 async def update_admin_gov_opportunity(opp_id: str, data: GovOpportunityUpdate):
-    """Update fields on a government opportunity record."""
     updates = {k: v for k, v in data.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=422, detail="No fields to update.")
 
     updates["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    updated = update_gov_opportunity(opp_id, updates)
+    try:
+        updated = update_gov_opportunity(opp_id, updates)
+    except Exception as e:
+        logger.exception("[AdminGovOpportunities] Failed updating opportunity: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed updating opportunity.",
+        ) from e
     if not updated:
         raise HTTPException(status_code=404, detail=f"Government opportunity '{opp_id}' not found.")
 
@@ -585,8 +639,14 @@ async def update_admin_gov_opportunity(opp_id: str, data: GovOpportunityUpdate):
 
 @router.delete("/admin/gov/opportunities/{opp_id}", dependencies=[Depends(verify_admin_key)])
 async def delete_admin_gov_opportunity(opp_id: str):
-    """Delete a government opportunity record."""
-    deleted = delete_gov_opportunity(opp_id)
+    try:
+        deleted = delete_gov_opportunity(opp_id)
+    except Exception as e:
+        logger.exception("[AdminGovOpportunities] Failed deleting opportunity: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed deleting opportunity.",
+        ) from e
     if deleted:
         return {
             "status": "success",

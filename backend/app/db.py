@@ -768,16 +768,8 @@ def save_gov_opportunity(data: dict) -> dict:
     data.setdefault("source", "USER_SUBMITTED")
     data["is_demo"] = False
 
-    clean_payload = {k: v for k, v in data.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
-    client = get_supabase_client()
-    if client:
-        try:
-            client.table("gov_opportunities").upsert(clean_payload).execute()
-            logger.info("[DB] Persisted gov opportunity '%s' to Supabase.", data.get("id"))
-        except Exception as e:
-            logger.error("[DB] Failed persisting gov opportunity to Supabase: %s", e)
-            from app.repositories.supabase_repository import SupabaseRepositoryError
-            raise SupabaseRepositoryError(f"Database insertion failed for gov opportunity: {e}") from e
+    from app.repositories.supabase_repository import create_gov_opportunity
+    create_gov_opportunity(data)
 
     records = _cache.setdefault("gov_opportunities", [])
     gid = data.get("id")
@@ -792,16 +784,13 @@ def save_gov_opportunity(data: dict) -> dict:
 
 
 def update_gov_opportunity(opp_id: str, updates: dict) -> dict | None:
-    """Update fields on a government opportunity record and flush to disk."""
-    client = get_supabase_client()
-    if client:
-        try:
-            res = client.table("gov_opportunities").update(updates).eq("id", opp_id).execute()
-            logger.info("[DB] Updated gov opportunity '%s' in Supabase.", opp_id)
-        except Exception as e:
-            logger.error("[DB] Failed updating gov opportunity in Supabase: %s", e)
-            from app.repositories.supabase_repository import SupabaseRepositoryError
-            raise SupabaseRepositoryError(f"Database update failed for gov opportunity: {e}") from e
+    from app.repositories.supabase_repository import update_gov_opportunity_repo
+    repo_updated = None
+    try:
+        repo_updated = update_gov_opportunity_repo(opp_id, updates)
+    except Exception as e:
+        logger.error("[DB] Failed updating gov opportunity in Supabase repository: %s", e)
+        raise
 
     if not _cache:
         init_db()
@@ -817,20 +806,17 @@ def update_gov_opportunity(opp_id: str, updates: dict) -> dict | None:
     if matched:
         _flush_real_table("gov_opportunities")
 
-    return matched
+    return repo_updated or matched
 
 
 def delete_gov_opportunity(opp_id: str) -> bool:
-    """Delete government opportunity record from cache, disk storage, and Supabase."""
-    client = get_supabase_client()
-    if client:
-        try:
-            client.table("gov_opportunities").delete().eq("id", opp_id).execute()
-            logger.info("[DB] Deleted gov opportunity '%s' from Supabase.", opp_id)
-        except Exception as e:
-            logger.error("[DB] Failed deleting gov opportunity from Supabase: %s", e)
-            from app.repositories.supabase_repository import SupabaseRepositoryError
-            raise SupabaseRepositoryError(f"Database deletion failed for gov opportunity: {e}") from e
+    from app.repositories.supabase_repository import delete_gov_opportunity_repo
+    repo_deleted = False
+    try:
+        repo_deleted = delete_gov_opportunity_repo(opp_id)
+    except Exception as e:
+        logger.error("[DB] Failed deleting gov opportunity from Supabase repository: %s", e)
+        raise
 
     if not _cache:
         init_db()
@@ -842,7 +828,7 @@ def delete_gov_opportunity(opp_id: str) -> bool:
     if deleted:
         _flush_real_table("gov_opportunities")
 
-    return deleted
+    return repo_deleted or deleted
 # ---------------------------------------------------------------------------
 # Phase 26: Industry Intelligence & Signals Persistence
 # ---------------------------------------------------------------------------

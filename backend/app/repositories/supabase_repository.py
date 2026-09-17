@@ -5,6 +5,7 @@ Eliminates reliance on in-memory _cache and JSON writes for migrated domains.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import uuid
@@ -76,6 +77,10 @@ class JobNotFoundError(SupabaseRepositoryError):
 
 class SchemeNotFoundError(SupabaseRepositoryError):
     """Raised when a scheme record cannot be located in Supabase."""
+    pass
+
+
+class GovOpportunityNotFoundError(SupabaseRepositoryError):
     pass
 
 
@@ -1781,6 +1786,220 @@ def upsert_schemes(schemes_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("[SupabaseRepo] Failed upserting schemes: %s", e)
         raise SupabaseRepositoryError(f"Database upsert failed for schemes: {e}") from e
+
+
+def create_scheme(scheme_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        clean = {k: v for k, v in scheme_data.items() if k in VALID_SCHEME_COLUMNS}
+        if "id" not in clean or not clean["id"]:
+            clean["id"] = str(uuid.uuid4())
+        if not clean.get("external_id"):
+            clean["external_id"] = clean.get("content_hash") or clean["id"]
+        res = client.table("schemes").insert(clean).execute()
+        return res.data[0] if getattr(res, "data", None) else clean
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating scheme: %s", e)
+        raise SupabaseRepositoryError(f"Database creation failed for scheme: {e}") from e
+
+
+def update_scheme_repo(scheme_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        clean_updates = {k: v for k, v in updates.items() if k in VALID_SCHEME_COLUMNS}
+        if _is_valid_uuid(scheme_id):
+            res = client.table("schemes").update(clean_updates).eq("id", scheme_id).execute()
+            if getattr(res, "data", None) and len(res.data) > 0:
+                return res.data[0]
+        res_code = client.table("schemes").update(clean_updates).eq("scheme_code", scheme_id).execute()
+        if getattr(res_code, "data", None) and len(res_code.data) > 0:
+            return res_code.data[0]
+        raise SchemeNotFoundError(f"Scheme '{scheme_id}' not found in Supabase.")
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating scheme id='%s': %s", scheme_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for scheme '{scheme_id}': {e}") from e
+
+
+def delete_scheme_repo(scheme_id: str) -> bool:
+    try:
+        client = get_client()
+        if _is_valid_uuid(scheme_id):
+            res = client.table("schemes").delete().eq("id", scheme_id).execute()
+            if getattr(res, "data", None) and len(res.data) > 0:
+                return True
+        res_code = client.table("schemes").delete().eq("scheme_code", scheme_id).execute()
+        if getattr(res_code, "data", None) and len(res_code.data) > 0:
+            return True
+        return False
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed deleting scheme id='%s': %s", scheme_id, e)
+        raise SupabaseRepositoryError(f"Database deletion failed for scheme '{scheme_id}': {e}") from e
+
+
+VALID_GOV_OPPORTUNITY_COLUMNS: set[str] = {
+    "id",
+    "name",
+    "department",
+    "description",
+    "eligibility_criteria",
+    "target_skills",
+    "district_coverage",
+    "opportunity_type",
+    "application_url",
+    "deadline",
+    "status",
+    "source",
+    "data_provenance",
+    "is_demo",
+    "user_id",
+    "user_email",
+    "created_at",
+    "updated_at",
+}
+
+
+def get_gov_opportunity(opp_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("gov_opportunities").select("*").eq("id", opp_id).execute()
+        if getattr(res, "data", None) and len(res.data) > 0:
+            return res.data[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching gov_opportunity id='%s': %s", opp_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for gov_opportunity '{opp_id}': {e}") from e
+
+
+def list_gov_opportunities(
+    opportunity_type: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("gov_opportunities").select("*")
+        if status and status.lower() != "all":
+            query = query.eq("status", status.lower())
+        if opportunity_type and opportunity_type.lower() != "all":
+            query = query.eq("opportunity_type", opportunity_type.upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("id").range(offset, offset + limit - 1).execute()
+            data = getattr(res, "data", []) or []
+        else:
+            all_opps = []
+            page_size = 1000
+            curr_offset = offset
+            while True:
+                fetch_size = min(page_size, limit - len(all_opps)) if limit is not None else page_size
+                res = query.order("id").range(curr_offset, curr_offset + fetch_size - 1).execute()
+                batch = getattr(res, "data", []) or []
+                all_opps.extend(batch)
+                if len(batch) < fetch_size or (limit is not None and len(all_opps) >= limit):
+                    break
+                curr_offset += fetch_size
+            data = all_opps
+
+        if district and district.lower() != "all":
+            d_clean = district.lower()
+            filtered = []
+            for r in data:
+                coverage = r.get("district_coverage", "")
+                if isinstance(coverage, list):
+                    districts = [d.lower() for d in coverage]
+                else:
+                    districts = [coverage.lower()] if coverage else []
+                if d_clean in districts or any("state-wide" in d or "maharashtra" in d or d == "all" for d in districts):
+                    filtered.append(r)
+            return filtered
+
+        return data
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing gov_opportunities: %s", e)
+        raise SupabaseRepositoryError(f"Database listing failed for gov_opportunities: {e}") from e
+
+
+def create_gov_opportunity(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        clean = {k: v for k, v in data.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
+        if "id" not in clean or not clean["id"]:
+            clean_name = (clean.get("name") or "").strip().lower()
+            clean_dept = (clean.get("department") or "").strip().lower()
+            clean["id"] = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+        res = client.table("gov_opportunities").upsert(clean).execute()
+        return res.data[0] if getattr(res, "data", None) else clean
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating gov_opportunity: %s", e)
+        raise SupabaseRepositoryError(f"Database persistence failed for gov_opportunity: {e}") from e
+
+
+def update_gov_opportunity_repo(opp_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        clean_updates = {k: v for k, v in updates.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
+        res = client.table("gov_opportunities").update(clean_updates).eq("id", opp_id).execute()
+        if not getattr(res, "data", None) or len(res.data) == 0:
+            raise GovOpportunityNotFoundError(f"Gov opportunity '{opp_id}' not found in Supabase.")
+        return res.data[0]
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating gov_opportunity id='%s': %s", opp_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for gov_opportunity '{opp_id}': {e}") from e
+
+
+def delete_gov_opportunity_repo(opp_id: str) -> bool:
+    try:
+        client = get_client()
+        res = client.table("gov_opportunities").delete().eq("id", opp_id).execute()
+        if getattr(res, "data", None) and len(res.data) > 0:
+            return True
+        return False
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed deleting gov_opportunity id='%s': %s", opp_id, e)
+        raise SupabaseRepositoryError(f"Database deletion failed for gov_opportunity '{opp_id}': {e}") from e
+
+
+def upsert_gov_opportunities(opps_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not opps_data:
+        return []
+    try:
+        client = get_client()
+        clean_opps = []
+        for o in opps_data:
+            clean = {k: v for k, v in o.items() if k in VALID_GOV_OPPORTUNITY_COLUMNS}
+            if "id" not in clean or not clean["id"]:
+                clean_name = (clean.get("name") or "").strip().lower()
+                clean_dept = (clean.get("department") or "").strip().lower()
+                clean["id"] = f"gov-{hashlib.sha256(f'{clean_name}|{clean_dept}'.encode('utf-8')).hexdigest()[:8]}"
+            clean_opps.append(clean)
+        res = client.table("gov_opportunities").upsert(clean_opps).execute()
+        return getattr(res, "data", []) or clean_opps
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed upserting gov_opportunities: %s", e)
+        raise SupabaseRepositoryError(f"Database upsert failed for gov_opportunities: {e}") from e
 
 
 def list_skills(limit: int | None = 1000, offset: int = 0) -> list[dict[str, Any]]:

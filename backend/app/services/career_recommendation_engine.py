@@ -315,7 +315,8 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
                 res = client.table("gov_opportunities").select("*").execute()
                 all_opps = getattr(res, "data", []) or []
             else:
-                all_opps = []
+                from app.repositories.supabase_repository import list_gov_opportunities
+                all_opps = list_gov_opportunities(status="active", is_demo=False, limit=1000) or []
         except Exception as e:
             logger.warning("Failed querying authoritative gov_opportunities for student '%s': %s", student_id, e)
             all_opps = []
@@ -323,9 +324,13 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
         real_opps = [
             o for o in all_opps
             if o.get("is_demo") is False
-            and o.get("source_type") != "SANDBOX_SIMULATION"
+            and o.get("source_type") not in ("SANDBOX_SIMULATION", "DEMO_SYNTHETIC")
             and o.get("source") != "DEMO_SYNTHETIC"
-            and (o.get("data_provenance") == "GOVERNMENT_OFFICIAL" or o.get("source") in ("DATAGOV_IN", "OGD_DATAGOV_IN", "USER_SUBMITTED", "ADMIN_CREATED"))
+            and o.get("data_provenance") != "DEMO_SYNTHETIC"
+            and (
+                o.get("data_provenance") in ("GOVERNMENT_OFFICIAL", "VERIFIED_SNAPSHOT")
+                or o.get("source") in ("DATAGOV_IN", "OGD_DATAGOV_IN", "USER_SUBMITTED", "ADMIN_CREATED")
+            )
         ]
         gov_opportunities = real_opps
         gov_opps_source = "GOVERNMENT_OFFICIAL" if gov_opportunities else "NO_OFFICIAL_MATCHES"
