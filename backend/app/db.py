@@ -774,7 +774,20 @@ def save_gov_opportunity(data: dict) -> dict:
 
     records = _cache.setdefault("gov_opportunities", [])
     gid = merged.get("id")
-    existing_idx = next((i for i, g in enumerate(records) if gid and g.get("id") == gid), None)
+    norm_name = (merged.get("name") or "").strip().lower()
+    norm_dept = (merged.get("department") or "").strip().lower()
+    existing_idx = next(
+        (
+            i for i, g in enumerate(records)
+            if (gid and g.get("id") == gid)
+            or (
+                norm_name
+                and (g.get("name") or "").strip().lower() == norm_name
+                and (g.get("department") or "").strip().lower() == norm_dept
+            )
+        ),
+        None,
+    )
     if existing_idx is not None:
         records[existing_idx] = merged
     else:

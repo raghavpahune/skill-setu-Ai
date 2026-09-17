@@ -885,3 +885,183 @@ def test_trigger_admin_industry_ingestion_failure_mapping():
         assert "failed" in data["message"].lower()
         assert data["summary"]["status"] == "FAILED"
         assert len(data["summary"]["errors"]) >= 1
+
+
+def test_reconcile_gov_opportunities_legacy_id_to_canonical():
+    from app.repositories.supabase_repository import reconcile_gov_opportunities, generate_gov_opportunity_id
+
+    legacy_records = [
+        {
+            "id": "gov-1405fff7",
+            "name": "Maharashtra Green Hydrogen Apprenticeship Scheme 2026",
+            "department": "Department of Skills & Renewable Energy",
+            "description": "Comprehensive statewide training in green hydrogen safety.",
+            "target_skills": ["Hydrogen Safety"],
+            "district_coverage": ["Pune"],
+            "status": "active",
+            "source": "USER_SUBMITTED",
+            "data_provenance": "GOVERNMENT_OFFICIAL",
+            "is_demo": False,
+        }
+    ]
+    survivors, stats = reconcile_gov_opportunities(legacy_records)
+    expected_cid = generate_gov_opportunity_id(
+        "Maharashtra Green Hydrogen Apprenticeship Scheme 2026",
+        "Department of Skills & Renewable Energy",
+    )
+    assert len(survivors) == 1
+    assert survivors[0]["id"] == expected_cid
+    assert stats["updated_ids"] == 1
+    assert stats["merged_duplicates"] == 0
+
+
+def test_reconcile_gov_opportunities_duplicate_collision_and_deterministic_survivor():
+    from app.repositories.supabase_repository import reconcile_gov_opportunities, generate_gov_opportunity_id
+
+    opp_name = "Solar Rooftop Technical Installation"
+    opp_dept = "Energy Department"
+    expected_cid = generate_gov_opportunity_id(opp_name, opp_dept)
+
+    duplicates = [
+        {
+            "id": "gov-legacy-01",
+            "name": "  solar rooftop technical installation  ",
+            "department": "  energy department ",
+            "description": "",
+            "eligibility_criteria": "Diploma in Electrical",
+            "target_skills": ["Solar PV"],
+            "district_coverage": ["Nagpur"],
+            "status": "inactive",
+            "data_provenance": "USER_SUBMITTED",
+            "verification_status": "PENDING",
+            "is_demo": False,
+            "created_at": "2026-09-01T00:00:00Z",
+            "updated_at": "2026-09-02T00:00:00Z",
+        },
+        {
+            "id": "gov-legacy-02",
+            "name": "Solar Rooftop Technical Installation",
+            "department": "Energy Department",
+            "description": "Official technical apprentice training program",
+            "eligibility_criteria": "",
+            "target_skills": ["Inverter Maintenance"],
+            "district_coverage": ["Pune", "Nashik"],
+            "status": "active",
+            "data_provenance": "GOVERNMENT_OFFICIAL",
+            "verification_status": "VERIFIED",
+            "is_demo": False,
+            "created_at": "2026-09-05T00:00:00Z",
+            "updated_at": "2026-09-10T00:00:00Z",
+        },
+        {
+            "id": "gov-legacy-03",
+            "name": "Solar Rooftop Technical Installation",
+            "department": "Energy Department",
+            "description": "Demo duplicate",
+            "target_skills": ["Solar PV"],
+            "district_coverage": ["Mumbai"],
+            "status": "active",
+            "data_provenance": "DEMO_SYNTHETIC",
+            "verification_status": "PENDING",
+            "is_demo": True,
+            "created_at": "2026-09-03T00:00:00Z",
+            "updated_at": "2026-09-12T00:00:00Z",
+        },
+    ]
+
+    survivors, stats = reconcile_gov_opportunities(duplicates)
+    assert len(survivors) == 1
+    assert stats["merged_duplicates"] == 2
+    assert stats["updated_ids"] == 1
+
+    survivor = survivors[0]
+    assert survivor["id"] == expected_cid
+    assert survivor["data_provenance"] == "GOVERNMENT_OFFICIAL"
+    assert survivor["verification_status"] == "VERIFIED"
+    assert survivor["status"] == "active"
+    assert survivor["is_demo"] is False
+    assert survivor["description"] == "Official technical apprentice training program"
+    assert survivor["eligibility_criteria"] == "Diploma in Electrical"
+    assert set(survivor["target_skills"]) == {"Inverter Maintenance", "Solar PV"}
+    assert set(survivor["district_coverage"]) == {"Pune", "Nashik", "Nagpur", "Mumbai"}
+
+
+def test_reconcile_gov_opportunities_idempotency():
+    from app.repositories.supabase_repository import reconcile_gov_opportunities
+
+    records = [
+        {
+            "id": "gov-legacy-x1",
+            "name": "Cybersecurity SOC Trainee",
+            "department": "IT & Telecom",
+            "status": "active",
+            "data_provenance": "GOVERNMENT_OFFICIAL",
+            "is_demo": False,
+        },
+        {
+            "id": "gov-legacy-x2",
+            "name": "cybersecurity soc trainee",
+            "department": "it & telecom",
+            "status": "pending",
+            "data_provenance": "USER_SUBMITTED",
+            "is_demo": False,
+        },
+    ]
+
+    run1, stats1 = reconcile_gov_opportunities(records)
+    assert len(run1) == 1
+    assert stats1["merged_duplicates"] == 1
+
+    run2, stats2 = reconcile_gov_opportunities(run1)
+    assert len(run2) == 1
+    assert run2 == run1
+    assert stats2["merged_duplicates"] == 0
+    assert stats2["updated_ids"] == 0
+
+
+def test_create_upsert_cannot_recreate_duplicate_canonical_opportunity():
+    from app.repositories.supabase_repository import generate_gov_opportunity_id
+    from app.db import save_gov_opportunity
+
+    opp_data = {
+        "name": "Statewide Precision Agriculture Training",
+        "department": "Agriculture & Rural Development",
+        "description": "Smart farming and drone piloting training",
+        "district_coverage": ["Satara", "Kolhapur"],
+        "status": "active",
+    }
+    saved1 = save_gov_opportunity(dict(opp_data))
+    cid1 = saved1["id"]
+    expected_cid = generate_gov_opportunity_id(opp_data["name"], opp_data["department"])
+    assert cid1 == expected_cid
+
+    updated_data = {
+        "name": "  statewide precision agriculture training  ",
+        "department": " agriculture & rural development ",
+        "description": "Updated training program description",
+        "district_coverage": ["Satara", "Kolhapur", "Solapur"],
+        "status": "active",
+    }
+    saved2 = save_gov_opportunity(dict(updated_data))
+    cid2 = saved2["id"]
+    assert cid2 == expected_cid
+
+    from app.db import _cache
+    cached_matches = [
+        o for o in _cache.get("gov_opportunities", [])
+        if o.get("id") == expected_cid
+    ]
+    assert len(cached_matches) == 1
+    assert cached_matches[0]["description"] == "Updated training program description"
+
+
+def test_sql_migration_file_exists_and_valid():
+    from pathlib import Path
+
+    mig_file = Path("data/migrations/20260917_reconcile_gov_opportunity_canonical_ids.sql")
+    assert mig_file.exists()
+    content = mig_file.read_text(encoding="utf-8")
+    assert "canonical_gov_opportunity_id" in content
+    assert "idx_gov_opportunities_canonical_key" in content
+    assert "sha256" in content
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS" in content

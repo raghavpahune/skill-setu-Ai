@@ -1956,6 +1956,107 @@ def generate_gov_opportunity_id(name: str | None, department: str | None) -> str
     return f"gov-{hashlib.sha256(key).hexdigest()[:32]}"
 
 
+def reconcile_gov_opportunities(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for r in records:
+        name = r.get("name")
+        if not name or not str(name).strip():
+            continue
+        dept = r.get("department")
+        cid = generate_gov_opportunity_id(str(name), str(dept) if dept is not None else "")
+        grouped.setdefault(cid, []).append(r)
+
+    provenance_weights = {
+        "GOVERNMENT_OFFICIAL": 1,
+        "VERIFIED_SNAPSHOT": 2,
+        "USER_SUBMITTED": 3,
+        "ADMIN_CREATED": 4,
+        "UNVERIFIED_EXTERNAL_SOURCE": 5,
+    }
+    verification_weights = {
+        "VERIFIED": 1,
+        "APPROVED": 1,
+        "PENDING": 2,
+        "REJECTED": 3,
+    }
+
+    survivors: list[dict[str, Any]] = []
+    merged_count = 0
+    updated_id_count = 0
+
+    for cid, group in grouped.items():
+        if len(group) == 1:
+            item = dict(group[0])
+            if item.get("id") != cid:
+                item["id"] = cid
+                updated_id_count += 1
+            survivors.append(item)
+            continue
+
+        def parse_ts(val: Any) -> float:
+            if not val:
+                return 0.0
+            try:
+                return float(datetime.fromisoformat(str(val).replace("Z", "+00:00")).timestamp())
+            except Exception:
+                return 0.0
+
+        sorted_group = sorted(
+            group,
+            key=lambda o: (
+                1 if o.get("is_demo") else 0,
+                provenance_weights.get(str(o.get("data_provenance", "")), 6),
+                verification_weights.get(str(o.get("verification_status", "")), 3),
+                0 if str(o.get("status", "")).lower() == "active" else 1,
+                -parse_ts(o.get("updated_at")),
+                -parse_ts(o.get("created_at")),
+                str(o.get("id") or ""),
+            ),
+        )
+        survivor = dict(sorted_group[0])
+        survivor["id"] = cid
+
+        all_skills: list[str] = []
+        all_districts: list[str] = []
+        for it in sorted_group:
+            ts = it.get("target_skills") or []
+            if isinstance(ts, list):
+                for s in ts:
+                    if s and s not in all_skills:
+                        all_skills.append(s)
+            dc = it.get("district_coverage") or []
+            if isinstance(dc, list):
+                for d in dc:
+                    if d and d not in all_districts:
+                        all_districts.append(d)
+            elif isinstance(dc, str) and dc not in all_districts:
+                all_districts.append(dc)
+
+            if not survivor.get("description") and it.get("description"):
+                survivor["description"] = it["description"]
+            if not survivor.get("eligibility_criteria") and it.get("eligibility_criteria"):
+                survivor["eligibility_criteria"] = it["eligibility_criteria"]
+            if not survivor.get("application_url") and it.get("application_url"):
+                survivor["application_url"] = it["application_url"]
+            if not survivor.get("deadline") and it.get("deadline"):
+                survivor["deadline"] = it["deadline"]
+
+        survivor["target_skills"] = all_skills
+        survivor["district_coverage"] = all_districts
+        survivors.append(survivor)
+        merged_count += len(sorted_group) - 1
+        updated_id_count += 1
+
+    stats = {
+        "survivors": len(survivors),
+        "merged_duplicates": merged_count,
+        "updated_ids": updated_id_count,
+    }
+    return survivors, stats
+
+
 def create_gov_opportunity(data: dict[str, Any]) -> dict[str, Any]:
     try:
         client = get_client()
