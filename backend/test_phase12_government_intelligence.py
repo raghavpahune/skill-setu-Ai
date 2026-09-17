@@ -207,13 +207,44 @@ def test_expired_records_filtered_from_recommendations():
         "data_provenance": "GOVERNMENT_OFFICIAL",
         "is_demo": False,
     }
+    no_deadline_opp = {
+        "id": "gov-no-deadline-opp-1",
+        "name": "Ongoing EV Powertrain Apprenticeship",
+        "department": "Transport Dept",
+        "description": "EV continuous skill program",
+        "target_skills": ["Python", "Mechanical"],
+        "district_coverage": ["State-wide (Maharashtra)"],
+        "status": "active",
+        "deadline": None,
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
     create_gov_opportunity(expired_opp)
     create_gov_opportunity(active_opp)
+    create_gov_opportunity(no_deadline_opp)
 
     res_rec = client.get("/api/gov/opportunities/recommended/stu-001")
     assert res_rec.status_code == 200
     rec_ids = [o["id"] for o in res_rec.json()["opportunities"]]
     assert "gov-expired-opp-1" not in rec_ids
+
+    res_list = client.get("/api/gov/opportunities?is_demo=false")
+    assert res_list.status_code == 200
+    list_ids = [o["id"] for o in res_list.json()]
+    assert "gov-expired-opp-1" not in list_ids
+    assert "gov-future-opp-1" in list_ids
+    assert "gov-no-deadline-opp-1" in list_ids
+
+    from app.services.career_recommendation_engine import compute_career_recommendations
+    career_recs = compute_career_recommendations("stu-001", is_demo=False)
+    assert "recommended_careers" in career_recs
+    all_matched_gov_ids = [
+        opp["id"]
+        for ev in career_recs["recommended_careers"]
+        for opp in ev.get("matched_government_opportunities", [])
+    ]
+    assert "gov-expired-opp-1" not in all_matched_gov_ids
 
     expired_scheme = {
         "id": "88888888-8888-8888-8888-888888888888",

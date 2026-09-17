@@ -235,7 +235,7 @@ async def list_gov_opportunities(
                 is_demo=False,
                 limit=1000,
             ) or []
-            raw_records = [r for r in db_records if _is_authoritative_gov_opp(r)]
+            raw_records = [r for r in db_records if _is_authoritative_gov_opp(r) and not _is_expired(r.get("deadline"))]
         except Exception as e:
             logger.exception("[GovOpps] Supabase error listing opportunities: %s", e)
             raise HTTPException(

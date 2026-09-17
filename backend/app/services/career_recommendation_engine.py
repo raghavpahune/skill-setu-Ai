@@ -14,6 +14,7 @@ from typing import Any
 
 from app.core.security import is_demo_student_id
 from app.db import get_demo
+from app.routers.gov_opportunities import _is_expired
 
 logger = logging.getLogger("skillsetu.recommendation_engine")
 
@@ -327,6 +328,7 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
             and o.get("source_type") not in ("SANDBOX_SIMULATION", "DEMO_SYNTHETIC")
             and o.get("source") != "DEMO_SYNTHETIC"
             and o.get("data_provenance") != "DEMO_SYNTHETIC"
+            and not _is_expired(o.get("deadline"))
             and (
                 o.get("data_provenance") in ("GOVERNMENT_OFFICIAL", "VERIFIED_SNAPSHOT")
                 or o.get("source") in ("DATAGOV_IN", "OGD_DATAGOV_IN", "USER_SUBMITTED", "ADMIN_CREATED")
@@ -409,6 +411,8 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
         role_gov_ops = []
         for g in gov_opportunities:
             if g.get("status", "active").lower() != "active":
+                continue
+            if _is_expired(g.get("deadline")):
                 continue
             g_target = [s.lower() for s in (g.get("target_skills") or [])]
             g_text = f"{g.get('name', '')} {g.get('description', '')}".lower()
