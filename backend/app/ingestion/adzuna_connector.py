@@ -88,6 +88,10 @@ class ValidatedIngestedJob(BaseModel):
     skills: list[str] = Field(default_factory=list)
     skill_ids: list[str] = Field(default_factory=list)
     unmapped_skills: list[str] = Field(default_factory=list)
+    status: str = "active"
+    is_active: bool = True
+    data_provenance: str = "VERIFIED_EXTERNAL_FEED"
+    deadline: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -358,6 +362,10 @@ class AdzunaConnector(BaseSourceAdapter):
                 "skills": skill_names,
                 "skill_ids": skill_ids,
                 "unmapped_skills": unmapped_skills,
+                "status": "active",
+                "is_active": True,
+                "data_provenance": "VERIFIED_EXTERNAL_FEED",
+                "deadline": None,
             }
 
             try:

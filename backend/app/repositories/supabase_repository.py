@@ -1442,11 +1442,11 @@ VALID_JOB_COLUMNS: set[str] = {
     "snapshot_captured_at", "last_seen_at", "verified_at",
     "verification_status", "verification_method", "confidence",
     "freshness_status", "is_demo", "is_snapshot", "unmapped_skills", "created_at",
+    "status", "is_active", "data_provenance", "deadline",
 }
 
 
 def get_job(job_id: str) -> dict[str, Any] | None:
-    """Fetch single job/opportunity by id directly from Supabase."""
     try:
         client = get_client()
         res = client.table("jobs").select("*").eq("id", job_id).execute()
@@ -1460,21 +1460,57 @@ def get_job(job_id: str) -> dict[str, Any] | None:
         raise SupabaseRepositoryError(f"Database query failed for job: {e}") from e
 
 
+def get_job_by_source_external_id(source: str, external_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("jobs").select("*").eq("source", source).eq("external_id", external_id).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching job by source='%s', external_id='%s': %s", source, external_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for job: {e}") from e
+
+
+def get_job_by_content_hash(content_hash: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("jobs").select("*").eq("content_hash", content_hash).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching job by content_hash='%s': %s", content_hash, e)
+        raise SupabaseRepositoryError(f"Database query failed for job: {e}") from e
+
+
 def list_jobs(
     district: str | None = None,
     industry: str | None = None,
     opportunity_type: str | None = None,
+    status: str | None = None,
+    is_active: bool | None = None,
+    is_demo: bool | None = None,
     limit: int | None = 100,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """Authoritatively list jobs/opportunities directly from Supabase."""
     try:
         client = get_client()
         query = client.table("jobs").select("*")
-        if district:
-            query = query.ilike("district", f"%{district}%")
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        if status:
+            query = query.eq("status", status.lower())
+        if is_active is not None:
+            query = query.eq("is_active", is_active)
+        if district and district.strip().lower() not in ("all", "all districts"):
+            query = query.ilike("district", f"%{district.strip()}%")
         if industry:
-            query = query.ilike("industry", f"%{industry}%")
+            query = query.ilike("industry", f"%{industry.strip()}%")
         if opportunity_type:
             query = query.eq("opportunity_type", opportunity_type.lower())
 
@@ -1525,6 +1561,23 @@ def upsert_jobs(jobs_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("[SupabaseRepo] Failed upserting jobs: %s", e)
         raise SupabaseRepositoryError(f"Database upsert failed for jobs: {e}") from e
+
+
+def create_job(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        clean = {k: v for k, v in data.items() if k in VALID_JOB_COLUMNS}
+        if "id" not in clean or not clean["id"]:
+            clean["id"] = str(uuid.uuid4())
+        if not clean.get("external_id"):
+            clean["external_id"] = clean.get("content_hash") or clean["id"]
+        res = client.table("jobs").upsert(clean, on_conflict="source,external_id").execute()
+        return res.data[0] if getattr(res, "data", None) else clean
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating job: %s", e)
+        raise SupabaseRepositoryError(f"Database persistence failed for job: {e}") from e
 
 
 def batch_create_job_skills(job_skills_data: list[dict[str, Any]]) -> int:
