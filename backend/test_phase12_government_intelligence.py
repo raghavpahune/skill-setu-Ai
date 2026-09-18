@@ -1328,9 +1328,24 @@ def test_gov_opportunities_district_filter_all_and_all_districts():
     }
     create_gov_opportunity(all_dist_opp)
 
+    pune_only_opp = {
+        "id": "gov-pune-only-coverage-opp-1",
+        "name": "Pune Automotive Mechatronics Apprenticeship",
+        "department": "Heavy Industries",
+        "description": "Precision automotive manufacturing training in Pune industrial cluster",
+        "target_skills": ["Mechatronics", "Automotive"],
+        "district_coverage": ["Pune"],
+        "status": "active",
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    create_gov_opportunity(pune_only_opp)
+
     pune_repo = repo_list_gov_opps(district="Pune", is_demo=False, limit=1000)
     pune_repo_ids = [o["id"] for o in pune_repo]
     assert "gov-all-districts-coverage-opp-1" in pune_repo_ids
+    assert "gov-pune-only-coverage-opp-1" in pune_repo_ids
 
     all_repo = repo_list_gov_opps(district="all", is_demo=False, limit=1000)
     assert len(all_repo) >= len(pune_repo)
@@ -1342,14 +1357,19 @@ def test_gov_opportunities_district_filter_all_and_all_districts():
     assert res_pune.status_code == 200
     pune_api_ids = [o["id"] for o in res_pune.json()]
     assert "gov-all-districts-coverage-opp-1" in pune_api_ids
+    assert "gov-pune-only-coverage-opp-1" in pune_api_ids
 
     res_all = client.get("/api/gov/opportunities?district=all&is_demo=false")
     assert res_all.status_code == 200
-    assert len(res_all.json()) >= len(pune_api_ids)
+    all_api_ids = [o["id"] for o in res_all.json()]
+    assert "gov-pune-only-coverage-opp-1" in all_api_ids
+    assert len(all_api_ids) >= len(pune_api_ids)
 
     res_all_dist = client.get("/api/gov/opportunities?district=All%20Districts&is_demo=false")
     assert res_all_dist.status_code == 200
-    assert len(res_all_dist.json()) >= len(pune_api_ids)
+    all_dist_api_ids = [o["id"] for o in res_all_dist.json()]
+    assert "gov-pune-only-coverage-opp-1" in all_dist_api_ids
+    assert len(all_dist_api_ids) >= len(pune_api_ids)
 
 
 def test_career_recommendations_real_mode_propagates_repository_failure():
