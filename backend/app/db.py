@@ -147,6 +147,9 @@ def load_demo_data() -> int:
                             r["source"] = "DEMO_SYNTHETIC"
                         if "is_demo" not in r:
                             r["is_demo"] = True
+                        if f.stem == "jobs":
+                            r.setdefault("status", "active")
+                            r.setdefault("is_active", True)
                 _cache[f.stem] = records
                 loaded_count += len(records)
             elif isinstance(records, dict):
@@ -154,6 +157,9 @@ def load_demo_data() -> int:
                     records["source"] = "DEMO_SYNTHETIC"
                 if "is_demo" not in records:
                     records["is_demo"] = True
+                if f.stem == "jobs":
+                    records.setdefault("status", "active")
+                    records.setdefault("is_active", True)
                 _cache[f.stem] = [records]
                 loaded_count += 1
         except Exception as e:
@@ -301,6 +307,9 @@ def get_data_governance_summary() -> dict[str, Any]:
             elif tbl == "industry_signals":
                 from app.repositories.supabase_repository import list_industry_signals as list_signals_repo
                 records = list_signals_repo()
+            elif tbl == "jobs":
+                from app.repositories.supabase_repository import list_jobs as list_jobs_repo
+                records = list_jobs_repo(limit=None)
             else:
                 records = _cache.get(tbl, [])
         except Exception:
@@ -597,15 +606,52 @@ def persist_schemes_to_supabase(schemes: list[dict]):
 
 
 def persist_jobs_to_supabase(jobs: list[dict]):
-    """Write transformed opportunities/jobs to Supabase if connected."""
-    client = get_supabase_client()
-    if not client or not jobs:
+    if not jobs:
         return
-    for j in jobs:
-        try:
-            client.table("jobs").upsert(j, on_conflict="source,external_id").execute()
-        except Exception as e:
-            logger.warning("[DB] Failed persisting job/opp '%s' to Supabase: %s", j.get("id"), e)
+    from app.repositories.supabase_repository import upsert_jobs
+    upsert_jobs(jobs)
+
+
+def save_job(data: dict) -> dict:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    data.setdefault("created_at", now_iso)
+    data["updated_at"] = now_iso
+    data.setdefault("source", "USER_SUBMITTED")
+    data.setdefault("status", "active")
+    if "is_active" not in data:
+        data["is_active"] = True
+
+    from app.repositories.supabase_repository import create_job
+    persisted = None
+    client = get_supabase_client()
+    if client:
+        persisted = create_job(data)
+    merged = {**data, **(persisted or {})}
+
+    records = _cache.setdefault("jobs", [])
+    jid = merged.get("id")
+    source = merged.get("source")
+    ext_id = merged.get("external_id")
+    c_hash = merged.get("content_hash")
+    matched_idx = None
+    for idx, j in enumerate(records):
+        if jid and j.get("id") == jid:
+            matched_idx = idx
+            break
+        if source and ext_id and j.get("source") == source and j.get("external_id") == ext_id:
+            matched_idx = idx
+            break
+        if c_hash and j.get("content_hash") == c_hash:
+            matched_idx = idx
+            break
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+    _flush_real_table("jobs")
+    return merged
 
 
 def save_student_assessment(assessment_data: dict) -> dict:

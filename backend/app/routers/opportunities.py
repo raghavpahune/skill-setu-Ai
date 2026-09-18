@@ -1,8 +1,9 @@
 """Opportunities API — internships, apprenticeships, vocational training, and jobs."""
 import logging
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status as http_status
 from app.core.data_mode import is_explicit_demo_mode
 from app.db import get_demo
+from app.routers.gov_opportunities import _is_expired
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,46 @@ async def list_opportunities(
     else:
         try:
             from app.repositories import supabase_repository
+            from app.repositories.supabase_repository import SupabaseRepositoryError
             fetch_limit = 5000 if (skill or status or min_stipend or q) else (offset + limit)
-            jobs = supabase_repository.list_jobs(district=district, industry=industry, opportunity_type=opportunity_type, limit=fetch_limit) or []
-            job_ids = [j.get("id") for j in jobs if j.get("id")]
+            raw_jobs = supabase_repository.list_jobs(
+                district=district,
+                industry=industry,
+                opportunity_type=opportunity_type,
+                status=status if status else "active",
+                is_active=True,
+                is_demo=False,
+                limit=fetch_limit,
+            ) or []
+            job_ids = [j.get("id") for j in raw_jobs if j.get("id")]
             skills_by_job = _get_skills_by_job(is_demo=False, job_ids=job_ids)
-        except Exception:
-            jobs = []
+        except SupabaseRepositoryError as exc:
+            logger.error("[Opportunities API] Repository lookup failed: %s", exc)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Opportunities repository is temporarily unavailable.",
+            ) from exc
+        except Exception as exc:
+            logger.warning("[Opportunities API] Unexpected failure: %s", exc)
+            raw_jobs = []
             skills_by_job = {}
+
+        jobs = []
+        for j in raw_jobs:
+            if (
+                j.get("is_demo") is True
+                or j.get("source") == "DEMO_SYNTHETIC"
+                or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                or j.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                continue
+            if j.get("status", "active").lower() != "active" or j.get("is_active") is False:
+                continue
+            if (j.get("verification_status") or "").upper() in ("REJECTED", "UNVERIFIED"):
+                continue
+            if _is_expired(j.get("deadline")):
+                continue
+            jobs.append(j)
 
     filtered = []
     for j in jobs:
@@ -155,8 +189,37 @@ async def opportunities_summary(
     else:
         try:
             from app.repositories import supabase_repository
-            jobs = supabase_repository.list_jobs(limit=1000) or []
-        except Exception:
+            from app.repositories.supabase_repository import SupabaseRepositoryError
+            raw_jobs = supabase_repository.list_jobs(
+                status="active",
+                is_active=True,
+                is_demo=False,
+                limit=1000,
+            ) or []
+            jobs = []
+            for j in raw_jobs:
+                if (
+                    j.get("is_demo") is True
+                    or j.get("source") == "DEMO_SYNTHETIC"
+                    or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                    or j.get("data_provenance") == "DEMO_SYNTHETIC"
+                ):
+                    continue
+                if (
+                    j.get("status", "active").lower() == "active"
+                    and j.get("is_active") is not False
+                    and (j.get("verification_status") or "").upper() not in ("REJECTED", "UNVERIFIED")
+                    and not _is_expired(j.get("deadline"))
+                ):
+                    jobs.append(j)
+        except SupabaseRepositoryError as exc:
+            logger.error("[Opportunities API] Summary query failed: %s", exc)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Opportunities repository is temporarily unavailable.",
+            ) from exc
+        except Exception as exc:
+            logger.warning("[Opportunities API] Summary query failed: %s", exc)
             jobs = []
 
     type_counts: dict[str, int] = {}
@@ -212,29 +275,53 @@ async def get_opportunity(
     else:
         try:
             from app.repositories import supabase_repository
+            from app.repositories.supabase_repository import SupabaseRepositoryError
             job = supabase_repository.get_job(opportunity_id)
-            if job:
-                skills_by_job = _get_skills_by_job(is_demo=False, job_ids=[opportunity_id])
-                return {
-                    "id": job["id"],
-                    "title": job.get("title", ""),
-                    "company": job.get("company", ""),
-                    "district": job.get("district", ""),
-                    "industry": job.get("industry", ""),
-                    "opportunity_type": job.get("opportunity_type", "job"),
-                    "portal_source": job.get("portal_source", "direct"),
-                    "stipend_amount": job.get("stipend_amount"),
-                    "duration_months": job.get("duration_months"),
-                    "min_education": job.get("min_education"),
-                    "vacancies_count": job.get("vacancies_count", 1),
-                    "apply_url": job.get("apply_url"),
-                    "description": job.get("description", ""),
-                    "posted_date": job.get("posted_date"),
-                    "status": job.get("status", "active"),
-                    "source": job.get("source") or "UNKNOWN",
-                    "skills": skills_by_job.get(job["id"], []),
-                }
+        except SupabaseRepositoryError as e:
+            logger.error("[Opportunities] Repository lookup failed for %s: %s", opportunity_id, e)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Opportunities repository is temporarily unavailable.",
+            ) from e
         except Exception as e:
             logger.warning("[Opportunities] Repository lookup failed for %s: %s", opportunity_id, e)
+            job = None
+
+        if job:
+            if (
+                job.get("is_demo") is True
+                or job.get("source") == "DEMO_SYNTHETIC"
+                or job.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                or job.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                raise HTTPException(status_code=404, detail="Opportunity not found")
+            if (
+                job.get("status", "active").lower() != "active"
+                or job.get("is_active") is False
+                or (job.get("verification_status") or "").upper() in ("REJECTED", "UNVERIFIED")
+                or _is_expired(job.get("deadline"))
+            ):
+                raise HTTPException(status_code=404, detail="Opportunity not found")
+
+            skills_by_job = _get_skills_by_job(is_demo=False, job_ids=[opportunity_id])
+            return {
+                "id": job["id"],
+                "title": job.get("title", ""),
+                "company": job.get("company", ""),
+                "district": job.get("district", ""),
+                "industry": job.get("industry", ""),
+                "opportunity_type": job.get("opportunity_type", "job"),
+                "portal_source": job.get("portal_source", "direct"),
+                "stipend_amount": job.get("stipend_amount"),
+                "duration_months": job.get("duration_months"),
+                "min_education": job.get("min_education"),
+                "vacancies_count": job.get("vacancies_count", 1),
+                "apply_url": job.get("apply_url"),
+                "description": job.get("description", ""),
+                "posted_date": job.get("posted_date"),
+                "status": job.get("status", "active"),
+                "source": job.get("source") or "UNKNOWN",
+                "skills": skills_by_job.get(job["id"], []),
+            }
 
     raise HTTPException(status_code=404, detail="Opportunity not found")

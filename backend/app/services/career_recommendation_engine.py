@@ -376,6 +376,29 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
         except Exception:
             all_signals = []
 
+    if is_demo_mode:
+        all_jobs = get_demo("jobs")
+    else:
+        try:
+            from app.repositories.supabase_repository import list_jobs as list_jobs_repo
+            db_jobs = list_jobs_repo(status="active", is_active=True, is_demo=False, limit=1000) or []
+        except Exception as e:
+            logger.error("Failed querying authoritative jobs for student '%s': %s", student_id, e)
+            raise RuntimeError(f"Database error querying authoritative jobs: {e}") from e
+
+        valid_jobs = [
+            j for j in db_jobs
+            if j.get("is_demo") is False
+            and j.get("source") != "DEMO_SYNTHETIC"
+            and j.get("source_type") not in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+            and j.get("data_provenance") != "DEMO_SYNTHETIC"
+            and j.get("status", "active").lower() == "active"
+            and j.get("is_active") is not False
+            and (j.get("verification_status") or "").upper() not in ("REJECTED", "UNVERIFIED")
+            and not _is_expired(j.get("deadline"))
+        ]
+        all_jobs = valid_jobs
+
     career_evaluations = []
     for role_def in CAREER_ROLES_BENCHMARK:
         role_name = role_def["role_name"]
@@ -485,6 +508,33 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
             reasons.append(f"Supported by {len(role_courses)} accredited training programs across Maharashtra institutes.")
         if role_gov_ops:
             reasons.append(f"Supported by government skill development & apprenticeship initiatives ({role_gov_ops[0]['name']}).")
+
+        role_jobs = []
+        for j in all_jobs:
+            if j.get("status", "active").lower() != "active" or j.get("is_active") is False:
+                continue
+            if (j.get("verification_status") or "").upper() in ("REJECTED", "UNVERIFIED"):
+                continue
+            if _is_expired(j.get("deadline")):
+                continue
+            j_skills = [s.lower() for s in (j.get("skills") or [])]
+            j_text = f"{j.get('title', '')} {j.get('description', '')} {j.get('company', '')}".lower()
+            match_job = any(req.lower() in j_skills or req.lower() in j_text for req in role_def["required_skill_names"])
+            if match_job:
+                role_jobs.append({
+                    "id": j.get("id"),
+                    "title": j.get("title"),
+                    "company": j.get("company"),
+                    "district": j.get("district"),
+                    "industry": j.get("industry"),
+                    "apply_url": j.get("apply_url") or j.get("source_url"),
+                    "source": j.get("source", "DEMO_SYNTHETIC" if is_demo_mode else "ADZUNA_API"),
+                    "opportunity_type": j.get("opportunity_type", "job"),
+                    "vacancies_count": j.get("vacancies_count", 1),
+                })
+
+        if role_jobs:
+            reasons.append(f"Linked with {len(role_jobs)} active job vacancies ({role_jobs[0]['title']} at {role_jobs[0]['company']}).")
         if not reasons:
             reasons.append("Emerging high-demand vocational domain in Maharashtra's industrial corridors.")
 
@@ -522,6 +572,7 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
             "matched_institute_training": role_courses[:3],
             "matched_industry_signals": role_signals[:3],
             "matched_government_opportunities": role_gov_ops[:3],
+            "matched_real_jobs": role_jobs[:4],
             "explanation_reasons": reasons,
             "is_target_goal": bool(target_career_raw.lower() in role_name.lower() or role_name.lower() in target_career_raw.lower()),
         })

@@ -232,11 +232,13 @@ class SyncEngine:
                             added_j, updated_j = self._upsert_jobs(orch_resp.records)
                             adz_added += added_j
                             adz_updated += updated_j
+                            adz_skipped += max(0, len(orch_resp.records) - (added_j + updated_j))
                             self._upsert_job_skills(orch_resp.records)
                         elif orch_resp.provenance == SOURCE_TYPE_LIVE_API:
                             added_j, updated_j = self._upsert_jobs(orch_resp.records)
                             adz_added += added_j
                             adz_updated += updated_j
+                            adz_skipped += max(0, len(orch_resp.records) - (added_j + updated_j))
                             self._upsert_job_skills(orch_resp.records)
 
                     total_fetched += adz_fetched
@@ -499,8 +501,28 @@ class SyncEngine:
         added = 0
         updated = 0
         now_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        valid_incoming = []
 
-        for job in incoming_jobs:
+        from app.ingestion.job_intelligence import validate_and_normalize
+        from app.ingestion.base_adapter import compute_freshness
+
+        for raw_job in incoming_jobs:
+            job, err = validate_and_normalize(
+                raw_job,
+                is_demo=is_demo,
+                is_trusted_feed=(not is_demo and raw_job.get("source_type") in ("LIVE_API", "VERIFIED_SNAPSHOT", "OFFICIAL_GOV")),
+            )
+            if err or not job:
+                logger.warning("[SyncEngine] Skipping invalid job record: %s", err)
+                continue
+
+            if is_demo is False and (
+                job.get("is_demo") is True
+                or job.get("source") == "DEMO_SYNTHETIC"
+                or job.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                continue
+
             c_hash = job.get("content_hash")
             source = job.get("source")
             ext_id = job.get("external_id") or job.get("ext_id")
@@ -515,12 +537,23 @@ class SyncEngine:
 
             if target_record is not None:
                 job["id"] = target_record.get("id") or job.get("id") or str(uuid.uuid4())
+                job["fetched_at"] = target_record.get("fetched_at") or job.get("fetched_at") or now_ts
                 job["last_synced_at"] = now_ts
                 job["last_seen_at"] = now_ts
+                if target_record.get("verified_at"):
+                    job["verified_at"] = target_record["verified_at"]
+                job["freshness_status"] = compute_freshness(
+                    published_at=job.get("published_at"),
+                    snapshot_captured_at=job.get("snapshot_captured_at"),
+                    last_seen_at=now_ts,
+                )
                 target_record.update(job)
+                raw_job.update(job)
+                valid_incoming.append(job)
                 updated += 1
             else:
                 job["id"] = job.get("id") or str(uuid.uuid4())
+                job["fetched_at"] = job.get("fetched_at") or now_ts
                 job["last_synced_at"] = now_ts
                 job["last_seen_at"] = now_ts
                 persisted_jobs.append(job)
@@ -528,13 +561,15 @@ class SyncEngine:
                     source_id_index[(source, ext_id)] = job
                 if c_hash:
                     hash_index[c_hash] = job
+                raw_job.update(job)
+                valid_incoming.append(job)
                 added += 1
 
         if is_demo:
             set_demo("jobs", persisted_jobs)
         else:
             from app.repositories.supabase_repository import upsert_jobs
-            upsert_jobs(incoming_jobs)
+            upsert_jobs(valid_incoming)
 
         return added, updated
 
