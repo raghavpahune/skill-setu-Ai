@@ -48,6 +48,16 @@ class GovOpportunitySubmission(BaseModel):
             return f"https://{clean}"
         return clean
 
+    @field_validator("deadline")
+    @classmethod
+    def validate_deadline(cls, v: str | None) -> str | None:
+        if not v or not isinstance(v, str) or not v.strip():
+            return None
+        dt = parse_iso_timestamp(v)
+        if dt == UTC_MIN:
+            raise ValueError("Invalid deadline format. Must be a valid ISO timestamp.")
+        return v.strip()
+
 
 @router.post("/gov/opportunities", status_code=http_status.HTTP_201_CREATED)
 async def create_gov_opportunity(
@@ -103,7 +113,7 @@ def _is_expired(deadline: Any) -> bool:
         return False
     dt = parse_iso_timestamp(deadline)
     if dt == UTC_MIN:
-        return False
+        return True
     return dt < datetime.now(timezone.utc)
 
 
@@ -272,14 +282,14 @@ async def list_gov_opportunities(
         if status and r.get("status", "active").lower() != status.lower():
             continue
 
-        if district:
-            d_lower = district.lower()
+        if district and district.strip().lower() not in ("all", "all districts"):
+            d_lower = district.strip().lower()
             coverage = r.get("district_coverage", "")
             if isinstance(coverage, list):
-                districts = [d.lower() for d in coverage]
+                districts = [d.strip().lower() for d in coverage]
             else:
-                districts = [coverage.lower()] if coverage else []
-            if d_lower not in districts and not any("state-wide" in d or "maharashtra" in d or d == "all" for d in districts):
+                districts = [coverage.strip().lower()] if coverage else []
+            if d_lower not in districts and not any("state-wide" in d or "maharashtra" in d or d in ("all", "all districts") or "all districts" in d for d in districts):
                 continue
 
         if domain or skill:

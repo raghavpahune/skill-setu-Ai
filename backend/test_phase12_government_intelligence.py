@@ -668,7 +668,8 @@ def test_industry_signals_existing_signal_update_propagates_trust_fields():
         }
     ]
 
-    summary = industry_ingestor.ingest_from_feeds(feeds=verified_update, is_demo=False)
+    with patch.object(industry_ingestor, "fetch_external_feeds", return_value=verified_update):
+        summary = industry_ingestor.ingest_from_feeds(is_demo=False)
     assert summary["records_updated"] >= 1
 
     updated_rec = get_industry_signal_by_id("ind-sig-trust-test-1")
@@ -1061,21 +1062,22 @@ def test_create_upsert_cannot_recreate_duplicate_canonical_opportunity():
         "district_coverage": ["Satara", "Kolhapur"],
         "status": "active",
     }
-    saved1 = save_gov_opportunity(dict(opp_data))
-    cid1 = saved1["id"]
-    expected_cid = generate_gov_opportunity_id(opp_data["name"], opp_data["department"])
-    assert cid1 == expected_cid
+    with patch("app.db._flush_real_table"):
+        saved1 = save_gov_opportunity(dict(opp_data))
+        cid1 = saved1["id"]
+        expected_cid = generate_gov_opportunity_id(opp_data["name"], opp_data["department"])
+        assert cid1 == expected_cid
 
-    updated_data = {
-        "name": "  statewide precision agriculture training  ",
-        "department": " agriculture & rural development ",
-        "description": "Updated training program description",
-        "district_coverage": ["Satara", "Kolhapur", "Solapur"],
-        "status": "active",
-    }
-    saved2 = save_gov_opportunity(dict(updated_data))
-    cid2 = saved2["id"]
-    assert cid2 == expected_cid
+        updated_data = {
+            "name": "  statewide precision agriculture training  ",
+            "department": " agriculture & rural development ",
+            "description": "Updated training program description",
+            "district_coverage": ["Satara", "Kolhapur", "Solapur"],
+            "status": "active",
+        }
+        saved2 = save_gov_opportunity(dict(updated_data))
+        cid2 = saved2["id"]
+        assert cid2 == expected_cid
 
     from app.db import _cache
     cached_matches = [
@@ -1149,7 +1151,8 @@ def test_save_gov_opportunity_multiple_cache_matches_dedup():
         "district_coverage": ["Pune"],
         "status": "active",
     }
-    saved = save_gov_opportunity(incoming)
+    with patch("app.db._flush_real_table"):
+        saved = save_gov_opportunity(incoming)
     assert saved["id"] == canonical_id
     assert saved["description"] == "Authoritative merged description"
 
@@ -1220,3 +1223,187 @@ def test_update_gov_opportunity_repo_name_department_and_canonical_id():
 
     with pytest.raises(GovOpportunityNotFoundError):
         update_gov_opportunity_repo("gov-completely-absent-id", {"name": "Nonexistent"})
+
+
+def test_caller_supplied_feed_records_cannot_self_declare_verified_status():
+    from app.ingestion.industry_intelligence import industry_ingestor
+    from app.db import get_industry_signal_by_id
+
+    untrusted_payload = [
+        {
+            "id": "ind-sig-untrusted-caller-1",
+            "title": "Untrusted Injected Feed Item",
+            "description": "Caller tries to claim approved verified external feed status",
+            "category": "TOOL_RELEASE",
+            "industry": "Software Engineering",
+            "skills": ["Python"],
+            "tools": ["Git"],
+            "source_url": "https://untrusted.example.com/item1",
+            "source_name": "Untrusted Feed Publisher",
+            "source_type": "TECH_DOCUMENTATION",
+            "data_provenance": "VERIFIED_EXTERNAL_FEED",
+            "validation_status": "APPROVED",
+            "is_active": True,
+            "is_demo": False,
+            "published_at": "2026-09-17T12:00:00Z",
+        }
+    ]
+
+    summary = industry_ingestor.ingest_from_feeds(feeds=untrusted_payload, is_demo=False)
+    assert summary["records_added"] >= 1
+
+    saved = get_industry_signal_by_id("ind-sig-untrusted-caller-1")
+    assert saved is not None
+    assert saved["data_provenance"] == "UNVERIFIED_EXTERNAL_SOURCE"
+    assert saved["validation_status"] == "PENDING"
+    assert saved["is_active"] is False
+
+
+def test_gov_opportunity_rejects_malformed_deadline_at_submission():
+    token = create_access_token(data={"sub": "usr-gov-001", "email": "government@skillsetu.gov.in", "role": "GOVERNMENT"})
+    res = client.post(
+        "/api/gov/opportunities",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "name": "Malformed Deadline Test Apprenticeship",
+            "department": "Higher Education",
+            "description": "Submission with invalid non-ISO deadline string",
+            "deadline": "not-a-valid-timestamp-value",
+        },
+    )
+    assert res.status_code == 422
+
+
+def test_malformed_deadline_treated_as_expired_and_ineligible():
+    from app.routers.gov_opportunities import _is_expired
+    from app.services.career_recommendation_engine import compute_career_recommendations
+
+    assert _is_expired("completely-invalid-date-string") is True
+    assert _is_expired("") is False
+    assert _is_expired(None) is False
+
+    malformed_opp = {
+        "id": "gov-malformed-deadline-opp-1",
+        "name": "Malformed Deadline Cloud Engineering Fellowship",
+        "department": "Information Technology",
+        "description": "Cloud infrastructure and devops hands-on apprenticeship",
+        "target_skills": ["Cloud", "DevOps"],
+        "district_coverage": ["State-wide (Maharashtra)"],
+        "status": "active",
+        "deadline": "invalid-garbage-timestamp",
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    create_gov_opportunity(malformed_opp)
+
+    res_list = client.get("/api/gov/opportunities?is_demo=false")
+    assert res_list.status_code == 200
+    list_ids = [o["id"] for o in res_list.json()]
+    assert "gov-malformed-deadline-opp-1" not in list_ids
+
+    career_recs = compute_career_recommendations("stu-001", is_demo=False)
+    matched_ids = [
+        opp["id"]
+        for ev in career_recs.get("recommended_careers", [])
+        for opp in ev.get("matched_government_opportunities", [])
+    ]
+    assert "gov-malformed-deadline-opp-1" not in matched_ids
+
+
+def test_gov_opportunities_district_filter_all_and_all_districts():
+    from app.repositories.supabase_repository import list_gov_opportunities as repo_list_gov_opps
+
+    all_dist_opp = {
+        "id": "gov-all-districts-coverage-opp-1",
+        "name": "Statewide Renewable Power Technician",
+        "department": "Renewable Energy",
+        "description": "Clean energy field training for all maharashtra districts",
+        "target_skills": ["Solar", "Wind"],
+        "district_coverage": ["All Districts"],
+        "status": "active",
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    create_gov_opportunity(all_dist_opp)
+
+    pune_repo = repo_list_gov_opps(district="Pune", is_demo=False, limit=1000)
+    pune_repo_ids = [o["id"] for o in pune_repo]
+    assert "gov-all-districts-coverage-opp-1" in pune_repo_ids
+
+    all_repo = repo_list_gov_opps(district="all", is_demo=False, limit=1000)
+    assert len(all_repo) >= len(pune_repo)
+
+    all_dist_repo = repo_list_gov_opps(district="All Districts", is_demo=False, limit=1000)
+    assert len(all_dist_repo) >= len(pune_repo)
+
+    res_pune = client.get("/api/gov/opportunities?district=Pune&is_demo=false")
+    assert res_pune.status_code == 200
+    pune_api_ids = [o["id"] for o in res_pune.json()]
+    assert "gov-all-districts-coverage-opp-1" in pune_api_ids
+
+    res_all = client.get("/api/gov/opportunities?district=all&is_demo=false")
+    assert res_all.status_code == 200
+    assert len(res_all.json()) >= len(pune_api_ids)
+
+    res_all_dist = client.get("/api/gov/opportunities?district=All%20Districts&is_demo=false")
+    assert res_all_dist.status_code == 200
+    assert len(res_all_dist.json()) >= len(pune_api_ids)
+
+
+def test_career_recommendations_real_mode_propagates_repository_failure():
+    from app.services.career_recommendation_engine import compute_career_recommendations
+
+    with patch("app.repositories.supabase_repository.list_gov_opportunities", side_effect=RuntimeError("Simulated database outage")), \
+         patch("app.db.get_supabase_client", return_value=None):
+        with pytest.raises(RuntimeError, match="Database error querying authoritative gov_opportunities"):
+            compute_career_recommendations("stu-001", is_demo=False)
+
+
+def test_career_recommendations_excludes_rejected_gov_opportunities():
+    from app.services.career_recommendation_engine import compute_career_recommendations
+
+    rejected_opp = {
+        "id": "gov-rejected-rec-opp-1",
+        "name": "Rejected Drone Operator Scheme",
+        "department": "Transport",
+        "description": "Unverified drone operator trial",
+        "target_skills": ["Python", "Mechanical"],
+        "district_coverage": ["State-wide (Maharashtra)"],
+        "status": "active",
+        "verification_status": "REJECTED",
+        "source": "GOVERNMENT_OFFICIAL",
+        "data_provenance": "GOVERNMENT_OFFICIAL",
+        "is_demo": False,
+    }
+    create_gov_opportunity(rejected_opp)
+
+    career_recs = compute_career_recommendations("stu-001", is_demo=False)
+    matched_ids = [
+        opp["id"]
+        for ev in career_recs.get("recommended_careers", [])
+        for opp in ev.get("matched_government_opportunities", [])
+    ]
+    assert "gov-rejected-rec-opp-1" not in matched_ids
+
+
+def test_save_gov_opportunity_test_isolation_preserves_disk_file():
+    from pathlib import Path
+    from app.db import save_gov_opportunity
+
+    real_file = Path(__file__).resolve().parent.parent / "data" / "real" / "gov_opportunities.json"
+    before_bytes = real_file.read_bytes() if real_file.is_file() else b""
+
+    with patch("app.db._flush_real_table") as mock_flush:
+        saved = save_gov_opportunity({
+            "name": "Isolated Disk Write Opportunity",
+            "department": "Ecology Council",
+            "description": "Testing that mock flush prevents real disk contamination",
+            "status": "active",
+        })
+        assert saved is not None
+        assert mock_flush.called
+
+    after_bytes = real_file.read_bytes() if real_file.is_file() else b""
+    assert before_bytes == after_bytes

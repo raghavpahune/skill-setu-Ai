@@ -512,7 +512,12 @@ class IndustryIntelligenceIngestor:
                 continue
         return fetched_items
 
-    def validate_and_normalize(self, raw_data: dict[str, Any], is_demo: bool | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    def validate_and_normalize(
+        self,
+        raw_data: dict[str, Any],
+        is_demo: bool | None = None,
+        is_trusted_feed: bool = False,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         if is_demo is False:
             is_demo_rec = bool(
                 raw_data.get("is_demo")
@@ -531,14 +536,22 @@ class IndustryIntelligenceIngestor:
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         sig_id = str(raw_data.get("id") or raw_data.get("external_id") or f"ind-sig-{uuid.uuid4().hex[:10]}")
         is_demo = bool(raw_data.get("is_demo") or raw_data.get("source_label") == "DEMO_SYNTHETIC" or raw_data.get("source_type") == "DEMO_SYNTHETIC" or raw_data.get("data_provenance") == "DEMO_SYNTHETIC")
-        data_provenance = str(raw_data.get("data_provenance") or ("DEMO_SYNTHETIC" if is_demo else "UNVERIFIED_EXTERNAL_SOURCE"))
-        published_at = raw_data.get("published_at") or (now_iso if data_provenance == "LIVE_API" else None)
-        val_status = str(raw_data.get("validation_status") or submission.validation_status)
-        if data_provenance == "UNVERIFIED_EXTERNAL_SOURCE":
+
+        if is_demo:
+            data_provenance = str(raw_data.get("data_provenance") or "DEMO_SYNTHETIC")
+            published_at = raw_data.get("published_at")
+            val_status = str(raw_data.get("validation_status") or submission.validation_status)
+            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else submission.is_active
+        elif is_trusted_feed:
+            data_provenance = str(raw_data.get("data_provenance") or "VERIFIED_EXTERNAL_FEED")
+            published_at = raw_data.get("published_at")
+            val_status = str(raw_data.get("validation_status") or STATUS_APPROVED)
+            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else True
+        else:
+            data_provenance = "UNVERIFIED_EXTERNAL_SOURCE"
+            published_at = raw_data.get("published_at")
             val_status = STATUS_PENDING
             is_active_flag = False
-        else:
-            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else submission.is_active
 
         freshness = calculate_freshness(published_at, is_active_flag, val_status)
 
@@ -603,10 +616,13 @@ class IndustryIntelligenceIngestor:
         if is_demo is False:
             if feeds is not None:
                 feed_data = feeds
+                is_trusted_feed = False
             else:
                 feed_data = self.fetch_external_feeds()
+                is_trusted_feed = True
         else:
             feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
+            is_trusted_feed = False
 
         if not feed_data:
             fetch_errors = getattr(self, "_last_fetch_errors", [])
@@ -671,7 +687,7 @@ class IndustryIntelligenceIngestor:
         errors = []
 
         for raw_item in feed_data:
-            normalized, err = self.validate_and_normalize(raw_item, is_demo=is_demo)
+            normalized, err = self.validate_and_normalize(raw_item, is_demo=is_demo, is_trusted_feed=is_trusted_feed)
             if err:
                 rejected += 1
                 errors.append(f"Rejected item '{raw_item.get('title', 'Unknown')}': {err}")

@@ -319,8 +319,8 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
                 from app.repositories.supabase_repository import list_gov_opportunities
                 all_opps = list_gov_opportunities(status="active", is_demo=False, limit=1000) or []
         except Exception as e:
-            logger.warning("Failed querying authoritative gov_opportunities for student '%s': %s", student_id, e)
-            all_opps = []
+            logger.error("Failed querying authoritative gov_opportunities for student '%s': %s", student_id, e)
+            raise RuntimeError(f"Database error querying authoritative gov_opportunities: {e}") from e
 
         real_opps = [
             o for o in all_opps
@@ -328,6 +328,7 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
             and o.get("source_type") not in ("SANDBOX_SIMULATION", "DEMO_SYNTHETIC")
             and o.get("source") != "DEMO_SYNTHETIC"
             and o.get("data_provenance") != "DEMO_SYNTHETIC"
+            and (o.get("verification_status") or "").upper() != "REJECTED"
             and not _is_expired(o.get("deadline"))
             and (
                 o.get("data_provenance") in ("GOVERNMENT_OFFICIAL", "VERIFIED_SNAPSHOT")
@@ -411,6 +412,8 @@ def compute_career_recommendations(student_id: str, is_demo: bool | None = None)
         role_gov_ops = []
         for g in gov_opportunities:
             if g.get("status", "active").lower() != "active":
+                continue
+            if (g.get("verification_status") or "").upper() == "REJECTED":
                 continue
             if _is_expired(g.get("deadline")):
                 continue

@@ -511,6 +511,8 @@ CREATE TABLE IF NOT EXISTS gov_opportunities (
     is_demo BOOLEAN DEFAULT FALSE,
     user_id TEXT,
     user_email TEXT,
+    verification_status TEXT,
+    source_type TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );

@@ -18,7 +18,7 @@ def _is_expired(deadline: Any) -> bool:
         return False
     dt = parse_iso_timestamp(deadline)
     if dt == UTC_MIN:
-        return False
+        return True
     return dt < datetime.now(timezone.utc)
 
 

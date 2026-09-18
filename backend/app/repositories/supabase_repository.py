@@ -1898,7 +1898,7 @@ def list_gov_opportunities(
         if is_demo is not None:
             query = query.eq("is_demo", is_demo)
 
-        if not district or district.lower() == "all":
+        if not district or district.strip().lower() in ("all", "all districts"):
             if limit is not None and limit <= 1000:
                 res = query.order("id").range(offset, offset + limit - 1).execute()
                 return getattr(res, "data", []) or []
@@ -1915,7 +1915,7 @@ def list_gov_opportunities(
                 curr_offset += fetch_size
             return all_opps
 
-        d_clean = district.lower()
+        d_clean = district.strip().lower()
         matched_opps = []
         skipped = 0
         curr_offset = 0
@@ -1928,10 +1928,10 @@ def list_gov_opportunities(
             for r in batch:
                 coverage = r.get("district_coverage", "")
                 if isinstance(coverage, list):
-                    districts = [d.lower() for d in coverage]
+                    districts = [d.strip().lower() for d in coverage]
                 else:
-                    districts = [coverage.lower()] if coverage else []
-                if d_clean in districts or any("state-wide" in d or "maharashtra" in d or d == "all" for d in districts):
+                    districts = [coverage.strip().lower()] if coverage else []
+                if d_clean in districts or any("state-wide" in d or "maharashtra" in d or d in ("all", "all districts") or "all districts" in d for d in districts):
                     if skipped < offset:
                         skipped += 1
                     else:
