@@ -32,7 +32,14 @@ def match_student_to_jobs(
     for job in jobs:
         if job.get("is_active") is False or str(job.get("status", "active")).lower() != "active":
             continue
-        if str(job.get("verification_status", "")).upper() in ("REJECTED", "UNVERIFIED"):
+        is_demo_rec = bool(
+            job.get("is_demo") is True
+            or job.get("source") == "DEMO_SYNTHETIC"
+            or job.get("source_type") == "DEMO_SYNTHETIC"
+            or job.get("data_provenance") == "DEMO_SYNTHETIC"
+        )
+        v_status = str(job.get("verification_status") or ("VERIFIED" if is_demo_rec else "")).upper()
+        if v_status != "VERIFIED":
             continue
         if _is_expired(job.get("deadline")):
             continue

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import uuid
 from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
@@ -577,3 +578,211 @@ def test_existing_phase12_behavior_remains_intact(client):
 
     resp_schemes = client.get("/api/schemes?is_demo=true")
     assert resp_schemes.status_code == 200
+
+
+def test_job_id_deterministic_uuid5_generation():
+    raw = {
+        "id": "provider-external-12345",
+        "title": "Machine Learning Engineer",
+        "company": "Persistent",
+        "district": "Pune",
+        "apply_url": "https://persistent.com/careers/ml",
+        "source": "ADZUNA_API",
+        "external_id": "adz-12345",
+    }
+    norm1, err1 = validate_and_normalize(raw, is_demo=False, is_trusted_feed=True)
+    assert err1 is None
+    assert norm1 is not None
+    parsed_uuid = uuid.UUID(norm1["id"])
+    assert str(parsed_uuid) == norm1["id"]
+    assert norm1["external_id"] == "adz-12345"
+
+    norm2, err2 = validate_and_normalize(raw, is_demo=False, is_trusted_feed=True)
+    assert norm2["id"] == norm1["id"]
+
+    demo_raw = {
+        "id": "job-0001",
+        "title": "DevOps Engineer",
+        "company": "Persistent Systems",
+        "district": "Pune",
+        "apply_url": "https://example.com/demo",
+        "is_demo": True,
+    }
+    demo_norm, demo_err = validate_and_normalize(demo_raw, is_demo=True, is_trusted_feed=False)
+    assert demo_err is None
+    assert demo_norm["id"] == "job-0001"
+
+
+def test_sync_engine_skips_invalid_jobs_without_fallback():
+    from app.ingestion.sync_engine import SyncEngine
+    engine = SyncEngine()
+    invalid_raw = {
+        "title": "A",
+        "company": "",
+        "source": "ADZUNA_API",
+        "external_id": "invalid-1",
+    }
+    with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=True):
+        added, updated = engine._upsert_jobs([invalid_raw])
+        assert added == 0
+        assert updated == 0
+
+
+def test_post_jobs_persists_job_skills_linkages(client, employer_headers):
+    mock_saved = {
+        "id": "3b6a9c18-9715-4673-89b0-137bfa5db2f4",
+        "title": "Python Developer",
+        "company": "Tata Consultancy",
+        "district": "Pune",
+        "industry": "IT",
+        "description": "Building FastAPI applications with Python skills.",
+        "opportunity_type": "job",
+        "apply_url": "https://tcs.com/apply",
+        "status": "pending",
+        "is_active": False,
+        "verification_status": "PENDING",
+    }
+    mock_master_skills = [
+        {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Python", "synonyms": ["python3"]},
+        {"id": "550e8400-e29b-41d4-a716-446655440001", "name": "FastAPI", "synonyms": []},
+    ]
+    captured_links = []
+    with patch("app.routers.jobs.save_job", return_value=mock_saved), \
+         patch("app.repositories.supabase_repository.list_skills", return_value=mock_master_skills), \
+         patch("app.repositories.supabase_repository.batch_create_job_skills", side_effect=lambda links: captured_links.extend(links)):
+        payload = {
+            "title": "Python Developer",
+            "company": "Tata Consultancy",
+            "district": "Pune",
+            "industry": "IT",
+            "description": "Building FastAPI applications with Python skills.",
+            "apply_url": "https://tcs.com/apply",
+            "skills": ["Python", "FastAPI", "NonExistentSkill123"],
+        }
+        resp = client.post("/api/jobs", json=payload, headers=employer_headers)
+        assert resp.status_code == 201
+        assert len(captured_links) == 2
+        linked_skill_ids = [link["skill_id"] for link in captured_links]
+        assert "550e8400-e29b-41d4-a716-446655440000" in linked_skill_ids
+        assert "550e8400-e29b-41d4-a716-446655440001" in linked_skill_ids
+        for link in captured_links:
+            assert link["job_id"] == "3b6a9c18-9715-4673-89b0-137bfa5db2f4"
+
+
+def test_jobs_endpoints_demo_mode_consistency(client):
+    mock_jobs = [
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440010",
+            "title": "Verified Real Software Engineer",
+            "company": "Tech Corp",
+            "district": "Pune",
+            "industry": "IT",
+            "status": "active",
+            "is_active": True,
+            "verification_status": "VERIFIED",
+            "is_demo": False,
+        },
+        {
+            "id": "job-demo-leak",
+            "title": "Leaked Synthetic Job",
+            "company": "Fake Corp",
+            "district": "Pune",
+            "industry": "IT",
+            "status": "active",
+            "is_active": True,
+            "verification_status": "VERIFIED",
+            "source": "DEMO_SYNTHETIC",
+            "is_demo": True,
+        },
+    ]
+    called_kwargs = {}
+    def mock_list_jobs(**kwargs):
+        called_kwargs.update(kwargs)
+        return mock_jobs
+
+    with patch("app.repositories.supabase_repository.list_jobs", side_effect=mock_list_jobs):
+        resp = client.get("/api/jobs")
+        assert resp.status_code == 200
+        assert called_kwargs.get("is_demo") is False
+        assert called_kwargs.get("status") == "active"
+        assert called_kwargs.get("is_active") is True
+        data = resp.json()
+        ids = [j["id"] for j in data]
+        assert "550e8400-e29b-41d4-a716-446655440010" in ids
+        assert "job-demo-leak" not in ids
+
+
+def test_job_matching_strict_verified_only():
+    profile = {
+        "id": "usr-student-test",
+        "skills": ["Python", "FastAPI"],
+    }
+    candidate_jobs = [
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440020",
+            "title": "Verified Developer",
+            "company": "Corp A",
+            "district": "Pune",
+            "skills": ["Python"],
+            "verification_status": "VERIFIED",
+            "status": "active",
+            "is_active": True,
+        },
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440021",
+            "title": "Pending Developer",
+            "company": "Corp B",
+            "district": "Pune",
+            "skills": ["Python"],
+            "verification_status": "PENDING",
+            "status": "active",
+            "is_active": True,
+        },
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440022",
+            "title": "Rejected Developer",
+            "company": "Corp C",
+            "district": "Pune",
+            "skills": ["Python"],
+            "verification_status": "REJECTED",
+            "status": "active",
+            "is_active": True,
+        },
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440023",
+            "title": "Unverified Developer",
+            "company": "Corp D",
+            "district": "Pune",
+            "skills": ["Python"],
+            "verification_status": "UNVERIFIED",
+            "status": "active",
+            "is_active": True,
+        },
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440024",
+            "title": "Missing Verification Developer",
+            "company": "Corp E",
+            "district": "Pune",
+            "skills": ["Python"],
+            "status": "active",
+            "is_active": True,
+        },
+        {
+            "id": "550e8400-e29b-41d4-a716-446655440025",
+            "title": "Malformed Developer",
+            "company": "Corp F",
+            "district": "Pune",
+            "skills": ["Python"],
+            "verification_status": "MALFORMED_STATUS",
+            "status": "active",
+            "is_active": True,
+        },
+    ]
+    matches = match_student_to_jobs(profile, candidate_jobs)
+    matched_ids = [m["job_id"] for m in matches]
+    assert "550e8400-e29b-41d4-a716-446655440020" in matched_ids
+    assert "550e8400-e29b-41d4-a716-446655440021" not in matched_ids
+    assert "550e8400-e29b-41d4-a716-446655440022" not in matched_ids
+    assert "550e8400-e29b-41d4-a716-446655440023" not in matched_ids
+    assert "550e8400-e29b-41d4-a716-446655440024" not in matched_ids
+    assert "550e8400-e29b-41d4-a716-446655440025" not in matched_ids

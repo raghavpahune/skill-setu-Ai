@@ -63,7 +63,8 @@ async def list_jobs(
     limit: int = 50,
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    if is_explicit_demo_mode(is_demo):
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+    if is_demo_mode:
         jobs = get_demo("jobs")
         if district and district.strip().lower() not in ("all", "all districts"):
             jobs = [j for j in jobs if j.get("district", "").lower() == district.strip().lower()]
@@ -79,9 +80,9 @@ async def list_jobs(
             district=district,
             industry=industry,
             opportunity_type=opportunity_type,
-            status="active" if is_demo is False else None,
-            is_active=True if is_demo is False else None,
-            is_demo=False if is_demo is False else None,
+            status="active",
+            is_active=True,
+            is_demo=False,
             limit=limit * 2 if limit else 100,
         )
     except SupabaseRepositoryError as exc:
@@ -96,14 +97,13 @@ async def list_jobs(
 
     filtered_jobs = []
     for j in (repo_jobs or []):
-        if is_demo is False:
-            if (
-                j.get("is_demo") is True
-                or j.get("source") == "DEMO_SYNTHETIC"
-                or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
-                or j.get("data_provenance") == "DEMO_SYNTHETIC"
-            ):
-                continue
+        if (
+            j.get("is_demo") is True
+            or j.get("source") == "DEMO_SYNTHETIC"
+            or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+            or j.get("data_provenance") == "DEMO_SYNTHETIC"
+        ):
+            continue
         if j.get("status", "active").lower() != "active" or j.get("is_active") is False:
             continue
         if (j.get("verification_status") or "").upper() in ("REJECTED", "UNVERIFIED"):
@@ -189,6 +189,58 @@ async def create_job_endpoint(
             status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed for job.",
         ) from e
+
+    if data.skills:
+        try:
+            from app.db import _cache
+            from app.repositories.supabase_repository import list_skills, batch_create_job_skills
+            master_skills = None
+            try:
+                master_skills = list_skills(limit=10000) or []
+            except Exception:
+                master_skills = []
+            if not master_skills:
+                try:
+                    master_skills = get_demo("skills") or []
+                except Exception:
+                    master_skills = []
+
+            skill_name_to_id = {}
+            for sk in master_skills:
+                sid = sk.get("id")
+                sname = sk.get("name")
+                if sid and sname:
+                    skill_name_to_id[str(sname).strip().lower()] = str(sid)
+                for syn in (sk.get("synonyms") or []):
+                    if sid and syn:
+                        skill_name_to_id[str(syn).strip().lower()] = str(sid)
+
+            new_links = []
+            seen_links = set()
+            for s in data.skills:
+                if not isinstance(s, str) or not s.strip():
+                    continue
+                s_clean = s.strip().lower()
+                target_id = skill_name_to_id.get(s_clean)
+                if not target_id:
+                    continue
+                pair = (saved["id"], target_id)
+                if pair not in seen_links:
+                    seen_links.add(pair)
+                    new_links.append({
+                        "job_id": saved["id"],
+                        "skill_id": target_id,
+                        "proficiency_required": "intermediate",
+                    })
+
+            if new_links:
+                try:
+                    batch_create_job_skills(new_links)
+                except Exception as b_err:
+                    logger.warning("[Jobs API] Failed persisting job_skills to database: %s", b_err)
+                _cache.setdefault("job_skills", []).extend(new_links)
+        except Exception as sk_err:
+            logger.warning("[Jobs API] Failed resolving or linking skills for job %s: %s", saved.get("id"), sk_err)
 
     return {
         "status": "created",
@@ -288,14 +340,26 @@ async def job_demand(
     group_by: str = Query("district", enum=["district", "skill", "industry"]),
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    if is_explicit_demo_mode(is_demo):
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+    if is_demo_mode:
         jobs = get_demo("jobs")
         job_skills = get_demo("job_skills")
         skills = {s["id"]: s["name"] for s in get_demo("skills")}
     else:
         try:
             from app.repositories.supabase_repository import list_jobs as list_jobs_repo, list_job_skills, list_skills
-            jobs = list_jobs_repo(status="active", is_active=True, is_demo=False, limit=1000) or []
+            raw_jobs = list_jobs_repo(status="active", is_active=True, is_demo=False, limit=1000) or []
+            jobs = [
+                j for j in raw_jobs
+                if j.get("is_demo") is False
+                and j.get("source") != "DEMO_SYNTHETIC"
+                and j.get("source_type") not in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                and j.get("data_provenance") != "DEMO_SYNTHETIC"
+                and j.get("status", "active").lower() == "active"
+                and j.get("is_active") is not False
+                and (j.get("verification_status") or "").upper() not in ("REJECTED", "UNVERIFIED")
+                and not _is_expired(j.get("deadline"))
+            ]
             job_ids = [j.get("id") for j in jobs if j.get("id")]
             job_skills = list_job_skills(job_ids=job_ids) if job_ids else []
             skills = {s["id"]: s.get("name", s["id"]) for s in (list_skills(limit=1000) or [])}

@@ -46,7 +46,11 @@ def validate_and_normalize(
     if isinstance(company_val, dict):
         company = str(company_val.get("display_name") or company_val.get("name") or "").strip()
     else:
-        company = str(company_val or "").strip()
+        company = str(company_val or "").strip() if company_val is not None else ""
+    if "company" in raw_data and not company:
+        return None, "Company name is required and must be at least 2 characters."
+    if not company:
+        company = "Confidential Employer"
     if len(company) < 2:
         return None, "Company name is required and must be at least 2 characters."
 
@@ -65,11 +69,19 @@ def validate_and_normalize(
     if not industry:
         industry = "General"
 
-    apply_url = str(raw_data.get("apply_url") or raw_data.get("redirect_url") or raw_data.get("source_url") or "").strip()
-    if not apply_url:
-        return None, "Apply URL or source URL is required."
-    if not (apply_url.startswith("http://") or apply_url.startswith("https://")):
-        return None, "Apply URL must be a valid HTTP or HTTPS URL."
+    apply_url_val = raw_data.get("apply_url") or raw_data.get("redirect_url") or raw_data.get("source_url")
+    if apply_url_val is not None:
+        apply_url = str(apply_url_val).strip()
+        if not apply_url:
+            return None, "Apply URL or source URL is required."
+        if not (apply_url.startswith("http://") or apply_url.startswith("https://")):
+            return None, "Apply URL must be a valid HTTP or HTTPS URL."
+    else:
+        if "apply_url" in raw_data or "redirect_url" in raw_data or "source_url" in raw_data:
+            return None, "Apply URL or source URL is required."
+        source_name = str(raw_data.get("source") or "opportunity").lower()
+        ext_slug = str(raw_data.get("external_id") or raw_data.get("id") or "job")
+        apply_url = f"https://skillsetu.gov.in/opportunities/{source_name}/{ext_slug}"
 
     source_url = str(raw_data.get("source_url") or apply_url).strip()
     description = str(raw_data.get("description") or "").strip()
@@ -100,9 +112,24 @@ def validate_and_normalize(
     content_hash = str(raw_data.get("content_hash") or compute_content_hash(title, company, district, description))
     source = str(raw_data.get("source") or ("ADZUNA_API" if is_trusted_feed else "USER_SUBMITTED"))
     external_id = str(raw_data.get("external_id") or raw_data.get("id") or content_hash)
-    job_id = str(raw_data.get("id") or f"job-{hashlib.sha256(f'{source}:{external_id}'.encode('utf-8')).hexdigest()[:12]}")
 
     is_demo_flag = bool(is_demo is True or (is_demo is None and (raw_data.get("is_demo") is True or raw_data.get("source") == "DEMO_SYNTHETIC")))
+
+    raw_id = raw_data.get("id")
+    if is_demo_flag and raw_id:
+        job_id = str(raw_id)
+    else:
+        is_valid_uuid = False
+        if raw_id:
+            try:
+                uuid.UUID(str(raw_id))
+                is_valid_uuid = True
+            except (ValueError, AttributeError, TypeError):
+                is_valid_uuid = False
+        if is_valid_uuid:
+            job_id = str(raw_id)
+        else:
+            job_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"skillsetu.job.{source}.{external_id}"))
 
     if is_demo_flag:
         data_provenance = str(raw_data.get("data_provenance") or "DEMO_SYNTHETIC")

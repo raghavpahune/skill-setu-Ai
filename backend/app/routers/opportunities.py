@@ -74,9 +74,9 @@ async def list_opportunities(
                 district=district,
                 industry=industry,
                 opportunity_type=opportunity_type,
-                status=status if status else ("active" if is_demo is False else None),
-                is_active=True if is_demo is False else None,
-                is_demo=False if is_demo is False else None,
+                status=status if status else "active",
+                is_active=True,
+                is_demo=False,
                 limit=fetch_limit,
             ) or []
             job_ids = [j.get("id") for j in raw_jobs if j.get("id")]
@@ -94,14 +94,13 @@ async def list_opportunities(
 
         jobs = []
         for j in raw_jobs:
-            if is_demo is False:
-                if (
-                    j.get("is_demo") is True
-                    or j.get("source") == "DEMO_SYNTHETIC"
-                    or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
-                    or j.get("data_provenance") == "DEMO_SYNTHETIC"
-                ):
-                    continue
+            if (
+                j.get("is_demo") is True
+                or j.get("source") == "DEMO_SYNTHETIC"
+                or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                or j.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                continue
             if j.get("status", "active").lower() != "active" or j.get("is_active") is False:
                 continue
             if (j.get("verification_status") or "").upper() in ("REJECTED", "UNVERIFIED"):
@@ -192,20 +191,20 @@ async def opportunities_summary(
             from app.repositories import supabase_repository
             from app.repositories.supabase_repository import SupabaseRepositoryError
             raw_jobs = supabase_repository.list_jobs(
-                status="active" if is_demo is False else None,
-                is_active=True if is_demo is False else None,
-                is_demo=False if is_demo is False else None,
+                status="active",
+                is_active=True,
+                is_demo=False,
                 limit=1000,
             ) or []
             jobs = []
             for j in raw_jobs:
-                if is_demo is False:
-                    if (
-                        j.get("is_demo") is True
-                        or j.get("source") == "DEMO_SYNTHETIC"
-                        or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
-                    ):
-                        continue
+                if (
+                    j.get("is_demo") is True
+                    or j.get("source") == "DEMO_SYNTHETIC"
+                    or j.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                    or j.get("data_provenance") == "DEMO_SYNTHETIC"
+                ):
+                    continue
                 if (
                     j.get("status", "active").lower() == "active"
                     and j.get("is_active") is not False
@@ -289,14 +288,13 @@ async def get_opportunity(
             job = None
 
         if job:
-            if is_demo is False:
-                if (
-                    job.get("is_demo") is True
-                    or job.get("source") == "DEMO_SYNTHETIC"
-                    or job.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
-                    or job.get("data_provenance") == "DEMO_SYNTHETIC"
-                ):
-                    raise HTTPException(status_code=404, detail="Opportunity not found")
+            if (
+                job.get("is_demo") is True
+                or job.get("source") == "DEMO_SYNTHETIC"
+                or job.get("source_type") in ("DEMO_SYNTHETIC", "SANDBOX_SIMULATION")
+                or job.get("data_provenance") == "DEMO_SYNTHETIC"
+            ):
+                raise HTTPException(status_code=404, detail="Opportunity not found")
             if (
                 job.get("status", "active").lower() != "active"
                 or job.get("is_active") is False

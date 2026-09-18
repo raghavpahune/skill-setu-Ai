@@ -232,11 +232,13 @@ class SyncEngine:
                             added_j, updated_j = self._upsert_jobs(orch_resp.records)
                             adz_added += added_j
                             adz_updated += updated_j
+                            adz_skipped += max(0, len(orch_resp.records) - (added_j + updated_j))
                             self._upsert_job_skills(orch_resp.records)
                         elif orch_resp.provenance == SOURCE_TYPE_LIVE_API:
                             added_j, updated_j = self._upsert_jobs(orch_resp.records)
                             adz_added += added_j
                             adz_updated += updated_j
+                            adz_skipped += max(0, len(orch_resp.records) - (added_j + updated_j))
                             self._upsert_job_skills(orch_resp.records)
 
                     total_fetched += adz_fetched
@@ -511,10 +513,8 @@ class SyncEngine:
                 is_trusted_feed=(not is_demo and raw_job.get("source_type") in ("LIVE_API", "VERIFIED_SNAPSHOT", "OFFICIAL_GOV")),
             )
             if err or not job:
-                if isinstance(raw_job, dict) and (raw_job.get("source") or raw_job.get("external_id") or raw_job.get("content_hash")):
-                    job = dict(raw_job)
-                else:
-                    continue
+                logger.warning("[SyncEngine] Skipping invalid job record: %s", err)
+                continue
 
             if is_demo is False and (
                 job.get("is_demo") is True
