@@ -932,6 +932,7 @@ def test_industry_signals_real_mode_no_sample_feeds_ingested():
     from app.ingestion.sync_engine import SyncEngine
 
     with patch("app.ingestion.sync_engine.is_explicit_demo_mode", return_value=False), \
+         patch("app.ingestion.industry_intelligence.IndustryIntelligenceIngestor.fetch_external_feeds", return_value=[]), \
          patch("app.ingestion.industry_intelligence.IndustryIntelligenceIngestor.validate_and_normalize") as mock_val, \
          patch("app.db.save_industry_signal") as mock_save:
 
@@ -948,12 +949,14 @@ def test_industry_signals_real_mode_no_sample_feeds_ingested():
 
 
 def test_industry_signals_ingest_from_feeds_real_mode_rejects_synthetic():
+    from unittest.mock import patch
     from app.ingestion.industry_intelligence import industry_ingestor, SAMPLE_VERIFIED_FEEDS
 
-    res_empty = industry_ingestor.ingest_from_feeds(is_demo=False)
-    assert res_empty["status"] == "NO_DATA"
-    assert res_empty["records_fetched"] == 0
-    assert res_empty["records_added"] == 0
+    with patch.object(industry_ingestor, "fetch_external_feeds", return_value=[]):
+        res_empty = industry_ingestor.ingest_from_feeds(is_demo=False)
+        assert res_empty["status"] == "NO_DATA"
+        assert res_empty["records_fetched"] == 0
+        assert res_empty["records_added"] == 0
 
     res_synthetic = industry_ingestor.ingest_from_feeds(SAMPLE_VERIFIED_FEEDS, is_demo=False)
     assert res_synthetic["records_added"] == 0
@@ -1000,6 +1003,7 @@ def test_adzuna_live_empty_results_returns_no_data():
 
 
 def test_admin_industry_ingestion_real_mode_no_feeds(monkeypatch):
+    from unittest.mock import patch
     from fastapi.testclient import TestClient
     from app.main import app
     from app.config import settings
@@ -1007,29 +1011,32 @@ def test_admin_industry_ingestion_real_mode_no_feeds(monkeypatch):
     monkeypatch.setenv("SKILLSETU_DATA_MODE", "real")
     monkeypatch.setattr(settings, "admin_api_key", "test-admin-secret-999")
 
-    with TestClient(app) as client:
-        res = client.post(
-            "/api/admin/industry/ingest",
-            headers={"X-Admin-Key": "test-admin-secret-999"},
-            json=None,
-        )
-        assert res.status_code == 200
-        data = res.json()
-        assert data["status"] == "success"
-        summary = data["summary"]
-        assert summary["status"] == "NO_DATA"
-        assert summary["records_fetched"] == 0
-        assert summary["records_added"] == 0
+    with patch("app.ingestion.industry_intelligence.IndustryIntelligenceIngestor.fetch_external_feeds", return_value=[]):
+        with TestClient(app) as client:
+            res = client.post(
+                "/api/admin/industry/ingest",
+                headers={"X-Admin-Key": "test-admin-secret-999"},
+                json=None,
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["status"] == "success"
+            summary = data["summary"]
+            assert summary["status"] == "NO_DATA"
+            assert summary["records_fetched"] == 0
+            assert summary["records_added"] == 0
 
 
 def test_ingest_from_feeds_no_args_real_mode_rejects_sample(monkeypatch):
+    from unittest.mock import patch
     from app.ingestion.industry_intelligence import industry_ingestor
 
     monkeypatch.setenv("SKILLSETU_DATA_MODE", "real")
-    res = industry_ingestor.ingest_from_feeds()
-    assert res["status"] == "NO_DATA"
-    assert res["records_fetched"] == 0
-    assert res["records_added"] == 0
+    with patch.object(industry_ingestor, "fetch_external_feeds", return_value=[]):
+        res = industry_ingestor.ingest_from_feeds()
+        assert res["status"] == "NO_DATA"
+        assert res["records_fetched"] == 0
+        assert res["records_added"] == 0
 
 
 def test_scheduler_sync_logs_include_is_demo_field(monkeypatch):
@@ -1135,21 +1142,23 @@ def test_sync_log_persistence_rejects_arbitrary_invalid_status():
 
 def test_scheduler_industry_signals_persists_no_data_when_zero_fetched(monkeypatch):
     import asyncio
+    from unittest.mock import patch
     from app.ingestion.scheduler import IngestionScheduler
     from app.db import _cache
 
     _cache["sync_logs"] = []
     monkeypatch.setenv("SKILLSETU_DATA_MODE", "real")
-    sched = IngestionScheduler()
-    res = asyncio.run(sched.execute_sync(source="industry_signals"))
-    assert res["status"] == "no_data"
-    cached = _cache.get("sync_logs", [])
-    assert len(cached) >= 1
-    last_log = cached[-1]
-    assert last_log["source_name"] == "industry_signals"
-    assert last_log["status"] == "NO_DATA"
-    assert last_log["records_fetched"] == 0
-    assert last_log["sources_detail"]["industry_signals"]["status"] == "NO_DATA"
+    with patch("app.ingestion.industry_intelligence.IndustryIntelligenceIngestor.fetch_external_feeds", return_value=[]):
+        sched = IngestionScheduler()
+        res = asyncio.run(sched.execute_sync(source="industry_signals"))
+        assert res["status"] == "no_data"
+        cached = _cache.get("sync_logs", [])
+        assert len(cached) >= 1
+        last_log = cached[-1]
+        assert last_log["source_name"] == "industry_signals"
+        assert last_log["status"] == "NO_DATA"
+        assert last_log["records_fetched"] == 0
+        assert last_log["sources_detail"]["industry_signals"]["status"] == "NO_DATA"
 
 
 def test_scheduler_skill_forecasts_persists_no_data_when_zero_computed(monkeypatch):

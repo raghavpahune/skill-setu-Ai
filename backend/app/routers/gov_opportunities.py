@@ -1,12 +1,14 @@
-"""Government Opportunities API — apprenticeships, training programs, employment, and entrepreneurship schemes."""
 import logging
 from datetime import datetime, timezone
+from typing import Any
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from pydantic import BaseModel, Field, field_validator
 from app.core.data_mode import is_explicit_demo_mode
 from app.core.security import require_roles, get_optional_current_user, is_demo_student_id
+from app.core.time import parse_iso_timestamp, UTC_MIN
 from app.db import get_demo, save_gov_opportunity
+from app.repositories.supabase_repository import generate_gov_opportunity_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +48,24 @@ class GovOpportunitySubmission(BaseModel):
             return f"https://{clean}"
         return clean
 
+    @field_validator("deadline")
+    @classmethod
+    def validate_deadline(cls, v: str | None) -> str | None:
+        if not v or not isinstance(v, str) or not v.strip():
+            return None
+        dt = parse_iso_timestamp(v)
+        if dt == UTC_MIN:
+            raise ValueError("Invalid deadline format. Must be a valid ISO timestamp.")
+        return v.strip()
 
-@router.post("/gov/opportunities", status_code=status.HTTP_201_CREATED)
+
+@router.post("/gov/opportunities", status_code=http_status.HTTP_201_CREATED)
 async def create_gov_opportunity(
     data: GovOpportunitySubmission,
     current_user: dict = Depends(require_roles(["GOVERNMENT", "ADMIN"])),
 ):
-    opp_id = f"gov-{uuid.uuid4().hex[:8]}"
     now_iso = datetime.now(timezone.utc).isoformat()
+    opp_id = generate_gov_opportunity_id(data.name, data.department)
 
     coverage = data.district_coverage
     if isinstance(coverage, str):
@@ -85,7 +97,7 @@ async def create_gov_opportunity(
     except Exception as e:
         logger.exception("[Gov] Failed persisting government opportunity: %s", e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database persistence failed for government opportunity.",
         ) from e
 
@@ -96,24 +108,31 @@ async def create_gov_opportunity(
     }
 
 
+def _is_expired(deadline: Any) -> bool:
+    if not deadline or not isinstance(deadline, str) or not deadline.strip():
+        return False
+    dt = parse_iso_timestamp(deadline)
+    if dt == UTC_MIN:
+        return True
+    return dt < datetime.now(timezone.utc)
+
+
 def _is_authoritative_gov_opp(o: dict) -> bool:
     return (
         isinstance(o, dict)
         and o.get("is_demo") is False
         and o.get("source_type") not in ("SANDBOX_SIMULATION", "DEMO_SYNTHETIC")
         and o.get("source") != "DEMO_SYNTHETIC"
+        and o.get("data_provenance") != "DEMO_SYNTHETIC"
+        and o.get("verification_status") != "REJECTED"
         and (
-            o.get("data_provenance") == "GOVERNMENT_OFFICIAL"
+            o.get("data_provenance") in ("GOVERNMENT_OFFICIAL", "VERIFIED_SNAPSHOT")
             or o.get("source") in ("DATAGOV_IN", "OGD_DATAGOV_IN", "USER_SUBMITTED", "ADMIN_CREATED")
         )
     )
 
 
 def _match_student_to_opportunities(opportunities: list[dict], profile: dict) -> list[dict]:
-    """Score and rank government opportunities against a student profile or assessment record.
-
-    Returns opportunities sorted by relevance with match_reasons explaining why each matches.
-    """
     student_skills = set()
     for s in profile.get("skills", []) + profile.get("current_skills", []):
         if isinstance(s, dict):
@@ -126,7 +145,6 @@ def _match_student_to_opportunities(opportunities: list[dict], profile: dict) ->
         elif s:
             student_skills.add(str(s).lower())
 
-
     student_district = (profile.get("district") or profile.get("preferred_location") or "").lower()
     student_career = (profile.get("target_role") or profile.get("desired_role") or profile.get("career_goal") or "").lower()
     student_education = (profile.get("education") or profile.get("degree") or profile.get("education_level") or "").lower()
@@ -136,6 +154,10 @@ def _match_student_to_opportunities(opportunities: list[dict], profile: dict) ->
     scored = []
     for opp in opportunities:
         if opp.get("status", "active").lower() != "active":
+            continue
+        if opp.get("verification_status") == "REJECTED":
+            continue
+        if _is_expired(opp.get("deadline")):
             continue
 
         score = 0
@@ -211,49 +233,65 @@ async def list_gov_opportunities(
     offset: int = Query(0, ge=0),
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    """List government opportunities with optional filtering."""
     if is_explicit_demo_mode(is_demo):
-        records = [r for r in get_demo("gov_opportunities") if r.get("is_demo") is not False]
+        raw_records = [r for r in get_demo("gov_opportunities") if r.get("is_demo") is not False]
     else:
         try:
-            from app.repositories.supabase_repository import get_client
-            client = get_client()
-            query = client.table("gov_opportunities").select("*")
-            if status:
-                query = query.eq("status", status.lower())
-            if opportunity_type:
-                query = query.eq("opportunity_type", opportunity_type.upper())
-            res = query.execute()
-            db_records = [r for r in (res.data or []) if _is_authoritative_gov_opp(r)]
+            from app.repositories.supabase_repository import list_gov_opportunities as list_gov_opps_repo
+            db_records = list_gov_opps_repo(
+                opportunity_type=opportunity_type,
+                district=district,
+                status=status,
+                is_demo=False,
+                limit=1000,
+            ) or []
+            raw_records = [r for r in db_records if _is_authoritative_gov_opp(r) and not _is_expired(r.get("deadline"))]
         except Exception as e:
-            logger.warning("[GovOpps] Supabase unavailable: %s", e)
-            db_records = []
-        from app.db import _cache
-        cached_real = [r for r in _cache.get("gov_opportunities", []) if _is_authoritative_gov_opp(r)]
-        records_map = {r["id"]: r for r in cached_real if r.get("id")}
-        for r in db_records:
-            if r.get("id"):
-                records_map[r["id"]] = r
-        records = list(records_map.values())
+            logger.exception("[GovOpps] Supabase error listing opportunities: %s", e)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Government opportunities repository is temporarily unavailable.",
+            ) from e
+
+    deduped_records = []
+    seen_keys = {}
+    for r in raw_records:
+        key = (
+            (r.get("name") or "").strip().lower(),
+            (r.get("department") or "").strip().lower(),
+        )
+        if not key[0]:
+            deduped_records.append(r)
+            continue
+        if key in seen_keys:
+            idx = seen_keys[key]
+            existing = deduped_records[idx]
+            existing_desc = (existing.get("description") or "").strip()
+            curr_desc = (r.get("description") or "").strip()
+            existing_time = existing.get("updated_at") or existing.get("created_at") or ""
+            curr_time = r.get("updated_at") or r.get("created_at") or ""
+            if curr_time > existing_time or (curr_time == existing_time and len(curr_desc) > len(existing_desc)):
+                deduped_records[idx] = r
+        else:
+            seen_keys[key] = len(deduped_records)
+            deduped_records.append(r)
+    records = deduped_records
 
     filtered = []
     for r in records:
-        # Status filter
         if status and r.get("status", "active").lower() != status.lower():
             continue
 
-        # District filter
-        if district:
-            d_lower = district.lower()
+        if district and district.strip().lower() not in ("all", "all districts"):
+            d_lower = district.strip().lower()
             coverage = r.get("district_coverage", "")
             if isinstance(coverage, list):
-                districts = [d.lower() for d in coverage]
+                districts = [d.strip().lower() for d in coverage]
             else:
-                districts = [coverage.lower()] if coverage else []
-            if d_lower not in districts and not any("state-wide" in d for d in districts):
+                districts = [coverage.strip().lower()] if coverage else []
+            if d_lower not in districts and not any("state-wide" in d or "maharashtra" in d or d in ("all", "all districts") or "all districts" in d for d in districts):
                 continue
 
-        # Domain / skill filter
         if domain or skill:
             target = {s.lower() for s in (r.get("target_skills") or [])}
             if domain and domain.lower() not in target:
@@ -261,11 +299,9 @@ async def list_gov_opportunities(
             if skill and skill.lower() not in target:
                 continue
 
-        # Opportunity type filter
         if opportunity_type and r.get("opportunity_type", "").lower() != opportunity_type.lower():
             continue
 
-        # Search query
         if q:
             q_lower = q.lower()
             corpus = f"{r.get('name', '')} {r.get('department', '')} {r.get('description', '')} {' '.join(r.get('target_skills', []))}".lower()
@@ -281,18 +317,19 @@ async def list_gov_opportunities(
 async def gov_opportunity_types(
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    """Return distinct opportunity types and districts for UI filtering."""
     if is_explicit_demo_mode(is_demo):
         records = [r for r in get_demo("gov_opportunities") if r.get("is_demo") is not False]
     else:
         try:
-            from app.repositories.supabase_repository import get_client
-            client = get_client()
-            res = client.table("gov_opportunities").select("*").execute()
-            records = [r for r in (res.data or []) if _is_authoritative_gov_opp(r)]
+            from app.repositories.supabase_repository import list_gov_opportunities as list_gov_opps_repo
+            db_records = list_gov_opps_repo(limit=1000, is_demo=False) or []
+            records = [r for r in db_records if _is_authoritative_gov_opp(r)]
         except Exception as e:
-            logger.warning("[GovOpps] Supabase unavailable for types: %s", e)
-            records = []
+            logger.exception("[GovOpps] Supabase error fetching types: %s", e)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Government opportunities metadata is temporarily unavailable.",
+            ) from e
 
     types = set()
     districts = set()
@@ -320,9 +357,9 @@ async def gov_opportunity_types(
 async def recommended_gov_opportunities(
     student_id: str,
     limit: int = Query(10, ge=1, le=50),
+    is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
     current_user: dict | None = Depends(get_optional_current_user),
 ):
-    """Return government opportunities ranked by relevance to a student profile or assessment."""
     resolved_id = student_id
     if student_id == "me" and current_user:
         resolved_id = current_user.get("id") or "me"
@@ -347,7 +384,7 @@ async def recommended_gov_opportunities(
     except Exception as e:
         logger.exception("[RecommendedGovOpps] Supabase error for %s: %s", resolved_id, e)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database query failed fetching student profile for recommendations.",
         ) from e
 
@@ -369,17 +406,26 @@ async def recommended_gov_opportunities(
             return {"opportunities": [], "student_id": resolved_id, "status": "unassessed"}
         raise HTTPException(status_code=404, detail=f"Student profile '{student_id}' not found.")
 
-    if is_demo_student_id(resolved_id) or profile.get("is_demo") or profile.get("source") == "DEMO_SYNTHETIC":
+    if is_demo is True:
+        use_demo = True
+    elif is_demo is False:
+        use_demo = False
+    else:
+        use_demo = is_demo_student_id(resolved_id) or profile.get("is_demo") or profile.get("source") == "DEMO_SYNTHETIC"
+
+    if use_demo:
         opportunities = get_demo("gov_opportunities")
         note = "Recommendations are based on skill/district/interest overlap with demo dataset. Verify eligibility on official portals before applying."
     else:
         try:
-            from app.repositories.supabase_repository import get_client
-            client = get_client()
-            res = client.table("gov_opportunities").select("*").eq("status", "active").execute()
-            db_opps = res.data or []
-        except Exception:
-            db_opps = []
+            from app.repositories.supabase_repository import list_gov_opportunities as list_gov_opps_repo
+            db_opps = list_gov_opps_repo(status="active", is_demo=False, limit=1000) or []
+        except Exception as e:
+            logger.exception("[RecommendedGovOpps] Supabase error listing active opportunities: %s", e)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Government opportunities repository is temporarily unavailable for recommendations.",
+            ) from e
 
         valid_db_opps = [o for o in db_opps if _is_authoritative_gov_opp(o)]
         opportunities = valid_db_opps
@@ -400,7 +446,6 @@ async def get_gov_opportunity(
     opp_id: str,
     is_demo: bool | None = Query(None, description="Explicit demo/real mode selector"),
 ):
-    """Get individual government opportunity by ID."""
     if is_explicit_demo_mode(is_demo):
         records = get_demo("gov_opportunities")
         for r in records:
@@ -408,12 +453,15 @@ async def get_gov_opportunity(
                 return r
     else:
         try:
-            from app.repositories.supabase_repository import get_client
-            client = get_client()
-            res = client.table("gov_opportunities").select("*").eq("id", opp_id).execute()
-            if res.data and len(res.data) > 0 and _is_authoritative_gov_opp(res.data[0]):
-                return res.data[0]
+            from app.repositories.supabase_repository import get_gov_opportunity as get_gov_opp_repo
+            record = get_gov_opp_repo(opp_id)
+            if record and _is_authoritative_gov_opp(record):
+                return record
         except Exception as e:
-            logger.warning("[GovOpps] Supabase error fetching %s: %s", opp_id, e)
+            logger.exception("[GovOpps] Supabase error fetching %s: %s", opp_id, e)
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Government opportunities repository is temporarily unavailable.",
+            ) from e
 
     raise HTTPException(status_code=404, detail="Government opportunity not found")

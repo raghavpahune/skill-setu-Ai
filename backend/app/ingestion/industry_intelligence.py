@@ -10,12 +10,17 @@ Provides:
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
+import email.utils
 import hashlib
 import logging
 import re
+import threading
 import uuid
+import xml.etree.ElementTree as ET
 from typing import Any
+import httpx
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 from app.config import settings
@@ -332,6 +337,7 @@ class IndustryIntelligenceIngestor:
 
     def __init__(self):
         self.sources = TRUSTED_SOURCES
+        self._ingest_lock = threading.Lock()
         self._last_ingest_summary: dict[str, Any] = {
             "status": "idle",
             "last_run": None,
@@ -380,7 +386,138 @@ class IndustryIntelligenceIngestor:
             "last_ingestion": self._last_ingest_summary,
         }
 
-    def validate_and_normalize(self, raw_data: dict[str, Any], is_demo: bool | None = None) -> tuple[dict[str, Any] | None, str | None]:
+    def fetch_external_feeds(self, timeout: float = 10.0) -> list[dict[str, Any]]:
+        self._last_fetch_errors = []
+        feed_sources = [
+            {
+                "url": "https://peps.python.org/peps.rss",
+                "source_name": "Python Software Foundation & Developer Ecosystem",
+                "source_type": SOURCE_TYPE_TECH_DOCUMENTATION,
+                "category": CATEGORY_TOOL_RELEASE,
+                "industry": "Information Technology & Software Development",
+                "default_skills": ["Python", "Software Engineering", "API Design"],
+                "default_tools": ["Python", "Git", "Standard Library"],
+            },
+            {
+                "url": "https://www.cncf.io/feed/",
+                "source_name": "Cloud Native Computing Foundation (CNCF) & Linux Foundation",
+                "source_type": SOURCE_TYPE_TECH_DOCUMENTATION,
+                "category": CATEGORY_TOOL_RELEASE,
+                "industry": "Cloud Computing & DevOps",
+                "default_skills": ["Kubernetes", "Cloud Computing", "DevOps"],
+                "default_tools": ["Kubernetes", "Docker", "Prometheus"],
+            },
+        ]
+        self._configured_feed_count = len(feed_sources)
+        fetched_items = []
+        for src in feed_sources:
+            try:
+                resp = httpx.get(
+                    src["url"],
+                    headers={"User-Agent": "SkillSetu-Ingestor/1.0"},
+                    timeout=timeout,
+                    follow_redirects=True,
+                )
+                if resp.status_code != 200:
+                    self._last_fetch_errors.append(f"HTTP {resp.status_code} from {src['url']}")
+                    continue
+                try:
+                    root = ET.fromstring(resp.text)
+                except Exception as parse_ex:
+                    self._last_fetch_errors.append(f"Invalid XML from {src['url']}: {parse_ex}")
+                    continue
+                items = root.findall(".//item")
+                for it in items[:10]:
+                    title_elem = it.find("title")
+                    link_elem = it.find("link")
+                    desc_elem = it.find("description")
+                    pub_date_elem = it.find("pubDate")
+                    if title_elem is None or not title_elem.text or link_elem is None or not link_elem.text:
+                        continue
+                    title = title_elem.text.strip()
+                    link = link_elem.text.strip()
+                    desc = desc_elem.text.strip() if desc_elem is not None and desc_elem.text else title
+                    clean_desc = re.sub(r"<[^>]+>", " ", desc)
+                    clean_desc = re.sub(r"\s+", " ", clean_desc).strip()
+                    if len(clean_desc) < 15:
+                        clean_desc = f"{title} - Official release announcement from {src['source_name']}."
+
+                    published_at = None
+                    valid_date = False
+                    if pub_date_elem is not None and pub_date_elem.text:
+                        try:
+                            parsed_dt = email.utils.parsedate_to_datetime(pub_date_elem.text.strip())
+                            if parsed_dt.tzinfo is None:
+                                parsed_dt = parsed_dt.replace(tzinfo=datetime.timezone.utc)
+                            published_at = parsed_dt.isoformat()
+                            valid_date = True
+                        except Exception:
+                            valid_date = False
+
+                    if valid_date:
+                        val_status = STATUS_APPROVED
+                        data_prov = "VERIFIED_EXTERNAL_FEED"
+                        is_active_flag = True
+                    else:
+                        published_at = None
+                        val_status = STATUS_PENDING
+                        data_prov = "UNVERIFIED_EXTERNAL_SOURCE"
+                        is_active_flag = False
+
+                    ext_id = f"ext-{hashlib.sha256(link.encode('utf-8')).hexdigest()[:12]}"
+
+                    skills = list(src["default_skills"])
+                    tools = list(src["default_tools"])
+                    combined_text = f"{title} {clean_desc}".lower()
+                    keyword_skill_map = {
+                        "kubernetes": ("Kubernetes", "Kubernetes"),
+                        "docker": ("Containerization", "Docker"),
+                        "telemetry": ("OpenTelemetry", "OpenTelemetry"),
+                        "tracing": ("Distributed Tracing", "Jaeger"),
+                        "prometheus": ("Observability", "Prometheus"),
+                        "postgres": ("Database Administration", "PostgreSQL"),
+                        "security": ("Cybersecurity", "Zero Trust"),
+                        "api": ("REST API", "OpenAPI"),
+                        "asyncio": ("Async Programming", "Python asyncio"),
+                        "type hints": ("Type Safety", "mypy"),
+                        "cloud": ("Cloud Architecture", "Cloud Native"),
+                    }
+                    for kw, (sk, tl) in keyword_skill_map.items():
+                        if kw in combined_text:
+                            if sk not in skills:
+                                skills.append(sk)
+                            if tl not in tools:
+                                tools.append(tl)
+
+                    fetched_items.append({
+                        "title": title,
+                        "description": clean_desc[:2500],
+                        "category": src["category"],
+                        "industry": src["industry"],
+                        "skills": skills[:6],
+                        "tools": tools[:6],
+                        "source_url": link,
+                        "source_name": src["source_name"],
+                        "source_type": src["source_type"],
+                        "data_provenance": data_prov,
+                        "validation_status": val_status,
+                        "is_demo": False,
+                        "published_at": published_at,
+                        "is_active": is_active_flag,
+                        "external_id": ext_id,
+                    })
+            except Exception as e:
+                logger.warning("Failed fetching feed from %s: %s", src["url"], e)
+                self._last_fetch_errors.append(f"Failed fetching {src['url']}: {e}")
+                continue
+        return fetched_items
+
+    def validate_and_normalize(
+        self,
+        raw_data: dict[str, Any],
+        is_demo: bool | None = None,
+        is_trusted_feed: bool = False,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         if is_demo is False:
             is_demo_rec = bool(
                 raw_data.get("is_demo")
@@ -389,60 +526,71 @@ class IndustryIntelligenceIngestor:
                 or raw_data.get("data_provenance") == "DEMO_SYNTHETIC"
             )
             if is_demo_rec:
-                return None, "Synthetic demo records cannot be ingested in real mode"
+                return None, "Real mode rejects synthetic/demo industry signals."
 
         try:
             submission = IndustrySignalSubmission(**raw_data)
         except Exception as e:
-            return None, f"Validation error: {e}"
+            return None, f"Schema validation failed: {e}"
 
-        sig_id = submission.external_id or f"sig-{generate_signal_signature(submission.title, submission.source_url, submission.source_name)}"
-        published_at = submission.published_at or datetime.datetime.now(datetime.timezone.utc).isoformat()
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
+        sig_id = str(raw_data.get("id") or raw_data.get("external_id") or f"ind-sig-{uuid.uuid4().hex[:10]}")
         is_demo = bool(raw_data.get("is_demo") or raw_data.get("source_label") == "DEMO_SYNTHETIC" or raw_data.get("source_type") == "DEMO_SYNTHETIC" or raw_data.get("data_provenance") == "DEMO_SYNTHETIC")
-        data_provenance = str(raw_data.get("data_provenance") or ("DEMO_SYNTHETIC" if is_demo else "UNVERIFIED_EXTERNAL_SOURCE"))
-        val_status = str(raw_data.get("validation_status") or submission.validation_status)
 
-        freshness = calculate_freshness(published_at, submission.is_active, val_status)
+        if is_demo:
+            data_provenance = str(raw_data.get("data_provenance") or "DEMO_SYNTHETIC")
+            published_at = raw_data.get("published_at")
+            val_status = str(raw_data.get("validation_status") or submission.validation_status)
+            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else submission.is_active
+        elif is_trusted_feed:
+            data_provenance = str(raw_data.get("data_provenance") or "VERIFIED_EXTERNAL_FEED")
+            published_at = raw_data.get("published_at")
+            val_status = str(raw_data.get("validation_status") or STATUS_APPROVED)
+            is_active_flag = raw_data.get("is_active") if "is_active" in raw_data else True
+        else:
+            data_provenance = "UNVERIFIED_EXTERNAL_SOURCE"
+            published_at = raw_data.get("published_at")
+            val_status = STATUS_PENDING
+            is_active_flag = False
+
+        freshness = calculate_freshness(published_at, is_active_flag, val_status)
 
         normalized_record: dict[str, Any] = {
             "id": sig_id,
-            "title": submission.title.strip(),
-            "description": submission.description.strip(),
+            "title": submission.title,
+            "description": submission.description,
             "category": submission.category,
-            "industry": submission.industry.strip(),
-            "skills": [s.strip() for s in submission.skills if s.strip()],
-            "tools": [t.strip() for t in submission.tools if t.strip()],
-            "source_url": submission.source_url.strip(),
-            "source_name": submission.source_name.strip(),
+            "industry": submission.industry,
+            "skills": submission.skills,
+            "tools": submission.tools,
+            "signature": generate_signal_signature(submission.title, str(submission.source_url), submission.source_name),
+            "source_url": str(submission.source_url),
+            "source_name": submission.source_name,
             "source_type": submission.source_type,
             "published_at": published_at,
             "collected_at": raw_data.get("collected_at") or now_iso,
             "updated_at": now_iso,
             "validation_status": val_status,
-            "is_active": submission.is_active,
+            "is_active": is_active_flag,
             "is_demo": is_demo,
             "data_provenance": data_provenance,
             "freshness": freshness,
-            "signature": generate_signal_signature(submission.title, submission.source_url, submission.source_name),
+            "growth_rate_pct": raw_data.get("growth_rate_pct"),
+            "region": raw_data.get("region"),
+            "sample_size": raw_data.get("sample_size"),
+            "external_id": raw_data.get("external_id") or sig_id,
             "is_ai_processed": False,
             "ai_metadata": None,
-            "technology": submission.industry,
-            "summary": submission.description,
-            "impact_level": "high",
-            "signal_date": published_at[:10],
             "source": submission.source_name,
         }
 
-        # Optional AI Processing (strictly optional, only if AI is available)
         if settings.ai_available:
             try:
-                # Deterministic or AI keyword refinement
                 normalized_record["is_ai_processed"] = True
                 normalized_record["ai_metadata"] = {
                     "summarized": True,
-                    "extracted_skills_count": len(normalized_record["skills"]),
+                    "model": settings.gemini_model,
+                    "processed_at": now_iso,
                 }
             except Exception as e:
                 logger.warning("Optional AI processing bypassed: %s", e)
@@ -450,6 +598,10 @@ class IndustryIntelligenceIngestor:
         return normalized_record, None
 
     def ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None, is_demo: bool | None = None) -> dict[str, Any]:
+        with self._ingest_lock:
+            return self._run_ingest_from_feeds(feeds=feeds, is_demo=is_demo)
+
+    def _run_ingest_from_feeds(self, feeds: list[dict[str, Any]] | None = None, is_demo: bool | None = None) -> dict[str, Any]:
         from app.db import (
             get_demo,
             save_industry_signal,
@@ -461,41 +613,52 @@ class IndustryIntelligenceIngestor:
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
         if is_demo is None:
             is_demo = is_explicit_demo_mode()
-        if is_demo is False and feeds is None:
-            feed_data = []
+        if is_demo is False:
+            if feeds is not None:
+                feed_data = feeds
+                is_trusted_feed = False
+            else:
+                feed_data = self.fetch_external_feeds()
+                is_trusted_feed = True
         else:
             feed_data = feeds if feeds is not None else SAMPLE_VERIFIED_FEEDS
+            is_trusted_feed = False
 
         if not feed_data:
+            fetch_errors = getattr(self, "_last_fetch_errors", [])
+            configured_count = getattr(self, "_configured_feed_count", 2)
+            has_failed_sources = feeds is None and bool(fetch_errors) and len(fetch_errors) >= configured_count
+            log_status = "FAILED" if has_failed_sources else "NO_DATA"
+            err_msg = "; ".join(fetch_errors) if has_failed_sources else None
             summary = {
-                "status": "NO_DATA",
+                "status": log_status,
                 "last_run": now_iso,
                 "records_fetched": 0,
                 "records_added": 0,
                 "records_updated": 0,
                 "records_duplicated": 0,
                 "records_rejected": 0,
-                "errors": [],
+                "errors": fetch_errors if has_failed_sources else [],
             }
             self._last_ingest_summary = summary
             save_sync_log({
                 "id": str(uuid.uuid4()),
                 "source_name": "industry_signals",
                 "job_type": "automated_industry_signal_ingestion",
-                "status": "NO_DATA",
+                "status": log_status,
                 "records_fetched": 0,
                 "records_added": 0,
                 "records_updated": 0,
                 "records_skipped": 0,
-                "error_message": None,
+                "error_message": err_msg,
                 "started_at": now_iso,
                 "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "duration_ms": 0,
                 "is_demo": False if is_demo is False else True,
                 "sources_detail": {
                     "industry_signals": {
-                        "status": "NO_DATA",
-                        "error": None,
+                        "status": log_status,
+                        "error": err_msg,
                         "records_fetched": 0,
                         "records_added": 0,
                         "records_updated": 0,
@@ -524,7 +687,7 @@ class IndustryIntelligenceIngestor:
         errors = []
 
         for raw_item in feed_data:
-            normalized, err = self.validate_and_normalize(raw_item, is_demo=is_demo)
+            normalized, err = self.validate_and_normalize(raw_item, is_demo=is_demo, is_trusted_feed=is_trusted_feed)
             if err:
                 rejected += 1
                 errors.append(f"Rejected item '{raw_item.get('title', 'Unknown')}': {err}")
@@ -542,7 +705,12 @@ class IndustryIntelligenceIngestor:
                         "tools": normalized["tools"],
                         "updated_at": now_iso,
                         "freshness": normalized["freshness"],
+                        "data_provenance": normalized["data_provenance"],
+                        "validation_status": normalized["validation_status"],
+                        "is_active": normalized["is_active"],
                     })
+                    if normalized.get("published_at"):
+                        matched["published_at"] = normalized["published_at"]
                     update_industry_signal(matched["id"], matched)
                     updated += 1
                 else:
@@ -593,6 +761,13 @@ class IndustryIntelligenceIngestor:
         })
 
         return summary
+
+    async def async_ingest_from_feeds(
+        self,
+        feeds: list[dict[str, Any]] | None = None,
+        is_demo: bool | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.ingest_from_feeds, feeds=feeds, is_demo=is_demo)
 
 
 industry_ingestor = IndustryIntelligenceIngestor()
