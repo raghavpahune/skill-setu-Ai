@@ -650,6 +650,48 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return fetchJSON(`/placements/analytics/statewide${query ? `?${query}` : ''}`);
   },
+  getInstituteAccreditations: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes${query ? `?${query}` : ''}`);
+  },
+  getInstituteScorecard: (instituteId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/scorecard${query ? `?${query}` : ''}`);
+  },
+  evaluateInstituteAccreditation: (instituteId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/evaluate${query ? `?${query}` : ''}`, {
+      method: 'POST',
+    });
+  },
+  getInstituteAuditNotices: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/audit-notices${query ? `?${query}` : ''}`);
+  },
+  createInstituteAuditNotice: (data) => {
+    return fetchJSON('/accreditation/audit-notices', {
+      method: 'POST',
+      body: data,
+    });
+  },
+  updateInstituteAuditNotice: (noticeId, data) => {
+    return fetchJSON(`/accreditation/audit-notices/${encodeURIComponent(noticeId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  getDistrictRoiAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/analytics/roi/districts${query ? `?${query}` : ''}`);
+  },
+  getSingleDistrictRoi: (districtId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/analytics/roi/district/${encodeURIComponent(districtId)}${query ? `?${query}` : ''}`);
+  },
+  getStatewideRoiAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/analytics/roi/statewide${query ? `?${query}` : ''}`);
+  },
 };
 
 
