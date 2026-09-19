@@ -346,7 +346,7 @@ function ReviewModal({ proposal, onClose, onReviewed }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.reviewCurriculumProposal(proposal.proposal_id, {
+      const res = await api.reviewCurriculumProposal(proposal.proposal_id || proposal.id, {
         review_action: action,
         review_notes: notes.trim(),
       });
@@ -366,7 +366,7 @@ function ReviewModal({ proposal, onClose, onReviewed }) {
     >
       <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6">
         <h3 className="text-base font-bold text-slate-900 dark:text-white mb-1">State Accreditation Review</h3>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{proposal.course_name} &middot; {proposal.institute}</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">{proposal.course_name} &middot; {proposal.institute_name || proposal.institute}</p>
         
         {error && (
           <div className="mb-4 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300 text-xs">
@@ -447,7 +447,7 @@ function ProposalDetailsModal({ proposal, onClose, onAdopted, onSubmitted }) {
     setSubmitting(true);
     setNotice(null);
     try {
-      const res = await api.submitCurriculumProposal(proposal.proposal_id);
+      const res = await api.submitCurriculumProposal(proposal.proposal_id || proposal.id);
       setNotice({ type: 'success', message: 'Proposal submitted to State Board.' });
       if (onSubmitted) onSubmitted(res.proposal);
     } catch (err) {
@@ -461,7 +461,7 @@ function ProposalDetailsModal({ proposal, onClose, onAdopted, onSubmitted }) {
     setAdopting(true);
     setNotice(null);
     try {
-      const res = await api.adoptCurriculumProposal(proposal.proposal_id);
+      const res = await api.adoptCurriculumProposal(proposal.proposal_id || proposal.id);
       setNotice({ type: 'success', message: 'Curriculum proposal adopted and active in course catalogue.' });
       if (onAdopted) onAdopted(res.proposal);
     } catch (err) {
@@ -488,7 +488,7 @@ function ProposalDetailsModal({ proposal, onClose, onAdopted, onSubmitted }) {
                 {statusMeta.label}
               </span>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{proposal.course_name} &middot; {proposal.institute} &middot; Cycle: {proposal.academic_cycle}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">{proposal.course_name} &middot; {proposal.institute_name || proposal.institute} &middot; Cycle: {proposal.academic_cycle || proposal.target_academic_cycle}</p>
           </div>
           <button
             onClick={onClose}
@@ -553,10 +553,10 @@ function ProposalDetailsModal({ proposal, onClose, onAdopted, onSubmitted }) {
             </div>
           </div>
 
-          {proposal.reviewer_notes && (
+          {(proposal.review_notes || proposal.reviewer_notes) && (
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
               <span className="font-bold text-slate-900 dark:text-white">Reviewer Feedback: </span>
-              <span className="text-slate-600 dark:text-slate-300">{proposal.reviewer_notes}</span>
+              <span className="text-slate-600 dark:text-slate-300">{proposal.review_notes || proposal.reviewer_notes}</span>
               {proposal.reviewed_at && (
                 <div className="text-[10px] text-slate-400 mt-1">Reviewed on {new Date(proposal.reviewed_at).toLocaleDateString()}</div>
               )}
@@ -670,8 +670,9 @@ export default function CurriculumHub() {
   useEffect(() => {
     fetchData();
     fetchProposals();
+    const reqRef = requestIdRef;
     return () => {
-      requestIdRef.current++;
+      reqRef.current++;
     };
   }, [fetchData, fetchProposals]);
 
@@ -1021,10 +1022,10 @@ export default function CurriculumHub() {
                   {filteredProposals.map(p => {
                     const statusMeta = PROPOSAL_STATUS_META[p.status] || PROPOSAL_STATUS_META.DRAFT;
                     return (
-                      <tr key={p.proposal_id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                      <tr key={p.proposal_id || p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
                         <td className="p-3 font-bold text-slate-900 dark:text-white">{p.course_name}</td>
-                        <td className="p-3 text-slate-600 dark:text-slate-300">{p.institute}</td>
-                        <td className="p-3 text-slate-600 dark:text-slate-300 font-mono text-[11px]">{p.academic_cycle}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-300">{p.institute_name || p.institute}</td>
+                        <td className="p-3 text-slate-600 dark:text-slate-300 font-mono text-[11px]">{p.academic_cycle || p.target_academic_cycle}</td>
                         <td className="p-3">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusMeta.badge}`}>
                             <span className={`w-1.5 h-1.5 rounded-full ${statusMeta.dot}`} />
@@ -1041,7 +1042,7 @@ export default function CurriculumHub() {
                         </td>
                         <td className="p-3 text-right space-x-1.5">
                           <button
-                            id={`proposal-view-btn-${p.proposal_id}`}
+                            id={`proposal-view-btn-${p.proposal_id || p.id}`}
                             onClick={() => setSelectedProposalDetails(p)}
                             className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-[11px] font-semibold transition-colors cursor-pointer"
                           >
@@ -1049,7 +1050,7 @@ export default function CurriculumHub() {
                           </button>
                           {isGovOrAdmin && (p.status === 'SUBMITTED' || p.status === 'UNDER_STATE_REVIEW') && (
                             <button
-                              id={`proposal-review-btn-${p.proposal_id}`}
+                              id={`proposal-review-btn-${p.proposal_id || p.id}`}
                               onClick={() => setSelectedProposalReview(p)}
                               className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors cursor-pointer"
                             >

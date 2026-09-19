@@ -378,3 +378,113 @@ def test_government_and_admin_curriculum_proposal_listing(client, institute_a_he
 
     gov_adopt_res = client.post(f"/api/curriculum/proposals/{proposal_id}/adopt", headers=gov_headers)
     assert gov_adopt_res.status_code == 403
+
+
+def test_cannot_review_already_approved_or_rejected_proposal(client, institute_a_headers, gov_headers):
+    create_res = client.post(
+        "/api/curriculum/proposals",
+        json={
+            "course_id": "cr-001",
+            "academic_cycle": "2026-2027",
+        },
+        headers=institute_a_headers,
+    )
+    prop_id = create_res.json()["proposal"]["proposal_id"]
+    client.post(f"/api/curriculum/proposals/{prop_id}/submit", headers=institute_a_headers)
+
+    appr_res = client.post(
+        f"/api/curriculum/proposals/{prop_id}/review",
+        json={"review_action": "APPROVED", "review_notes": "First review approval."},
+        headers=gov_headers,
+    )
+    assert appr_res.status_code == 200
+
+    repeat_rev = client.post(
+        f"/api/curriculum/proposals/{prop_id}/review",
+        json={"review_action": "REJECTED", "review_notes": "Attempting invalid re-review."},
+        headers=gov_headers,
+    )
+    assert repeat_rev.status_code == 400
+    assert "Only SUBMITTED or UNDER_STATE_REVIEW proposals can be reviewed" in repeat_rev.json()["detail"]
+
+    create_res2 = client.post(
+        "/api/curriculum/proposals",
+        json={
+            "course_id": "cr-001",
+            "academic_cycle": "2026-2027",
+        },
+        headers=institute_a_headers,
+    )
+    prop_id2 = create_res2.json()["proposal"]["proposal_id"]
+    client.post(f"/api/curriculum/proposals/{prop_id2}/submit", headers=institute_a_headers)
+
+    rej_res = client.post(
+        f"/api/curriculum/proposals/{prop_id2}/review",
+        json={"review_action": "REJECTED", "review_notes": "Deficiencies found."},
+        headers=gov_headers,
+    )
+    assert rej_res.status_code == 200
+
+    repeat_rej = client.post(
+        f"/api/curriculum/proposals/{prop_id2}/review",
+        json={"review_action": "APPROVED", "review_notes": "Cannot approve without resubmission."},
+        headers=gov_headers,
+    )
+    assert repeat_rej.status_code == 400
+    assert "Only SUBMITTED or UNDER_STATE_REVIEW proposals can be reviewed" in repeat_rej.json()["detail"]
+
+
+def test_cannot_adopt_already_adopted_proposal(client, institute_a_headers, gov_headers):
+    create_res = client.post(
+        "/api/curriculum/proposals",
+        json={
+            "course_id": "cr-001",
+            "academic_cycle": "2026-2027",
+        },
+        headers=institute_a_headers,
+    )
+    prop_id = create_res.json()["proposal"]["proposal_id"]
+    client.post(f"/api/curriculum/proposals/{prop_id}/submit", headers=institute_a_headers)
+    client.post(
+        f"/api/curriculum/proposals/{prop_id}/review",
+        json={"review_action": "APPROVED", "review_notes": "Approved for adoption."},
+        headers=gov_headers,
+    )
+    adopt_res1 = client.post(f"/api/curriculum/proposals/{prop_id}/adopt", headers=institute_a_headers)
+    assert adopt_res1.status_code == 200
+
+    adopt_res2 = client.post(f"/api/curriculum/proposals/{prop_id}/adopt", headers=institute_a_headers)
+    assert adopt_res2.status_code == 400
+    assert "Only APPROVED proposals can be adopted" in adopt_res2.json()["detail"]
+
+
+def test_blueprint_handles_empty_equipment_and_trainers_defensively():
+    from app.services import curriculum_engine
+
+    sample_course = {
+        "course_id": "cr-mock-sparse",
+        "course_name": "Sparse Machinery Course",
+        "institute": "Mock Polytechnic",
+        "district": "Pune",
+        "health_score": 62,
+        "placement_rate": 55,
+        "modernity_score": 58,
+        "obsolescence_risk": "MODERATE",
+        "risk_label": "Moderate",
+        "oversupply_status": "BALANCED",
+        "oversupply_msg": "Balanced demand",
+        "obsolete_modules": [],
+        "top_missing_skills": [],
+        "equipment_requirements": [],
+        "total_equipment_budget_inr": 0,
+        "trainer_upskilling": [],
+        "evidence_summary": {},
+    }
+
+    import unittest.mock as mock
+    with mock.patch("app.services.curriculum_engine.audit_all_courses", return_value=[sample_course]):
+        bp = curriculum_engine.get_course_modernization_blueprint("cr-mock-sparse")
+        assert bp is not None
+        assert bp["status"] == "success"
+        assert len(bp["modernization_blueprint"]["action_plan"]) >= 2
+

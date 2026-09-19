@@ -2591,6 +2591,10 @@ def _enrich_proposal_record(row: dict[str, Any] | None) -> dict[str, Any] | None
         enriched["created_by"] = enriched["user_id"]
     if "created_by" in enriched and "user_id" not in enriched:
         enriched["user_id"] = enriched["created_by"]
+    if "institute_name" in enriched and "institute" not in enriched:
+        enriched["institute"] = enriched["institute_name"]
+    if "institute" in enriched and "institute_name" not in enriched:
+        enriched["institute_name"] = enriched["institute"]
     return enriched
 
 
@@ -2675,11 +2679,6 @@ def update_curriculum_proposal(proposal_id: str, updates: dict[str, Any]) -> dic
         if not res.data or len(res.data) == 0:
             raise CurriculumProposalNotFoundError(f"Curriculum proposal '{proposal_id}' not found.")
         return _enrich_proposal_record(res.data[0])
-    except SupabaseRepositoryError:
-        raise
-    except Exception as e:
-        logger.error("[SupabaseRepo] Failed updating curriculum proposal '%s': %s", proposal_id, e)
-        raise SupabaseRepositoryError(f"Database update failed for curriculum proposal '{proposal_id}': {e}") from e
     except SupabaseRepositoryError:
         raise
     except Exception as e:

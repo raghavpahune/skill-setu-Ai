@@ -1159,4 +1159,23 @@ CREATE INDEX IF NOT EXISTS idx_curriculum_proposals_status ON curriculum_proposa
 CREATE INDEX IF NOT EXISTS idx_curriculum_proposals_district ON curriculum_proposals(district);
 CREATE INDEX IF NOT EXISTS idx_curriculum_proposals_is_demo ON curriculum_proposals(is_demo);
 
+ALTER TABLE curriculum_proposals ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE tablename = 'curriculum_proposals'
+        AND policyname = 'service_role_all_curriculum_proposals'
+    ) THEN
+        CREATE POLICY service_role_all_curriculum_proposals
+        ON curriculum_proposals
+        FOR ALL
+        TO service_role
+        USING (true)
+        WITH CHECK (true);
+    END IF;
+END $$;
+
+
 

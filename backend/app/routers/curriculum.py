@@ -156,17 +156,23 @@ async def create_curriculum_proposal_endpoint(
 
     user_role = (current_user.get("role") or "").upper()
     user_id = current_user.get("id")
-    org_id = current_user.get("organization_id")
+    org_id = current_user.get("organization_id") or current_user.get("institute_id")
     c_user_id = course.get("user_id")
     c_inst_id = course.get("institute_id")
+    c_inst_name = (course.get("institute") or course.get("institute_name") or "").strip().lower()
+    known_institute_ids = {
+        "coep technological university": "inst-coep",
+        "vjti mumbai": "inst-vjti",
+        "government polytechnic nagpur": "inst-gp-nagpur",
+        "government polytechnic pune": "inst-gp-pune",
+        "government polytechnic aurangabad": "inst-gp-aurangabad",
+    }
+    resolved_c_inst_id = c_inst_id or known_institute_ids.get(c_inst_name)
 
     if user_role != "ADMIN":
-        c_inst_name = (course.get("institute") or course.get("institute_name") or "").lower()
-        org_slug = (org_id or "").replace("inst-", "").lower()
         is_owner = bool(
             (user_id and c_user_id == user_id)
-            or (org_id and c_inst_id and c_inst_id.lower() == org_id.lower())
-            or (org_slug and org_slug in c_inst_name)
+            or (org_id and resolved_c_inst_id and resolved_c_inst_id.lower() == org_id.lower())
             or (not c_user_id and not c_inst_id and not c_inst_name)
         )
         if not is_owner:
@@ -175,13 +181,13 @@ async def create_curriculum_proposal_endpoint(
                 detail="Forbidden: You do not have permission to propose modernizations for another institute's course offering.",
             )
 
-    inst_id = org_id or c_inst_id or f"inst-{user_id}"
+    inst_id = org_id or resolved_c_inst_id or f"inst-{user_id}"
     inst_name = course.get("institute") or course.get("institute_name") or current_user.get("organization_id") or current_user.get("full_name") or "Government Technical Institute"
     district = course.get("district") or current_user.get("district") or "Maharashtra"
 
     target_status = data.status.strip().upper() if data.status else "DRAFT"
-    if target_status not in ("DRAFT", "SUBMITTED"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Initial proposal status must be DRAFT or SUBMITTED")
+    if target_status != "DRAFT":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Initial proposal status must be DRAFT")
 
     now_iso = datetime.now(timezone.utc).isoformat()
     proposal_id = f"prop-{uuid.uuid4().hex[:10]}"
@@ -303,12 +309,12 @@ async def get_curriculum_proposal_endpoint(
     user_role = (current_user.get("role") or "").upper()
     if user_role == "INSTITUTE":
         user_id = current_user.get("id")
-        org_id = current_user.get("organization_id")
+        org_id = current_user.get("organization_id") or current_user.get("institute_id")
         p_inst_id = proposal.get("institute_id")
         p_user_id = proposal.get("user_id")
         is_owner = bool(
             (user_id and p_user_id == user_id)
-            or (org_id and p_inst_id == org_id)
+            or (org_id and p_inst_id and p_inst_id.lower() == org_id.lower())
             or (p_inst_id == f"inst-{user_id}")
         )
         if not is_owner:
@@ -333,12 +339,12 @@ async def update_curriculum_proposal_endpoint(
     user_role = (current_user.get("role") or "").upper()
     if user_role != "ADMIN":
         user_id = current_user.get("id")
-        org_id = current_user.get("organization_id")
+        org_id = current_user.get("organization_id") or current_user.get("institute_id")
         p_inst_id = proposal.get("institute_id")
         p_user_id = proposal.get("user_id")
         is_owner = bool(
             (user_id and p_user_id == user_id)
-            or (org_id and p_inst_id == org_id)
+            or (org_id and p_inst_id and p_inst_id.lower() == org_id.lower())
             or (p_inst_id == f"inst-{user_id}")
         )
         if not is_owner:
@@ -388,12 +394,12 @@ async def submit_curriculum_proposal_endpoint(
     user_role = (current_user.get("role") or "").upper()
     if user_role != "ADMIN":
         user_id = current_user.get("id")
-        org_id = current_user.get("organization_id")
+        org_id = current_user.get("organization_id") or current_user.get("institute_id")
         p_inst_id = proposal.get("institute_id")
         p_user_id = proposal.get("user_id")
         is_owner = bool(
             (user_id and p_user_id == user_id)
-            or (org_id and p_inst_id == org_id)
+            or (org_id and p_inst_id and p_inst_id.lower() == org_id.lower())
             or (p_inst_id == f"inst-{user_id}")
         )
         if not is_owner:
@@ -432,22 +438,14 @@ async def review_curriculum_proposal_endpoint(
     curr_status = proposal.get("status", "DRAFT").upper()
     target_status = (review_data.review_action or review_data.status or "").strip().upper()
 
-    if target_status not in ("UNDER_STATE_REVIEW", "APPROVED", "REJECTED"):
+    allowed_review_transitions = {
+        "SUBMITTED": {"UNDER_STATE_REVIEW", "APPROVED", "REJECTED"},
+        "UNDER_STATE_REVIEW": {"APPROVED", "REJECTED"},
+    }
+    if target_status not in allowed_review_transitions.get(curr_status, set()):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid target review status '{target_status}'. Must be UNDER_STATE_REVIEW, APPROVED, or REJECTED.",
-        )
-
-    if curr_status in ("DRAFT",):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot review a DRAFT proposal. Proposal must be SUBMITTED first.",
-        )
-
-    if curr_status in ("ADOPTED",):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot review an ADOPTED proposal. Curriculum revision has already been finalized.",
+            detail=f"Cannot review proposal in '{curr_status}' status with action '{target_status}'. Only SUBMITTED or UNDER_STATE_REVIEW proposals can be reviewed.",
         )
 
     if target_status == "REJECTED":
@@ -483,12 +481,12 @@ async def adopt_curriculum_proposal_endpoint(
     user_role = (current_user.get("role") or "").upper()
     if user_role != "ADMIN":
         user_id = current_user.get("id")
-        org_id = current_user.get("organization_id")
+        org_id = current_user.get("organization_id") or current_user.get("institute_id")
         p_inst_id = proposal.get("institute_id")
         p_user_id = proposal.get("user_id")
         is_owner = bool(
             (user_id and p_user_id == user_id)
-            or (org_id and p_inst_id == org_id)
+            or (org_id and p_inst_id and p_inst_id.lower() == org_id.lower())
             or (p_inst_id == f"inst-{user_id}")
         )
         if not is_owner:
@@ -583,7 +581,26 @@ async def adopt_curriculum_proposal_endpoint(
         },
         "updated_at": now_iso,
     }
-    updated_proposal = update_curriculum_proposal_record(proposal_id, proposal_updates)
+    try:
+        updated_proposal = update_curriculum_proposal_record(proposal_id, proposal_updates)
+    except Exception as e:
+        logger.error("[CurriculumAdopt] Failed updating proposal '%s' after course update: %s", proposal_id, e)
+        try:
+            rollback_course_updates = {
+                "skills": old_skills,
+                "skills_taught": old_skills,
+                "curriculum_version": curr_version,
+                "last_curriculum_modernization_at": course.get("last_curriculum_modernization_at"),
+                "modernization_proposal_id": course.get("modernization_proposal_id"),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            update_course_repo(course["id"], rollback_course_updates)
+        except Exception as rb_err:
+            logger.error("[CurriculumAdopt] Rollback failed for course '%s': %s", course["id"], rb_err)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed finalizing curriculum adoption state.",
+        ) from e
 
     return {
         "status": "success",
