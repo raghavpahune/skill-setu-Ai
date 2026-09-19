@@ -1731,6 +1731,97 @@ def save_placement_employer_feedback_record(feedback_data: dict[str, Any]) -> di
     return merged
 
 
+def get_institution_accreditation_by_id(accreditation_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_institution_accreditation
+        repo_a = get_institution_accreditation(accreditation_id)
+        if repo_a:
+            return repo_a
+    except Exception:
+        pass
+    records = _cache.get("institution_accreditations", [])
+    return next((a for a in records if a.get("id") == accreditation_id), None)
+
+
+def save_institution_accreditation_record(accreditation_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    accreditation_data.setdefault("created_at", now_iso)
+    accreditation_data.setdefault("updated_at", now_iso)
+    accreditation_data.setdefault("data_provenance", "STATE_DETERMINISTIC_ACCREDITATION")
+    accreditation_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_institution_accreditation
+    saved = create_institution_accreditation(accreditation_data)
+    merged = {**accreditation_data, **saved}
+
+    records = _cache.setdefault("institution_accreditations", [])
+    aid = merged.get("id")
+    matched_idx = next((i for i, a in enumerate(records) if a.get("id") == aid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("institution_accreditations")
+    return merged
+
+
+def get_institution_audit_notice_by_id(notice_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_institution_audit_notice
+        repo_n = get_institution_audit_notice(notice_id)
+        if repo_n:
+            return repo_n
+    except Exception:
+        pass
+    records = _cache.get("institution_audit_notices", [])
+    return next((n for n in records if n.get("id") == notice_id), None)
+
+
+def save_institution_audit_notice_record(notice_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    notice_data.setdefault("created_at", now_iso)
+    notice_data.setdefault("updated_at", now_iso)
+    notice_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_institution_audit_notice
+    saved = create_institution_audit_notice(notice_data)
+    merged = {**notice_data, **saved}
+
+    records = _cache.setdefault("institution_audit_notices", [])
+    nid = merged.get("id")
+    matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("institution_audit_notices")
+    return merged
+
+
+def update_institution_audit_notice_record(notice_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    from app.repositories.supabase_repository import update_institution_audit_notice
+    saved = update_institution_audit_notice(notice_id, updates)
+    records = _cache.setdefault("institution_audit_notices", [])
+    matched_idx = next((i for i, n in enumerate(records) if n.get("id") == notice_id), None)
+    if matched_idx is not None:
+        merged = {**records[matched_idx], **updates, **saved}
+        records[matched_idx] = merged
+    else:
+        merged = {**updates, **saved}
+        records.insert(0, merged)
+    _flush_real_table("institution_audit_notices")
+    return merged
+
+
 from app.core.security import is_demo_student_id  # noqa: E402
 
 

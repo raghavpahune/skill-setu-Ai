@@ -2723,6 +2723,7 @@ VALID_PLACEMENT_OUTCOME_COLUMNS = {
     "district",
     "industry",
     "status",
+    "retention_status",
     "placement_date",
     "salary_annual_inr",
     "skills_utilized",
@@ -2945,4 +2946,241 @@ def list_placement_employer_feedback(
     except Exception as e:
         logger.error("[SupabaseRepo] Failed listing placement employer feedback: %s", e)
         raise SupabaseRepositoryError(f"Database query failed listing placement employer feedback: {e}") from e
+
+
+VALID_INSTITUTION_ACCREDITATION_COLUMNS = {
+    "id",
+    "institute_id",
+    "institute_name",
+    "district",
+    "composite_score",
+    "accreditation_tier",
+    "placement_score",
+    "curriculum_score",
+    "employer_satisfaction_score",
+    "wage_premium_score",
+    "evidence_confidence",
+    "total_candidates_evaluated",
+    "placed_candidates",
+    "average_salary_inr",
+    "roi_multiplier",
+    "valid_until",
+    "evaluator_user_id",
+    "is_demo",
+    "data_provenance",
+    "created_at",
+    "updated_at",
+}
+
+VALID_INSTITUTION_AUDIT_NOTICE_COLUMNS = {
+    "id",
+    "institute_id",
+    "institute_name",
+    "district",
+    "notice_type",
+    "severity",
+    "title",
+    "description",
+    "mandated_action",
+    "deadline_date",
+    "status",
+    "issued_by",
+    "is_demo",
+    "created_at",
+    "updated_at",
+}
+
+
+def _enrich_accreditation_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    for k in ["composite_score", "placement_score", "curriculum_score", "employer_satisfaction_score", "wage_premium_score", "roi_multiplier"]:
+        if k in enriched and enriched[k] is not None:
+            try:
+                enriched[k] = round(float(enriched[k]), 2)
+            except Exception:
+                pass
+    for k in ["total_candidates_evaluated", "placed_candidates", "average_salary_inr"]:
+        if k in enriched and enriched[k] is not None:
+            try:
+                enriched[k] = int(enriched[k])
+            except Exception:
+                pass
+    return enriched
+
+
+def _enrich_audit_notice_record(record: dict[str, Any]) -> dict[str, Any]:
+    return dict(record)
+
+
+def create_institution_accreditation(accreditation_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in accreditation_data.items() if k in VALID_INSTITUTION_ACCREDITATION_COLUMNS}
+        res = client.table("institution_accreditations").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating institution_accreditations record in Supabase.")
+        return _enrich_accreditation_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating institution accreditation: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for institution accreditation: {e}") from e
+
+
+def get_institution_accreditation(accreditation_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("institution_accreditations").select("*").eq("id", accreditation_id).limit(1).execute()
+        data = getattr(res, "data", []) or []
+        if data:
+            return _enrich_accreditation_record(data[0])
+        return None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching accreditation '%s': %s", accreditation_id, e)
+        raise SupabaseRepositoryError(f"Database query failed fetching accreditation '{accreditation_id}': {e}") from e
+
+
+def get_latest_institution_accreditation(institute_id: str, is_demo: bool | None = None) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        query = client.table("institution_accreditations").select("*").eq("institute_id", institute_id)
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        res = query.order("created_at", desc=True).limit(1).execute()
+        data = getattr(res, "data", []) or []
+        if data:
+            return _enrich_accreditation_record(data[0])
+        return None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching latest accreditation for '%s': %s", institute_id, e)
+        raise SupabaseRepositoryError(f"Database query failed fetching latest accreditation: {e}") from e
+
+
+def list_institution_accreditations(
+    institute_id: str | None = None,
+    district: str | None = None,
+    tier: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("institution_accreditations").select("*")
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if district:
+            query = query.ilike("district", f"%{district.strip()}%")
+        if tier:
+            query = query.eq("accreditation_tier", tier.strip().upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("composite_score", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_accreditation_record(r) for r in (getattr(res, "data", []) or [])]
+
+        all_records = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_records)) if limit is not None else page_size
+            res = query.order("composite_score", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_records.extend([_enrich_accreditation_record(r) for r in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_records) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_records
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing institution accreditations: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing institution accreditations: {e}") from e
+
+
+def create_institution_audit_notice(notice_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in notice_data.items() if k in VALID_INSTITUTION_AUDIT_NOTICE_COLUMNS}
+        res = client.table("institution_audit_notices").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating institution_audit_notices record in Supabase.")
+        return _enrich_audit_notice_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating institution audit notice: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for audit notice: {e}") from e
+
+
+def get_institution_audit_notice(notice_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("institution_audit_notices").select("*").eq("id", notice_id).limit(1).execute()
+        data = getattr(res, "data", []) or []
+        if data:
+            return _enrich_audit_notice_record(data[0])
+        return None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching audit notice '%s': %s", notice_id, e)
+        raise SupabaseRepositoryError(f"Database query failed fetching audit notice '{notice_id}': {e}") from e
+
+
+def list_institution_audit_notices(
+    institute_id: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    severity: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("institution_audit_notices").select("*")
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if district:
+            query = query.ilike("district", f"%{district.strip()}%")
+        if status:
+            query = query.eq("status", status.strip().upper())
+        if severity:
+            query = query.eq("severity", severity.strip().upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_audit_notice_record(r) for r in (getattr(res, "data", []) or [])]
+
+        all_notices = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_notices)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_notices.extend([_enrich_audit_notice_record(r) for r in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_notices) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_notices
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing institution audit notices: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing audit notices: {e}") from e
+
+
+def update_institution_audit_notice(notice_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in updates.items() if k in VALID_INSTITUTION_AUDIT_NOTICE_COLUMNS}
+        res = client.table("institution_audit_notices").update(row).eq("id", notice_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError(f"Failed updating institution audit notice '{notice_id}'.")
+        return _enrich_audit_notice_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating audit notice '%s': %s", notice_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for audit notice '{notice_id}': {e}") from e
+
 

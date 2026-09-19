@@ -1,0 +1,53 @@
+[
+  {
+    "id": "not-demo-001",
+    "institute_id": "inst-gp-aurangabad",
+    "institute_name": "Government Polytechnic Aurangabad",
+    "district": "Chhatrapati Sambhajinagar",
+    "notice_type": "PERFORMANCE_WARNING",
+    "severity": "HIGH",
+    "title": "Placement Conversion & Curriculum Alignment Audit Notice",
+    "description": "Graduating cohort placement rate is below state standard threshold (56.2%). Modernity score indicates legacy drafting modules require pruning.",
+    "mandated_action": "Submit curriculum modernization proposal for Mechanical & Electrical trades within 45 days. Coordinate with regional MIDC industry partners.",
+    "deadline_date": "2026-11-15",
+    "status": "ISSUED",
+    "issued_by": "Directorate of Technical Education, Maharashtra",
+    "is_demo": true,
+    "created_at": "2026-09-15T10:00:00Z",
+    "updated_at": "2026-09-15T10:00:00Z"
+  },
+  {
+    "id": "not-demo-002",
+    "institute_id": "inst-gp-nagpur",
+    "institute_name": "Government Polytechnic Nagpur",
+    "district": "Nagpur",
+    "notice_type": "CURRICULUM_DEFICIT",
+    "severity": "MEDIUM",
+    "title": "Industrial Automation Lab Upgrade Advisory",
+    "description": "Post-hire employer feedback reports practical readiness gap in Siemens PLC programming and sensor diagnostics.",
+    "mandated_action": "Adopt approved curriculum modernization blueprint and apply for MSBTE lab modernization grant package.",
+    "deadline_date": "2026-12-01",
+    "status": "IN_REMEDIATION",
+    "issued_by": "Maharashtra State Board of Technical Education (MSBTE)",
+    "is_demo": true,
+    "created_at": "2026-09-16T14:30:00Z",
+    "updated_at": "2026-09-17T09:00:00Z"
+  },
+  {
+    "id": "not-demo-003",
+    "institute_id": "inst-coep",
+    "institute_name": "COEP Technological University",
+    "district": "Pune",
+    "notice_type": "EXCELLENCE_COMMENDATION",
+    "severity": "INFO",
+    "title": "State Skill Excellence Citation — AI & Robotics Division",
+    "description": "Achieved Tier 1 Institutional Excellence status with 89.5% placement conversion and ₹6.2 LPA average graduate starting salary.",
+    "mandated_action": "Designated as state nodal mentor institute for Tier 3 polytechnic peer upskilling program.",
+    "deadline_date": "2027-03-31",
+    "status": "RESOLVED",
+    "issued_by": "Skill Development, Employment and Entrepreneurship Dept, GoM",
+    "is_demo": true,
+    "created_at": "2026-09-12T11:00:00Z",
+    "updated_at": "2026-09-12T11:00:00Z"
+  }
+]
