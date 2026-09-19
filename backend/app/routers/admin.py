@@ -1183,3 +1183,308 @@ async def get_admin_integrations_health():
     diagnostics["external_data"]["source_registry"] = orchestrator_diag.get("source_registry", [])
     return diagnostics
 
+
+class AdminVerificationApproveRequest(BaseModel):
+    admin_notes: str | None = None
+    verification_method: str = "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
+
+
+class AdminVerificationRejectRequest(BaseModel):
+    rejection_reason: str = Field(..., min_length=3, max_length=500)
+    admin_notes: str | None = None
+
+
+@router.get("/admin/employer/verifications")
+async def list_admin_employer_verifications(
+    status: str | None = Query(None),
+    district: str | None = Query(None),
+    industry: str | None = Query(None),
+    search: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    is_demo: bool | None = Query(None),
+    admin_user: Any = Depends(verify_admin_key),
+):
+    from app.core.data_mode import is_explicit_demo_mode
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+
+    employers_list = []
+    if is_demo_mode:
+        from app.db import get_demo
+        demo_emps = get_demo("employers")
+        for d in demo_emps:
+            item = dict(d)
+            item.setdefault("verification_status", "UNVERIFIED")
+            item.setdefault("is_demo", True)
+            item.setdefault("source", "DEMO_SYNTHETIC")
+            employers_list.append(item)
+    else:
+        try:
+            from app.repositories.supabase_repository import list_employers
+            employers_list = list_employers(limit=10000, is_demo=False) or []
+        except Exception:
+            employers_list = []
+
+        from app.db import _cache
+        cached_employers = _cache.get("employers", [])
+        known_ids = {e.get("id") for e in employers_list if e.get("id")}
+        for c in cached_employers:
+            cid = c.get("id")
+            if cid and cid not in known_ids:
+                if c.get("is_demo") is not True and c.get("source") != "DEMO_SYNTHETIC":
+                    employers_list.append(c)
+                    known_ids.add(cid)
+
+    results = []
+    for e in employers_list:
+        if not is_demo_mode and (e.get("is_demo") is True or e.get("source") == "DEMO_SYNTHETIC"):
+            continue
+
+        emp_status = (e.get("verification_status") or "UNVERIFIED").upper()
+        if status and status.lower() != "all" and emp_status != status.strip().upper():
+            continue
+
+        if district and district.lower() != "all":
+            d_clean = district.strip().lower()
+            if d_clean not in (e.get("district") or "").lower():
+                continue
+
+        if industry and industry.lower() != "all":
+            i_clean = industry.strip().lower()
+            if i_clean not in (e.get("industry") or "").lower():
+                continue
+
+        if search and search.strip():
+            s_clean = search.strip().lower()
+            match_name = s_clean in (e.get("name") or "").lower()
+            match_cname = s_clean in (e.get("company_name") or "").lower()
+            match_email = s_clean in (e.get("email") or "").lower()
+            match_gstin = s_clean in (e.get("gstin") or "").lower()
+            if not (match_name or match_cname or match_email or match_gstin):
+                continue
+
+        results.append({
+            "id": e.get("id"),
+            "employer_id": e.get("id"),
+            "company_name": e.get("company_name") or e.get("name"),
+            "industry": e.get("industry"),
+            "district": e.get("district"),
+            "email": e.get("email"),
+            "gstin": e.get("gstin"),
+            "corporate_website": e.get("corporate_website"),
+            "verification_status": emp_status,
+            "is_verified": (emp_status == "VERIFIED"),
+            "verification_source": e.get("verification_source"),
+            "verification_method": e.get("verification_method"),
+            "verified_at": e.get("verified_at"),
+            "verified_by": e.get("verified_by"),
+            "rejection_reason": e.get("rejection_reason"),
+            "data_provenance": e.get("data_provenance", "UNVERIFIED"),
+            "confidence": e.get("confidence", 0),
+            "evidence": e.get("evidence", {}),
+            "is_demo": e.get("is_demo", False),
+            "created_at": e.get("created_at"),
+            "updated_at": e.get("updated_at"),
+        })
+
+    total = len(results)
+    paginated = results[offset : offset + limit]
+
+    pending_count = sum(1 for r in results if r.get("verification_status") == "PENDING")
+    verified_count = sum(1 for r in results if r.get("verification_status") == "VERIFIED")
+    rejected_count = sum(1 for r in results if r.get("verification_status") == "REJECTED")
+    unverified_count = sum(1 for r in results if r.get("verification_status") == "UNVERIFIED")
+
+    return {
+        "status": "success",
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "counts": {
+            "pending": pending_count,
+            "verified": verified_count,
+            "rejected": rejected_count,
+            "unverified": unverified_count,
+        },
+        "verifications": paginated,
+    }
+
+
+@router.get("/admin/employer/verifications/{employer_id}")
+async def get_admin_employer_verification_detail(
+    employer_id: str,
+    admin_user: Any = Depends(verify_admin_key),
+):
+    from app.repositories.supabase_repository import get_employer, list_employer_verifications
+    emp = None
+    try:
+        emp = get_employer(employer_id.strip())
+    except Exception:
+        pass
+
+    if not emp:
+        from app.db import _cache
+        for e in _cache.get("employers", []):
+            if e.get("id") == employer_id.strip():
+                emp = e
+                break
+
+    if not emp:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Employer '{employer_id}' not found.",
+        )
+
+    history = []
+    try:
+        all_v = list_employer_verifications(limit=100)
+        history = [v for v in all_v if v.get("employer_id") == employer_id.strip()]
+    except Exception:
+        from app.db import _cache
+        history = [v for v in _cache.get("employer_verifications", []) if v.get("employer_id") == employer_id.strip()]
+
+    status_val = (emp.get("verification_status") or "UNVERIFIED").upper()
+    return {
+        "status": "success",
+        "employer": {
+            "id": emp.get("id"),
+            "employer_id": emp.get("id"),
+            "company_name": emp.get("company_name") or emp.get("name"),
+            "industry": emp.get("industry"),
+            "district": emp.get("district"),
+            "email": emp.get("email"),
+            "gstin": emp.get("gstin"),
+            "corporate_website": emp.get("corporate_website"),
+            "verification_status": status_val,
+            "is_verified": (status_val == "VERIFIED"),
+            "verification_source": emp.get("verification_source"),
+            "verification_method": emp.get("verification_method"),
+            "verified_at": emp.get("verified_at"),
+            "verified_by": emp.get("verified_by"),
+            "rejection_reason": emp.get("rejection_reason"),
+            "data_provenance": emp.get("data_provenance", "UNVERIFIED"),
+            "confidence": emp.get("confidence", 0),
+            "evidence": emp.get("evidence", {}),
+            "is_demo": emp.get("is_demo", False),
+            "created_at": emp.get("created_at"),
+            "updated_at": emp.get("updated_at"),
+        },
+        "history": history,
+    }
+
+
+@router.post("/admin/employer/verifications/{employer_id}/approve")
+async def approve_admin_employer_verification(
+    employer_id: str,
+    payload: AdminVerificationApproveRequest | None = None,
+    admin_user: Any = Depends(verify_admin_key),
+):
+    from app.repositories.supabase_repository import (
+        get_employer,
+        update_employer_verification_status,
+        EmployerNotFoundError,
+        InvalidVerificationTransitionError,
+    )
+    admin_notes = payload.admin_notes if payload else None
+    admin_id = "admin"
+    if isinstance(admin_user, dict):
+        admin_id = admin_user.get("id") or admin_user.get("email") or "admin"
+
+    try:
+        updated = update_employer_verification_status(
+            employer_id=employer_id.strip(),
+            new_status="VERIFIED",
+            verifier_id=admin_id,
+            admin_notes=admin_notes,
+        )
+    except EmployerNotFoundError as e:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except InvalidVerificationTransitionError as e:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("[AdminApprove] Failed approving verification for '%s': %s", employer_id, e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database update failed for employer '{employer_id}'.",
+        ) from e
+
+    from app.db import _cache, _flush_real_table
+    emps = _cache.setdefault("employers", [])
+    matched = False
+    for idx, item in enumerate(emps):
+        if item.get("id") == employer_id.strip():
+            emps[idx] = updated
+            matched = True
+            break
+    if not matched:
+        emps.insert(0, updated)
+    _flush_real_table("employers")
+
+    return {
+        "status": "approved",
+        "message": f"Employer '{employer_id}' verification approved.",
+        "employer": updated,
+    }
+
+
+@router.post("/admin/employer/verifications/{employer_id}/reject")
+async def reject_admin_employer_verification(
+    employer_id: str,
+    payload: AdminVerificationRejectRequest,
+    admin_user: Any = Depends(verify_admin_key),
+):
+    if not payload.rejection_reason or not payload.rejection_reason.strip():
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Rejection reason is mandatory when rejecting employer verification.",
+        )
+
+    from app.repositories.supabase_repository import (
+        get_employer,
+        update_employer_verification_status,
+        EmployerNotFoundError,
+        InvalidVerificationTransitionError,
+    )
+    admin_id = "admin"
+    if isinstance(admin_user, dict):
+        admin_id = admin_user.get("id") or admin_user.get("email") or "admin"
+
+    try:
+        updated = update_employer_verification_status(
+            employer_id=employer_id.strip(),
+            new_status="REJECTED",
+            verifier_id=admin_id,
+            rejection_reason=payload.rejection_reason.strip(),
+            admin_notes=payload.admin_notes,
+        )
+    except EmployerNotFoundError as e:
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except InvalidVerificationTransitionError as e:
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("[AdminReject] Failed rejecting verification for '%s': %s", employer_id, e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database update failed for employer '{employer_id}'.",
+        ) from e
+
+    from app.db import _cache, _flush_real_table
+    emps = _cache.setdefault("employers", [])
+    matched = False
+    for idx, item in enumerate(emps):
+        if item.get("id") == employer_id.strip():
+            emps[idx] = updated
+            matched = True
+            break
+    if not matched:
+        emps.insert(0, updated)
+    _flush_real_table("employers")
+
+    return {
+        "status": "rejected",
+        "message": f"Employer '{employer_id}' verification rejected.",
+        "rejection_reason": payload.rejection_reason.strip(),
+        "employer": updated,
+    }
+
+

@@ -226,6 +226,7 @@ class MockSupabaseClient:
         jobs_rows=None,
         sync_logs_rows=None,
         employers_rows=None,
+        employer_verifications_rows=None,
         users_rows=None,
         difficult_skills_rows=None,
     ):
@@ -248,6 +249,7 @@ class MockSupabaseClient:
             "jobs": MockSupabaseTable(jobs_rows),
             "sync_logs": MockSupabaseTable(sync_logs_rows),
             "employers": MockSupabaseTable(employers_rows),
+            "employer_verifications": MockSupabaseTable(employer_verifications_rows),
             "users": MockSupabaseTable(users_rows),
             "difficult_skills": MockSupabaseTable(difficult_skills_rows),
         }
@@ -608,6 +610,8 @@ def mock_supabase_for_tests():
     _cache["gov_opportunities"] = deepcopy(_PRISTINE_GOV_OPPORTUNITIES)
     _cache["job_skills"] = deepcopy(_PRISTINE_CACHE.get("job_skills", []))
     _cache["course_skills"] = deepcopy(_PRISTINE_CACHE.get("course_skills", []))
+    _cache["employers"] = deepcopy(_PRISTINE_CACHE.get("employers", []))
+    _cache["employer_verifications"] = deepcopy(_PRISTINE_CACHE.get("employer_verifications", []))
 
     mock_client = MockSupabaseClient(
         feedback_rows=deepcopy(_PRISTINE_FEEDBACK),
@@ -628,6 +632,7 @@ def mock_supabase_for_tests():
         jobs_rows=deepcopy(_cache.get("jobs", [])),
         sync_logs_rows=deepcopy(_cache.get("sync_logs", [])),
         employers_rows=deepcopy(_cache.get("employers", [])),
+        employer_verifications_rows=deepcopy(_cache.get("employer_verifications", [])),
         users_rows=[deepcopy(u) for u in _cache.get("users", []) if not u.get("is_demo")],
         difficult_skills_rows=deepcopy(_cache.get("difficult_skills", [])),
     )

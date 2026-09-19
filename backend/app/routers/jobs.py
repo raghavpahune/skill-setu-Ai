@@ -55,6 +55,45 @@ class JobSubmission(BaseModel):
         return v.strip()
 
 
+def _enrich_job_employer_verification(job: dict, is_demo_mode: bool) -> dict:
+    enriched = dict(job)
+    if is_demo_mode:
+        enriched["employer_verification_status"] = "UNVERIFIED"
+        enriched["is_employer_verified"] = False
+        return enriched
+
+    emp_id = job.get("employer_id")
+    comp_name = (job.get("company") or "").strip().lower()
+    emp_record = None
+
+    if emp_id:
+        try:
+            from app.repositories.supabase_repository import get_employer
+            emp_record = get_employer(emp_id)
+        except Exception:
+            pass
+
+    if not emp_record and comp_name:
+        from app.db import _cache
+        for e in _cache.get("employers", []):
+            if (e.get("name") or "").strip().lower() == comp_name or (e.get("company_name") or "").strip().lower() == comp_name:
+                emp_record = e
+                break
+
+    if emp_record and (emp_record.get("is_demo") is True or emp_record.get("source") == "DEMO_SYNTHETIC"):
+        emp_record = None
+
+    if emp_record:
+        ev_status = (emp_record.get("verification_status") or "UNVERIFIED").upper()
+        enriched["employer_verification_status"] = ev_status
+        enriched["is_employer_verified"] = (ev_status == "VERIFIED")
+    else:
+        enriched["employer_verification_status"] = "UNVERIFIED"
+        enriched["is_employer_verified"] = False
+
+    return enriched
+
+
 @router.get("/jobs")
 async def list_jobs(
     district: str | None = None,
@@ -72,7 +111,7 @@ async def list_jobs(
             jobs = [j for j in jobs if j.get("industry", "").lower() == industry.strip().lower()]
         if opportunity_type:
             jobs = [j for j in jobs if j.get("opportunity_type", "job").lower() == opportunity_type.strip().lower()]
-        return jobs[:limit]
+        return [_enrich_job_employer_verification(j, True) for j in jobs[:limit]]
 
     try:
         from app.repositories.supabase_repository import list_jobs as list_jobs_repo, SupabaseRepositoryError
@@ -112,7 +151,7 @@ async def list_jobs(
             continue
         filtered_jobs.append(j)
 
-    return filtered_jobs[:limit]
+    return [_enrich_job_employer_verification(j, False) for j in filtered_jobs[:limit]]
 
 
 @router.post("/jobs", status_code=http_status.HTTP_201_CREATED)
@@ -129,6 +168,7 @@ async def create_job_endpoint(
     job_id = f"job-{uuid.uuid4().hex[:12]}"
 
     role = (current_user.get("role") or "").upper()
+    employer_id = current_user.get("organization_id") or f"emp-{current_user.get('id')}"
     if role == "ADMIN":
         provenance = data.data_provenance or "ADMIN_CREATED"
         verification_status = "VERIFIED"
@@ -146,6 +186,7 @@ async def create_job_endpoint(
 
     record = {
         "id": job_id,
+        "employer_id": employer_id,
         "title": norm_title,
         "company": norm_company,
         "district": norm_district,
@@ -245,7 +286,7 @@ async def create_job_endpoint(
     return {
         "status": "created",
         "message": f"Job '{saved['id']}' created successfully.",
-        "job": saved,
+        "job": _enrich_job_employer_verification(saved, False),
     }
 
 

@@ -5,6 +5,7 @@ Eliminates reliance on in-memory _cache and JSON writes for migrated domains.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import logging
 import re
@@ -82,6 +83,19 @@ class SchemeNotFoundError(SupabaseRepositoryError):
 
 class GovOpportunityNotFoundError(SupabaseRepositoryError):
     pass
+
+
+class EmployerNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class VerificationNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class InvalidVerificationTransitionError(SupabaseRepositoryError):
+    pass
+
 
 
 class SupabaseConnectionError(SupabaseRepositoryError):
@@ -2238,3 +2252,281 @@ def upsert_skills(skills_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("[SupabaseRepo] Failed upserting skills: %s", e)
         raise SupabaseRepositoryError(f"Database upsert failed for skills: {e}") from e
+
+
+def get_employer(employer_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employers").select("*").eq("id", employer_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for employer '{employer_id}': {e}") from e
+
+
+def get_employer_by_user_id(user_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employers").select("*").eq("user_id", user_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer by user_id '%s': %s", user_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for employer by user_id '{user_id}': {e}") from e
+
+
+def list_employers(
+    verification_status: str | None = None,
+    is_demo: bool | None = None,
+    district: str | None = None,
+    industry: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("employers").select("*")
+        if verification_status and verification_status.lower() != "all":
+            query = query.eq("verification_status", verification_status.upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        if district and district.lower() != "all":
+            query = query.ilike("district", f"%{district}%")
+        if industry and industry.lower() != "all":
+            query = query.ilike("industry", f"%{industry}%")
+        query = query.range(offset, offset + limit - 1)
+        res = query.execute()
+        return getattr(res, "data", []) or []
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing employers: %s", e)
+        raise SupabaseRepositoryError(f"Database listing failed for employers: {e}") from e
+
+
+def upsert_employer(employer_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(employer_data)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload.setdefault("created_at", now_iso)
+        payload["updated_at"] = now_iso
+        res = client.table("employers").upsert(payload, on_conflict="id").execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return payload
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed upserting employer: %s", e)
+        raise SupabaseRepositoryError(f"Database upsert failed for employer: {e}") from e
+
+
+def get_employer_verification(verification_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employer_verifications").select("*").eq("id", verification_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer verification '%s': %s", verification_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for verification '{verification_id}': {e}") from e
+
+
+def get_latest_employer_verification(employer_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employer_verifications").select("*").eq("employer_id", employer_id).order("created_at", desc=True).limit(1).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying latest verification for employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for latest verification of employer '{employer_id}': {e}") from e
+
+
+def list_employer_verifications(
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("employer_verifications").select("*")
+        if status and status.lower() != "all":
+            query = query.eq("status", status.upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
+        res = query.execute()
+        return getattr(res, "data", []) or []
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing employer verifications: %s", e)
+        raise SupabaseRepositoryError(f"Database listing failed for employer verifications: {e}") from e
+
+
+def create_employer_verification(verification_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(verification_data)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if "id" not in payload or not payload["id"]:
+            payload["id"] = f"ev-{uuid.uuid4().hex[:12]}"
+        payload.setdefault("submitted_at", now_iso)
+        payload.setdefault("created_at", now_iso)
+        payload["updated_at"] = now_iso
+        res = client.table("employer_verifications").insert(payload).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return payload
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed inserting employer verification: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for employer verification: {e}") from e
+
+
+def update_employer_verification(verification_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(updates)
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        res = client.table("employer_verifications").update(payload).eq("id", verification_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        existing = get_employer_verification(verification_id)
+        if not existing:
+            raise VerificationNotFoundError(f"Employer verification '{verification_id}' not found")
+        existing.update(payload)
+        return existing
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating employer verification '%s': %s", verification_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for employer verification '{verification_id}': {e}") from e
+
+
+def update_employer_verification_status(
+    employer_id: str,
+    new_status: str,
+    verifier_id: str | None = None,
+    rejection_reason: str | None = None,
+    admin_notes: str | None = None,
+    evidence_updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        client = get_client()
+        emp = get_employer(employer_id)
+        if not emp:
+            raise EmployerNotFoundError(f"Employer '{employer_id}' not found")
+
+        current_status = (emp.get("verification_status") or "UNVERIFIED").upper()
+        target_status = new_status.upper()
+
+        if target_status not in ("UNVERIFIED", "PENDING", "VERIFIED", "REJECTED"):
+            raise InvalidVerificationTransitionError(f"Invalid verification status '{target_status}'")
+
+        if current_status == "VERIFIED" and target_status == "VERIFIED":
+            raise InvalidVerificationTransitionError("Employer is already verified")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        emp_updates: dict[str, Any] = {
+            "verification_status": target_status,
+            "updated_at": now_iso,
+        }
+
+        if target_status == "VERIFIED":
+            emp_updates["verified_at"] = now_iso
+            emp_updates["verified_by"] = verifier_id or "ADMIN"
+            emp_updates["verification_source"] = "AUTHORITATIVE_ADMIN_VERIFICATION"
+            emp_updates["verification_method"] = "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
+            emp_updates["data_provenance"] = "AUTHORITATIVE_VERIFIED"
+            emp_updates["confidence"] = 95
+            emp_updates["rejection_reason"] = None
+        elif target_status == "REJECTED":
+            if not rejection_reason or not rejection_reason.strip():
+                raise InvalidVerificationTransitionError("Rejection reason is mandatory when rejecting verification")
+            emp_updates["verified_at"] = now_iso
+            emp_updates["verified_by"] = verifier_id or "ADMIN"
+            emp_updates["rejection_reason"] = rejection_reason.strip()
+            emp_updates["data_provenance"] = "ADMIN_REJECTED"
+            emp_updates["confidence"] = 0
+        elif target_status == "PENDING":
+            emp_updates["data_provenance"] = "EMPLOYER_SELF_DECLARED"
+            emp_updates["confidence"] = 25
+            emp_updates["rejection_reason"] = None
+
+        if evidence_updates:
+            current_evidence = emp.get("evidence") or {}
+            if isinstance(current_evidence, dict):
+                current_evidence.update(evidence_updates)
+                emp_updates["evidence"] = current_evidence
+            if "company_name" in evidence_updates:
+                emp_updates["company_name"] = evidence_updates["company_name"]
+            if "gstin" in evidence_updates:
+                emp_updates["gstin"] = evidence_updates["gstin"]
+            if "corporate_website" in evidence_updates:
+                emp_updates["corporate_website"] = evidence_updates["corporate_website"]
+            if "email" in evidence_updates:
+                emp_updates["email"] = evidence_updates["email"]
+
+        res = client.table("employers").update(emp_updates).eq("id", employer_id).execute()
+        updated_emp = (getattr(res, "data", []) or [{}])[0]
+        merged_emp = {**emp, **emp_updates, **updated_emp}
+
+        verification_record = {
+            "id": f"ev-{uuid.uuid4().hex[:12]}",
+            "employer_id": employer_id,
+            "user_id": emp.get("user_id"),
+            "company_name": emp.get("company_name") or emp.get("name") or "Employer",
+            "email": emp.get("email"),
+            "gstin": emp.get("gstin"),
+            "corporate_website": emp.get("corporate_website"),
+            "status": target_status,
+            "action": "APPROVE" if target_status == "VERIFIED" else ("REJECT" if target_status == "REJECTED" else "SUBMIT"),
+            "submitted_at": emp.get("created_at") or now_iso,
+            "reviewed_at": now_iso if target_status in ("VERIFIED", "REJECTED") else None,
+            "reviewed_by": verifier_id if target_status in ("VERIFIED", "REJECTED") else None,
+            "admin_notes": admin_notes,
+            "rejection_reason": rejection_reason.strip() if rejection_reason else None,
+            "data_provenance": emp_updates.get("data_provenance", "EMPLOYER_SELF_DECLARED"),
+            "source": "AUTHORITATIVE_ADMIN_VERIFICATION" if target_status == "VERIFIED" else "USER_SUBMITTED",
+            "is_demo": emp.get("is_demo", False),
+            "evidence_payload": emp_updates.get("evidence", emp.get("evidence") or {}),
+            "confidence": emp_updates.get("confidence", 0),
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        client.table("employer_verifications").insert(verification_record).execute()
+
+        return merged_emp
+    except (EmployerNotFoundError, InvalidVerificationTransitionError):
+        raise
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating verification status for employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database status update failed for employer '{employer_id}': {e}") from e
+

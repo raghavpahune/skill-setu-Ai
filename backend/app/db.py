@@ -68,7 +68,7 @@ def _flush_real_table(table: str):
         real_records = [
             r for r in records
             if isinstance(r, dict) and (
-                r.get("source") in ("USER_SUBMITTED", "EMPLOYER_SUBMITTED", "INSTITUTE_SUBMITTED", "REAL_INGESTED", "LIVE_API")
+                r.get("source") in ("USER_SUBMITTED", "EMPLOYER_SUBMITTED", "INSTITUTE_SUBMITTED", "REAL_INGESTED", "LIVE_API", "AUTHORITATIVE_ADMIN_VERIFICATION")
                 or (r.get("is_demo") is False and r.get("source") != "DEMO_SYNTHETIC")
             )
         ]
@@ -228,7 +228,7 @@ def init_db():
             "placements", "employers", "employer_feedback", "industry_signals",
             "skill_forecasts", "student_profiles", "schemes", "sync_logs",
             "employer_demands", "difficult_skills", "student_assessments",
-            "gov_opportunities", "users"
+            "gov_opportunities", "users", "employer_verifications"
         ]
         for tbl in tables:
             try:
@@ -276,13 +276,13 @@ def get_data_governance_summary() -> dict[str, Any]:
     tables = [
         "student_assessments", "student_profiles", "employee_profiles", "employer_demands",
         "employer_feedback", "courses", "industry_signals",
-        "gov_opportunities", "users", "jobs", "skills"
+        "gov_opportunities", "users", "jobs", "skills",
+        "employers", "employer_verifications"
     ]
     summary = {}
     total_real = 0
     total_demo = 0
 
-    # For migrated authoritative domains, fetch directly from Supabase repositories if available
     for tbl in tables:
         records: list[dict[str, Any]] = []
         try:
@@ -310,6 +310,12 @@ def get_data_governance_summary() -> dict[str, Any]:
             elif tbl == "jobs":
                 from app.repositories.supabase_repository import list_jobs as list_jobs_repo
                 records = list_jobs_repo(limit=None)
+            elif tbl == "employers":
+                from app.repositories.supabase_repository import list_employers
+                records = list_employers(limit=10000)
+            elif tbl == "employer_verifications":
+                from app.repositories.supabase_repository import list_employer_verifications
+                records = list_employer_verifications(limit=10000)
             else:
                 records = _cache.get(tbl, [])
         except Exception:
@@ -1476,6 +1482,84 @@ def save_user(user_data: dict) -> dict:
         return user_data
 
 
-# Re-export centralized demo student helper for convenience
+def get_employer_by_id(employer_id: str) -> dict[str, Any] | None:
+    if not _cache:
+        init_db()
+    try:
+        from app.repositories.supabase_repository import get_employer
+        repo_emp = get_employer(employer_id)
+        if repo_emp:
+            return repo_emp
+    except Exception:
+        pass
+    employers = _cache.get("employers", [])
+    return next((e for e in employers if e.get("id") == employer_id), None)
+
+
+def save_employer_record(employer_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    employer_data.setdefault("created_at", now_iso)
+    employer_data["updated_at"] = now_iso
+    employer_data.setdefault("source", "USER_SUBMITTED")
+    employer_data["is_demo"] = False
+
+    from app.repositories.supabase_repository import upsert_employer
+    saved = upsert_employer(employer_data)
+    merged = {**employer_data, **saved}
+
+    records = _cache.setdefault("employers", [])
+    eid = merged.get("id")
+    matched_idx = next((i for i, e in enumerate(records) if e.get("id") == eid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("employers")
+    return merged
+
+
+def get_employer_verification_record(verification_id: str) -> dict[str, Any] | None:
+    if not _cache:
+        init_db()
+    try:
+        from app.repositories.supabase_repository import get_employer_verification
+        repo_v = get_employer_verification(verification_id)
+        if repo_v:
+            return repo_v
+    except Exception:
+        pass
+    verifications = _cache.get("employer_verifications", [])
+    return next((v for v in verifications if v.get("id") == verification_id), None)
+
+
+def save_employer_verification_record(verification_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    verification_data.setdefault("created_at", now_iso)
+    verification_data["updated_at"] = now_iso
+    verification_data.setdefault("source", "USER_SUBMITTED")
+    verification_data["is_demo"] = False
+
+    from app.repositories.supabase_repository import create_employer_verification
+    saved = create_employer_verification(verification_data)
+    merged = {**verification_data, **saved}
+
+    records = _cache.setdefault("employer_verifications", [])
+    vid = merged.get("id")
+    matched_idx = next((i for i, v in enumerate(records) if v.get("id") == vid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("employer_verifications")
+    return merged
+
+
 from app.core.security import is_demo_student_id  # noqa: E402
+
 

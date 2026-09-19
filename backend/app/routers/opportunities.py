@@ -155,7 +155,28 @@ async def list_opportunities(
             if q_lower not in corpus:
                 continue
 
-        # Enriched opportunity item
+        ev_status = "UNVERIFIED"
+        if not is_demo_mode:
+            emp_id = j.get("employer_id")
+            comp_name = (j.get("company") or "").strip().lower()
+            emp_rec = None
+            if emp_id:
+                try:
+                    from app.repositories.supabase_repository import get_employer
+                    emp_rec = get_employer(emp_id)
+                except Exception:
+                    pass
+            if not emp_rec and comp_name:
+                from app.db import _cache
+                for e in _cache.get("employers", []):
+                    if (e.get("name") or "").strip().lower() == comp_name or (e.get("company_name") or "").strip().lower() == comp_name:
+                        emp_rec = e
+                        break
+            if emp_rec and (emp_rec.get("is_demo") is True or emp_rec.get("source") == "DEMO_SYNTHETIC"):
+                emp_rec = None
+            if emp_rec:
+                ev_status = (emp_rec.get("verification_status") or "UNVERIFIED").upper()
+
         filtered.append({
             "id": j.get("id"),
             "title": j.get("title"),
@@ -174,6 +195,8 @@ async def list_opportunities(
             "status": j.get("status", "active"),
             "source": j.get("source") or ("DEMO_SYNTHETIC" if is_demo_mode else "UNKNOWN"),
             "skills": opp_skills,
+            "employer_verification_status": ev_status,
+            "is_employer_verified": (ev_status == "VERIFIED"),
         })
 
     return filtered[offset : offset + limit]
