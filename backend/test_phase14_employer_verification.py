@@ -472,3 +472,93 @@ def test_rejected_employer_verified_at_is_none(client, employer_b_headers, admin
     assert rej_emp["verification_status"] == "REJECTED"
     assert rej_emp["verified_at"] is None
 
+
+def test_target_jobs_does_not_perform_fallback_employer_queries_when_batch_map_misses(client, admin_headers, monkeypatch):
+    future_deadline = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)).isoformat()
+    job_payload = {
+        "title": "Batch Miss Test Engineer",
+        "company": "Missing Employer Co",
+        "district": "Pune",
+        "industry": "IT",
+        "apply_url": "https://example.com/missing-emp-job",
+        "description": "Batch map miss validation",
+        "skills": ["Python"],
+        "deadline": future_deadline,
+        "employer_id": "emp-non-existent-999",
+    }
+    job_res = client.post("/api/jobs", json=job_payload, headers=admin_headers)
+    assert job_res.status_code == 201
+
+    fallback_call_count = 0
+    from app.repositories import supabase_repository
+    orig_get_employer = supabase_repository.get_employer
+    def tracking_get_employer(eid):
+        nonlocal fallback_call_count
+        if eid == "emp-non-existent-999":
+            fallback_call_count += 1
+        return orig_get_employer(eid)
+
+    monkeypatch.setattr(supabase_repository, "get_employer", tracking_get_employer)
+    list_res = client.get("/api/jobs?district=pune")
+    assert list_res.status_code == 200
+    assert fallback_call_count == 0
+    matching = next((j for j in list_res.json() if j.get("employer_id") == "emp-non-existent-999"), None)
+    assert matching is not None
+    assert matching["employer_verification_status"] == "UNVERIFIED"
+    assert matching["is_employer_verified"] is False
+
+
+def test_migration_fk_ordering_is_valid():
+    from pathlib import Path
+    mig_path = Path(__file__).resolve().parent.parent / "data" / "migrations" / "20260919_phase14_employer_verification.sql"
+    assert mig_path.is_file()
+    sql = mig_path.read_text(encoding="utf-8")
+
+    drop_idx = sql.find("DROP CONSTRAINT IF EXISTS employer_feedback_employer_id_fkey")
+    alter_feedback_idx = sql.find("ALTER TABLE employer_feedback ALTER COLUMN employer_id TYPE TEXT")
+    alter_employers_idx = sql.find("ALTER TABLE employers ALTER COLUMN id TYPE TEXT")
+    add_fk_idx = sql.find("ADD CONSTRAINT employer_feedback_employer_id_fkey")
+    cascade_idx = sql.find("ON DELETE CASCADE")
+    rpc_idx = sql.find("CREATE OR REPLACE FUNCTION public.update_employer_verification_atomic")
+
+    assert drop_idx != -1
+    assert alter_feedback_idx != -1
+    assert alter_employers_idx != -1
+    assert add_fk_idx != -1
+    assert cascade_idx != -1
+    assert rpc_idx != -1
+
+    assert drop_idx < alter_feedback_idx < alter_employers_idx < add_fk_idx
+    assert cascade_idx > add_fk_idx
+
+
+def test_employer_verification_status_update_and_audit_atomic_rollback(client, employer_b_headers, admin_headers):
+    from app.repositories.supabase_repository import get_client, update_employer_verification_status
+    c = get_client()
+    emp_table = c.table("employers")
+    ver_table = c.table("employer_verifications")
+
+    emp_before = next((r for r in emp_table.rows if r.get("id") == "emp-002"), None)
+    initial_status = emp_before.get("verification_status") if emp_before else "UNVERIFIED"
+    ver_count_before = len(ver_table.rows)
+
+    with pytest.raises(Exception):
+        update_employer_verification_status(
+            employer_id="emp-002",
+            new_status="REJECTED",
+            rejection_reason="",
+        )
+
+    emp_after = next((r for r in emp_table.rows if r.get("id") == "emp-002"), None)
+    assert emp_after.get("verification_status") == initial_status
+    assert len(ver_table.rows) == ver_count_before
+
+    with pytest.raises(Exception):
+        update_employer_verification_status(
+            employer_id="emp-does-not-exist",
+            new_status="VERIFIED",
+        )
+
+    assert len(ver_table.rows) == ver_count_before
+
+

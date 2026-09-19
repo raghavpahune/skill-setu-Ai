@@ -56,7 +56,12 @@ class JobSubmission(BaseModel):
         return v.strip()
 
 
-def _enrich_job_employer_verification(job: dict, is_demo_mode: bool, employer_record: dict | None = None) -> dict:
+def _enrich_job_employer_verification(
+    job: dict,
+    is_demo_mode: bool,
+    employer_record: dict | None = None,
+    allow_fallback: bool = True,
+) -> dict:
     enriched = dict(job)
     if is_demo_mode:
         enriched["employer_verification_status"] = "UNVERIFIED"
@@ -66,7 +71,7 @@ def _enrich_job_employer_verification(job: dict, is_demo_mode: bool, employer_re
     emp_id = job.get("employer_id")
     emp_record = employer_record
 
-    if not emp_record and emp_id:
+    if not emp_record and emp_id and allow_fallback:
         try:
             from app.repositories.supabase_repository import get_employer
             emp_record = get_employer(emp_id)
@@ -154,7 +159,10 @@ async def list_jobs(
         except Exception as exc:
             logger.warning("[Jobs API] Batch employer lookup failed: %s", exc)
 
-    return [_enrich_job_employer_verification(j, False, emp_map.get(j.get("employer_id"))) for j in target_jobs]
+    return [
+        _enrich_job_employer_verification(j, False, emp_map.get(j.get("employer_id")), allow_fallback=False)
+        for j in target_jobs
+    ]
 
 
 @router.post("/jobs", status_code=http_status.HTTP_201_CREATED)

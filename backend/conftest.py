@@ -352,6 +352,118 @@ class MockSupabaseRpc:
                 skills_table.rows = skills_snapshot
                 raise
 
+        if self.fn_name == "update_employer_verification_atomic":
+            import datetime as dt_mod
+            import uuid as uuid_mod
+            p_params = self.params.get("p_params") or {}
+            eid = p_params.get("employer_id")
+            if not eid or not str(eid).strip():
+                raise RuntimeError("Employer id is required")
+
+            target_status = str(p_params.get("target_status") or "").upper()
+            if target_status not in ("UNVERIFIED", "PENDING", "VERIFIED", "REJECTED"):
+                raise RuntimeError(f"Invalid verification status '{target_status}'")
+
+            emp_table = self.client.table("employers")
+            ver_table = self.client.table("employer_verifications")
+            emp_snapshot = deepcopy(emp_table.rows)
+            ver_snapshot = deepcopy(ver_table.rows)
+
+            try:
+                emp = next((r for r in emp_table.rows if r.get("id") == eid), None)
+                if not emp:
+                    raise RuntimeError(f"Employer '{eid}' not found")
+
+                current_status = (emp.get("verification_status") or "UNVERIFIED").upper()
+                if current_status == "VERIFIED" and target_status == "VERIFIED":
+                    raise RuntimeError("Employer is already verified")
+
+                rejection_reason = p_params.get("rejection_reason")
+                if target_status == "REJECTED" and (not rejection_reason or not str(rejection_reason).strip()):
+                    raise RuntimeError("Rejection reason is mandatory when rejecting verification")
+
+                now_iso = dt_mod.datetime.now(dt_mod.timezone.utc).isoformat()
+                emp_updates = {
+                    "verification_status": target_status,
+                    "updated_at": now_iso,
+                }
+
+                verifier_id = p_params.get("verifier_id")
+                admin_notes = p_params.get("admin_notes")
+                verification_method = p_params.get("verification_method")
+                evidence_updates = p_params.get("evidence_updates")
+
+                if target_status == "VERIFIED":
+                    emp_updates["verified_at"] = now_iso
+                    emp_updates["verified_by"] = verifier_id or "ADMIN"
+                    emp_updates["verification_source"] = "AUTHORITATIVE_ADMIN_VERIFICATION"
+                    emp_updates["verification_method"] = verification_method or "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
+                    emp_updates["data_provenance"] = "AUTHORITATIVE_VERIFIED"
+                    emp_updates["confidence"] = 95
+                    emp_updates["rejection_reason"] = None
+                elif target_status == "REJECTED":
+                    emp_updates["verified_at"] = None
+                    emp_updates["verified_by"] = verifier_id or "ADMIN"
+                    emp_updates["rejection_reason"] = str(rejection_reason).strip()
+                    emp_updates["data_provenance"] = "ADMIN_REJECTED"
+                    emp_updates["confidence"] = 0
+                elif target_status == "PENDING":
+                    emp_updates["verified_at"] = None
+                    emp_updates["verified_by"] = None
+                    emp_updates["data_provenance"] = "EMPLOYER_SELF_DECLARED"
+                    emp_updates["confidence"] = 25
+                    emp_updates["rejection_reason"] = None
+                else:
+                    emp_updates["verified_at"] = None
+                    emp_updates["verified_by"] = None
+                    emp_updates["data_provenance"] = "UNVERIFIED"
+                    emp_updates["confidence"] = 0
+                    emp_updates["rejection_reason"] = None
+
+                if evidence_updates and isinstance(evidence_updates, dict):
+                    cur_ev = deepcopy(emp.get("evidence") or {})
+                    cur_ev.update(evidence_updates)
+                    emp_updates["evidence"] = cur_ev
+                    for k in ("company_name", "gstin", "corporate_website", "email"):
+                        if k in evidence_updates:
+                            emp_updates[k] = evidence_updates[k]
+
+                res_emp = emp_table.update(emp_updates).eq("id", eid).execute()
+                updated_emp = (getattr(res_emp, "data", []) or [{}])[0]
+                merged_emp = {**emp, **emp_updates, **updated_emp}
+
+                verification_record = {
+                    "id": f"ev-{uuid_mod.uuid4().hex[:12]}",
+                    "employer_id": eid,
+                    "user_id": emp.get("user_id"),
+                    "company_name": emp.get("company_name") or emp.get("name") or "Employer",
+                    "email": merged_emp.get("email"),
+                    "gstin": merged_emp.get("gstin"),
+                    "corporate_website": merged_emp.get("corporate_website"),
+                    "status": target_status,
+                    "action": "APPROVE" if target_status == "VERIFIED" else ("REJECT" if target_status == "REJECTED" else "SUBMIT"),
+                    "submitted_at": emp.get("created_at") or now_iso,
+                    "reviewed_at": now_iso if target_status in ("VERIFIED", "REJECTED") else None,
+                    "reviewed_by": verifier_id if target_status in ("VERIFIED", "REJECTED") else None,
+                    "admin_notes": admin_notes,
+                    "rejection_reason": str(rejection_reason).strip() if rejection_reason else None,
+                    "data_provenance": emp_updates.get("data_provenance", "EMPLOYER_SELF_DECLARED"),
+                    "source": "AUTHORITATIVE_ADMIN_VERIFICATION" if target_status == "VERIFIED" else "USER_SUBMITTED",
+                    "is_demo": emp.get("is_demo", False),
+                    "evidence_payload": emp_updates.get("evidence", emp.get("evidence") or {}),
+                    "confidence": emp_updates.get("confidence", 0),
+                    "verification_method": emp_updates.get("verification_method"),
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }
+                ver_table.insert(verification_record).execute()
+
+                return type("APIResponse", (), {"data": deepcopy(merged_emp), "count": 1})()
+            except Exception:
+                emp_table.rows = emp_snapshot
+                ver_table.rows = ver_snapshot
+                raise
+
         return type("APIResponse", (), {"data": None, "count": 0})()
 
 

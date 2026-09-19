@@ -2483,114 +2483,32 @@ def update_employer_verification_status(
 ) -> dict[str, Any]:
     try:
         client = get_client()
-        emp = get_employer(employer_id)
-        if not emp:
-            raise EmployerNotFoundError(f"Employer '{employer_id}' not found")
-
-        current_status = (emp.get("verification_status") or "UNVERIFIED").upper()
-        target_status = new_status.upper()
-
-        if target_status not in ("UNVERIFIED", "PENDING", "VERIFIED", "REJECTED"):
-            raise InvalidVerificationTransitionError(f"Invalid verification status '{target_status}'")
-
-        if current_status == "VERIFIED" and target_status == "VERIFIED":
-            raise InvalidVerificationTransitionError("Employer is already verified")
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        emp_updates: dict[str, Any] = {
-            "verification_status": target_status,
-            "updated_at": now_iso,
-        }
-
-        if target_status == "VERIFIED":
-            emp_updates["verified_at"] = now_iso
-            emp_updates["verified_by"] = verifier_id or "ADMIN"
-            emp_updates["verification_source"] = "AUTHORITATIVE_ADMIN_VERIFICATION"
-            emp_updates["verification_method"] = verification_method or "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
-            emp_updates["data_provenance"] = "AUTHORITATIVE_VERIFIED"
-            emp_updates["confidence"] = 95
-            emp_updates["rejection_reason"] = None
-        elif target_status == "REJECTED":
-            if not rejection_reason or not rejection_reason.strip():
-                raise InvalidVerificationTransitionError("Rejection reason is mandatory when rejecting verification")
-            emp_updates["verified_at"] = None
-            emp_updates["verified_by"] = verifier_id or "ADMIN"
-            emp_updates["rejection_reason"] = rejection_reason.strip()
-            emp_updates["data_provenance"] = "ADMIN_REJECTED"
-            emp_updates["confidence"] = 0
-        elif target_status == "PENDING":
-            emp_updates["data_provenance"] = "EMPLOYER_SELF_DECLARED"
-            emp_updates["confidence"] = 25
-            emp_updates["rejection_reason"] = None
-
-        if evidence_updates:
-            current_evidence = emp.get("evidence") or {}
-            if isinstance(current_evidence, dict):
-                current_evidence.update(evidence_updates)
-                emp_updates["evidence"] = current_evidence
-            if "company_name" in evidence_updates:
-                emp_updates["company_name"] = evidence_updates["company_name"]
-            if "gstin" in evidence_updates:
-                emp_updates["gstin"] = evidence_updates["gstin"]
-            if "corporate_website" in evidence_updates:
-                emp_updates["corporate_website"] = evidence_updates["corporate_website"]
-            if "email" in evidence_updates:
-                emp_updates["email"] = evidence_updates["email"]
-
-        res = client.table("employers").update(emp_updates).eq("id", employer_id).execute()
-        updated_emp = (getattr(res, "data", []) or [{}])[0]
-        merged_emp = {**emp, **emp_updates, **updated_emp}
-
-        verification_record = {
-            "id": f"ev-{uuid.uuid4().hex[:12]}",
+        params = {
             "employer_id": employer_id,
-            "user_id": emp.get("user_id"),
-            "company_name": emp.get("company_name") or emp.get("name") or "Employer",
-            "email": emp.get("email"),
-            "gstin": emp.get("gstin"),
-            "corporate_website": emp.get("corporate_website"),
-            "status": target_status,
-            "action": "APPROVE" if target_status == "VERIFIED" else ("REJECT" if target_status == "REJECTED" else "SUBMIT"),
-            "submitted_at": emp.get("created_at") or now_iso,
-            "reviewed_at": now_iso if target_status in ("VERIFIED", "REJECTED") else None,
-            "reviewed_by": verifier_id if target_status in ("VERIFIED", "REJECTED") else None,
+            "target_status": new_status,
+            "verifier_id": verifier_id,
+            "rejection_reason": rejection_reason,
             "admin_notes": admin_notes,
-            "rejection_reason": rejection_reason.strip() if rejection_reason else None,
-            "data_provenance": emp_updates.get("data_provenance", "EMPLOYER_SELF_DECLARED"),
-            "source": "AUTHORITATIVE_ADMIN_VERIFICATION" if target_status == "VERIFIED" else "USER_SUBMITTED",
-            "is_demo": emp.get("is_demo", False),
-            "evidence_payload": emp_updates.get("evidence", emp.get("evidence") or {}),
-            "confidence": emp_updates.get("confidence", 0),
-            "verification_method": emp_updates.get("verification_method"),
-            "created_at": now_iso,
-            "updated_at": now_iso,
+            "evidence_updates": evidence_updates,
+            "verification_method": verification_method,
         }
-        try:
-            client.table("employer_verifications").insert(verification_record).execute()
-        except Exception as insert_err:
-            revert_updates = {
-                "verification_status": current_status,
-                "verified_at": emp.get("verified_at"),
-                "verified_by": emp.get("verified_by"),
-                "verification_source": emp.get("verification_source"),
-                "verification_method": emp.get("verification_method"),
-                "data_provenance": emp.get("data_provenance"),
-                "confidence": emp.get("confidence", 0),
-                "rejection_reason": emp.get("rejection_reason"),
-                "updated_at": emp.get("updated_at") or now_iso,
-            }
-            try:
-                client.table("employers").update(revert_updates).eq("id", employer_id).execute()
-            except Exception:
-                pass
-            raise insert_err
-
-        return merged_emp
-    except (EmployerNotFoundError, InvalidVerificationTransitionError):
-        raise
-    except SupabaseRepositoryError:
-        raise
+        res = client.rpc("update_employer_verification_atomic", {"p_params": params}).execute()
+        data = getattr(res, "data", None)
+        if not data:
+            raise SupabaseRepositoryError(f"Atomic verification update returned empty response for employer '{employer_id}'")
+        return data if isinstance(data, dict) else data[0]
     except Exception as e:
+        err_str = str(e)
+        if "not found" in err_str.lower():
+            raise EmployerNotFoundError(f"Employer '{employer_id}' not found") from e
+        if "already verified" in err_str.lower():
+            raise InvalidVerificationTransitionError("Employer is already verified") from e
+        if "rejection reason is mandatory" in err_str.lower() or "mandatory" in err_str.lower():
+            raise InvalidVerificationTransitionError("Rejection reason is mandatory when rejecting verification") from e
+        if "invalid verification status" in err_str.lower():
+            raise InvalidVerificationTransitionError(f"Invalid verification status '{new_status}'") from e
+        if isinstance(e, (EmployerNotFoundError, InvalidVerificationTransitionError, SupabaseRepositoryError)):
+            raise
         logger.error("[SupabaseRepo] Failed updating verification status for employer '%s': %s", employer_id, e)
         raise SupabaseRepositoryError(f"Database status update failed for employer '{employer_id}': {e}") from e
 
