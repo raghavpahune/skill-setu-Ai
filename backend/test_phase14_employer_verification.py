@@ -531,6 +531,15 @@ def test_migration_fk_ordering_is_valid():
     assert drop_idx < alter_feedback_idx < alter_employers_idx < add_fk_idx
     assert cascade_idx > add_fk_idx
 
+    assert "GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO service_role;" in sql
+    assert "GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO authenticated" not in sql
+
+    schema_path = Path(__file__).resolve().parent.parent / "data" / "schema.sql"
+    assert schema_path.is_file()
+    schema_sql = schema_path.read_text(encoding="utf-8")
+    assert "GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO service_role;" in schema_sql
+    assert "GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO authenticated" not in schema_sql
+
 
 def test_employer_verification_status_update_and_audit_atomic_rollback(client, employer_b_headers, admin_headers):
     from app.repositories.supabase_repository import get_client, update_employer_verification_status
@@ -560,5 +569,31 @@ def test_employer_verification_status_update_and_audit_atomic_rollback(client, e
         )
 
     assert len(ver_table.rows) == ver_count_before
+
+
+def test_update_employer_verification_atomic_conformance():
+    from app.repositories.supabase_repository import get_client, update_employer_verification_status
+    c = get_client()
+    res_pending = update_employer_verification_status(
+        employer_id="emp-002",
+        new_status="PENDING",
+        evidence_updates={"company_name": "Updated Bajaj Enterprise"},
+    )
+    assert res_pending["verification_status"] == "PENDING"
+    assert res_pending["verification_source"] is None
+    assert res_pending["verification_method"] is None
+    latest_v = c.table("employer_verifications").rows[-1]
+    assert latest_v["company_name"] == "Updated Bajaj Enterprise"
+    assert latest_v["rejection_reason"] is None
+
+    res_unverified = update_employer_verification_status(
+        employer_id="emp-002",
+        new_status="UNVERIFIED",
+    )
+    assert res_unverified["verification_status"] == "UNVERIFIED"
+    assert res_unverified["verification_source"] is None
+    assert res_unverified["verification_method"] is None
+    latest_v2 = c.table("employer_verifications").rows[-1]
+    assert latest_v2["rejection_reason"] is None
 
 

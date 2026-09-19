@@ -1114,5 +1114,5 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.update_employer_verification_atomic(JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.update_employer_verification_atomic(JSONB) TO service_role;
 

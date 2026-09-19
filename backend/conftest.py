@@ -410,12 +410,16 @@ class MockSupabaseRpc:
                 elif target_status == "PENDING":
                     emp_updates["verified_at"] = None
                     emp_updates["verified_by"] = None
+                    emp_updates["verification_source"] = None
+                    emp_updates["verification_method"] = None
                     emp_updates["data_provenance"] = "EMPLOYER_SELF_DECLARED"
                     emp_updates["confidence"] = 25
                     emp_updates["rejection_reason"] = None
                 else:
                     emp_updates["verified_at"] = None
                     emp_updates["verified_by"] = None
+                    emp_updates["verification_source"] = None
+                    emp_updates["verification_method"] = None
                     emp_updates["data_provenance"] = "UNVERIFIED"
                     emp_updates["confidence"] = 0
                     emp_updates["rejection_reason"] = None
@@ -436,7 +440,7 @@ class MockSupabaseRpc:
                     "id": f"ev-{uuid_mod.uuid4().hex[:12]}",
                     "employer_id": eid,
                     "user_id": emp.get("user_id"),
-                    "company_name": emp.get("company_name") or emp.get("name") or "Employer",
+                    "company_name": merged_emp.get("company_name") or merged_emp.get("name") or "Employer",
                     "email": merged_emp.get("email"),
                     "gstin": merged_emp.get("gstin"),
                     "corporate_website": merged_emp.get("corporate_website"),
@@ -446,7 +450,7 @@ class MockSupabaseRpc:
                     "reviewed_at": now_iso if target_status in ("VERIFIED", "REJECTED") else None,
                     "reviewed_by": verifier_id if target_status in ("VERIFIED", "REJECTED") else None,
                     "admin_notes": admin_notes,
-                    "rejection_reason": str(rejection_reason).strip() if rejection_reason else None,
+                    "rejection_reason": emp_updates.get("rejection_reason"),
                     "data_provenance": emp_updates.get("data_provenance", "EMPLOYER_SELF_DECLARED"),
                     "source": "AUTHORITATIVE_ADMIN_VERIFICATION" if target_status == "VERIFIED" else "USER_SUBMITTED",
                     "is_demo": emp.get("is_demo", False),
