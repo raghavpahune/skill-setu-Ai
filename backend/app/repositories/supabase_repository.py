@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import json
 import logging
 import re
 import uuid
@@ -102,6 +103,18 @@ class CurriculumProposalNotFoundError(SupabaseRepositoryError):
 
 
 class InvalidProposalTransitionError(SupabaseRepositoryError):
+    pass
+
+
+class PlacementOutcomeNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class PlacementFeedbackNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class InvalidPlacementTransitionError(SupabaseRepositoryError):
     pass
 
 
@@ -2694,4 +2707,242 @@ def delete_curriculum_proposal(proposal_id: str) -> bool:
     except Exception as e:
         logger.error("[SupabaseRepo] Failed deleting curriculum proposal '%s': %s", proposal_id, e)
         raise SupabaseRepositoryError(f"Database deletion failed for curriculum proposal '{proposal_id}': {e}") from e
+
+
+VALID_PLACEMENT_OUTCOME_COLUMNS = {
+    "id",
+    "course_id",
+    "course_name",
+    "institute_id",
+    "institute_name",
+    "employer_id",
+    "employer_name",
+    "candidate_id",
+    "candidate_name",
+    "role_title",
+    "district",
+    "industry",
+    "status",
+    "placement_date",
+    "salary_annual_inr",
+    "skills_utilized",
+    "source",
+    "data_provenance",
+    "verification_status",
+    "is_demo",
+    "user_id",
+    "user_email",
+    "created_at",
+    "updated_at",
+}
+
+VALID_PLACEMENT_EMPLOYER_FEEDBACK_COLUMNS = {
+    "id",
+    "placement_outcome_id",
+    "employer_id",
+    "employer_name",
+    "skill_adequacy_score",
+    "practical_readiness",
+    "missing_skills",
+    "training_relevance",
+    "hiring_difficulty",
+    "feedback_notes",
+    "is_verified_employer",
+    "source",
+    "data_provenance",
+    "is_demo",
+    "user_id",
+    "user_email",
+    "created_at",
+    "updated_at",
+}
+
+
+def _enrich_placement_outcome_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    if "skills_utilized" in enriched and isinstance(enriched["skills_utilized"], str):
+        try:
+            enriched["skills_utilized"] = json.loads(enriched["skills_utilized"])
+        except Exception:
+            enriched["skills_utilized"] = []
+    if "skills_utilized" not in enriched:
+        enriched["skills_utilized"] = []
+    return enriched
+
+
+def _enrich_placement_employer_feedback_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    if "missing_skills" in enriched and isinstance(enriched["missing_skills"], str):
+        try:
+            enriched["missing_skills"] = json.loads(enriched["missing_skills"])
+        except Exception:
+            enriched["missing_skills"] = []
+    if "missing_skills" not in enriched:
+        enriched["missing_skills"] = []
+    return enriched
+
+
+def create_placement_outcome(outcome_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in outcome_data.items() if k in VALID_PLACEMENT_OUTCOME_COLUMNS}
+        res = client.table("placement_outcomes").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating placement_outcomes record in Supabase.")
+        return _enrich_placement_outcome_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating placement outcome: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for placement outcome: {e}") from e
+
+
+def get_placement_outcome(outcome_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("placement_outcomes").select("*").eq("id", outcome_id).execute()
+        rows = res.data or []
+        return _enrich_placement_outcome_record(rows[0]) if rows else None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching placement outcome '%s': %s", outcome_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for placement outcome '{outcome_id}': {e}") from e
+
+
+def list_placement_outcomes(
+    course_id: str | None = None,
+    institute_id: str | None = None,
+    employer_id: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("placement_outcomes").select("*")
+        if course_id:
+            query = query.eq("course_id", course_id)
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if employer_id:
+            query = query.eq("employer_id", employer_id)
+        if district and district.lower() not in ("all", "all districts"):
+            query = query.eq("district", district.strip())
+        if status and status.lower() != "all":
+            query = query.eq("status", status.strip().upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_placement_outcome_record(p) for p in (getattr(res, "data", []) or [])]
+
+        all_outcomes = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_outcomes)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_outcomes.extend([_enrich_placement_outcome_record(p) for p in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_outcomes) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_outcomes
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing placement outcomes: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing placement outcomes: {e}") from e
+
+
+def update_placement_outcome(outcome_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        existing = get_placement_outcome(outcome_id)
+        if not existing:
+            raise PlacementOutcomeNotFoundError(f"Placement outcome '{outcome_id}' not found.")
+        payload = {k: v for k, v in updates.items() if k in VALID_PLACEMENT_OUTCOME_COLUMNS}
+        res = client.table("placement_outcomes").update(payload).eq("id", outcome_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise PlacementOutcomeNotFoundError(f"Placement outcome '{outcome_id}' not found.")
+        return _enrich_placement_outcome_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating placement outcome '%s': %s", outcome_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for placement outcome '{outcome_id}': {e}") from e
+
+
+def delete_placement_outcome(outcome_id: str) -> bool:
+    try:
+        client = get_client()
+        res = client.table("placement_outcomes").delete().eq("id", outcome_id).execute()
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed deleting placement outcome '%s': %s", outcome_id, e)
+        raise SupabaseRepositoryError(f"Database deletion failed for placement outcome '{outcome_id}': {e}") from e
+
+
+def create_placement_employer_feedback(feedback_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in feedback_data.items() if k in VALID_PLACEMENT_EMPLOYER_FEEDBACK_COLUMNS}
+        res = client.table("placement_employer_feedback").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating placement_employer_feedback record in Supabase.")
+        return _enrich_placement_employer_feedback_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating placement employer feedback: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for placement employer feedback: {e}") from e
+
+
+def get_placement_employer_feedback(feedback_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("placement_employer_feedback").select("*").eq("id", feedback_id).execute()
+        rows = res.data or []
+        return _enrich_placement_employer_feedback_record(rows[0]) if rows else None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching placement employer feedback '%s': %s", feedback_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for placement employer feedback '{feedback_id}': {e}") from e
+
+
+def list_placement_employer_feedback(
+    placement_outcome_id: str | None = None,
+    employer_id: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("placement_employer_feedback").select("*")
+        if placement_outcome_id:
+            query = query.eq("placement_outcome_id", placement_outcome_id)
+        if employer_id:
+            query = query.eq("employer_id", employer_id)
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_placement_employer_feedback_record(f) for f in (getattr(res, "data", []) or [])]
+
+        all_feedback = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_feedback)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_feedback.extend([_enrich_placement_employer_feedback_record(f) for f in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_feedback) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_feedback
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing placement employer feedback: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing placement employer feedback: {e}") from e
 

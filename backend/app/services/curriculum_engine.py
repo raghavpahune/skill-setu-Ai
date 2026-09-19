@@ -83,6 +83,8 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
         employer_demands = get_demo("employer_demands")
         gov_opportunities = get_demo("gov_opportunities")
         employers = get_demo("employers")
+        placement_outcomes = get_demo("placement_outcomes") or []
+        placement_employer_feedback = get_demo("placement_employer_feedback") or []
     else:
         try:
             from app.repositories.supabase_repository import (
@@ -95,6 +97,8 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
                 list_employer_demands,
                 list_gov_opportunities,
                 list_employers,
+                list_placement_outcomes,
+                list_placement_employer_feedback,
             )
             courses = list_courses(is_demo=is_demo) or []
             if not courses:
@@ -115,6 +119,8 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             employer_demands = list_employer_demands(is_demo=is_demo) or []
             gov_opportunities = list_gov_opportunities(is_demo=is_demo, limit=None) or []
             employers = list_employers(is_demo=is_demo, limit=10000) or []
+            placement_outcomes = list_placement_outcomes(is_demo=is_demo_mode, limit=None) or []
+            placement_employer_feedback = list_placement_employer_feedback(is_demo=is_demo_mode, limit=None) or []
         except Exception as e:
             logger.warning("[CurriculumEngine] Authoritative audit inputs unavailable: %s", e)
             return []
@@ -210,6 +216,20 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             course_skills_map[cid] = []
         course_skills_map[cid].append(cs)
 
+    outcomes_by_course: dict[str, list[dict]] = {}
+    for po in (placement_outcomes or []):
+        cid_po = po.get("course_id")
+        if cid_po:
+            outcomes_by_course.setdefault(cid_po, []).append(po)
+
+    outcome_id_to_course = {po["id"]: po.get("course_id") for po in (placement_outcomes or []) if po.get("id")}
+    feedback_by_course: dict[str, list[dict]] = {}
+    for pef in (placement_employer_feedback or []):
+        p_id = pef.get("placement_outcome_id")
+        c_id = outcome_id_to_course.get(p_id)
+        if c_id:
+            feedback_by_course.setdefault(c_id, []).append(pef)
+
     audited_courses = []
 
     for c in courses:
@@ -218,11 +238,29 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
         institute = c.get("institute", "Government Technical Institute")
         district = c.get("district", "Maharashtra")
         enrolment = c.get("enrolment_count", 60)
-        p = placements.get(cid, {})
-        has_placement_data = bool(p and ("placed_count" in p or "student_count" in p or "placement_rate" in p))
-        student_count = p.get("student_count", 0) if has_placement_data else 0
-        placed_count = p.get("placed_count", 0) if has_placement_data else 0
-        placement_rate = round((placed_count / max(1, student_count)) * 100, 1) if (has_placement_data and student_count) else 0.0
+
+        tracked_outcomes = outcomes_by_course.get(cid, [])
+        course_feedbacks = feedback_by_course.get(cid, [])
+
+        if tracked_outcomes:
+            student_count = len(tracked_outcomes)
+            placed_count = sum(1 for o in tracked_outcomes if o.get("status") in ("PLACED", "EMPLOYED", "EMPLOYER_FEEDBACK_PENDING", "FEEDBACK_RECEIVED"))
+            placement_rate = round((placed_count / max(1, student_count)) * 100, 1)
+            has_placement_data = True
+        else:
+            p = placements.get(cid, {})
+            has_placement_data = bool(p and ("placed_count" in p or "student_count" in p or "placement_rate" in p))
+            student_count = p.get("student_count", 0) if has_placement_data else 0
+            placed_count = p.get("placed_count", 0) if has_placement_data else 0
+            placement_rate = round((placed_count / max(1, student_count)) * 100, 1) if (has_placement_data and student_count) else 0.0
+
+        emp_reported_missing = []
+        for fb in course_feedbacks:
+            m_list = fb.get("missing_skills") or []
+            if isinstance(m_list, list):
+                for ms in m_list:
+                    if isinstance(ms, str) and ms.strip() and ms.strip() not in emp_reported_missing:
+                        emp_reported_missing.append(ms.strip())
 
         taught_skills = course_skills_map.get(cid, [])
         taught_sids = {ts["skill_id"] for ts in taught_skills}
@@ -425,6 +463,10 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             "gov_opportunities_count": len(gov_schemes),
             "gov_apprenticeship_schemes": gov_schemes[:3],
             "is_backed_by_verified_demand": bool(total_v_openings > 0 or effective_jobs_matched > 0),
+            "placement_outcomes_count": len(tracked_outcomes),
+            "placement_feedback_count": len(course_feedbacks),
+            "employer_reported_missing_skills": emp_reported_missing,
+            "has_post_hire_workforce_feedback": bool(len(course_feedbacks) > 0),
         }
 
         audited_courses.append({
@@ -529,6 +571,18 @@ def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = No
         "description": f"Mastery program in {prog_name}.",
         "impact": "Ensures curriculum delivery standards match national NSQC guidelines."
     })
+
+    emp_missing = course.get("evidence_summary", {}).get("employer_reported_missing_skills", [])
+    if emp_missing:
+        action_plan.insert(0, {
+            "step": 0,
+            "phase": "Post-Hiring Competency Alignment (Month 1)",
+            "title": f"Integrate employer-identified practical competencies: {', '.join(emp_missing[:3])}",
+            "description": "Directly addresses skill deficits reported by employers who recruited graduates from this syllabus.",
+            "impact": "Eliminates post-placement productivity ramp delays reported by industry partners."
+        })
+        for i, step in enumerate(action_plan, 1):
+            step["step"] = i
 
     proposal_ready = {
         "course_id": course_id,

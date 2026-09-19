@@ -85,9 +85,21 @@ export default function EmployerDashboard() {
   const [demands, setDemands] = useState([]);
   const [difficultSkills, setDifficultSkills] = useState([]);
   const [signals, setSignals] = useState([]);
+  const [placedCandidates, setPlacedCandidates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const [activeFeedbackCandidate, setActiveFeedbackCandidate] = useState(null);
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [feedbackForm, setFeedbackForm] = useState({
+    skill_adequacy_score: 4,
+    practical_readiness: 'PRODUCTION_READY',
+    missing_skills: [],
+    customMissingSkill: '',
+    training_relevance: 'HIGHLY_RELEVANT',
+    hiring_difficulty: 'MODERATE',
+    feedback_notes: '',
+  });
 
   // Filters
   const [statusFilter, setStatusFilter] = useState('all');
@@ -152,6 +164,14 @@ export default function EmployerDashboard() {
         setSignals(sigsRes.signals);
       } else {
         setSignals([]);
+      }
+      try {
+        const outcomesRes = await api.getPlacementOutcomes();
+        if (outcomesRes?.placement_outcomes) {
+          setPlacedCandidates(outcomesRes.placement_outcomes);
+        }
+      } catch (e) {
+        console.warn('Could not fetch placed candidates:', e);
       }
     } catch (err) {
       console.warn('Failed loading employer live data:', err);
@@ -593,6 +613,21 @@ export default function EmployerDashboard() {
           <span>Industry Trends & Signals</span>
           <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono">
             {signals.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('placements')}
+          className={`px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition-all shrink-0 flex items-center gap-2 ${
+            activeTab === 'placements'
+              ? 'border-teal-600 text-teal-700 dark:text-teal-400'
+              : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <span>🎓</span>
+          <span>Hired Talent & Feedback</span>
+          <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-mono">
+            {placedCandidates.length}
           </span>
         </button>
       </div>
@@ -1647,6 +1682,103 @@ export default function EmployerDashboard() {
         </div>
       )}
 
+      {activeTab === 'placements' && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs p-5 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Hired Talent & Post-Placement Feedback Loop</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-200 dark:border-emerald-800">
+                  Closed Intelligence Loop
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Evaluate practical readiness of vocational graduates placed at your company. Your ratings directly update Maharashtra syllabus revision blueprints.
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold uppercase text-[10px]">
+                  <th className="p-3">Candidate</th>
+                  <th className="p-3">Training Institute & Program</th>
+                  <th className="p-3">Role</th>
+                  <th className="p-3">Placement Date</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3 text-right">Workforce Feedback</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                {placedCandidates.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="p-8 text-center text-slate-400">
+                      No hired candidate records mapped to your employer account yet.
+                    </td>
+                  </tr>
+                ) : (
+                  placedCandidates.map((c) => (
+                    <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="p-3 font-bold text-slate-900 dark:text-white">
+                        <div>{c.candidate_name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{c.id}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-semibold text-slate-800 dark:text-slate-200">{c.course_name}</div>
+                        <div className="text-[10px] text-slate-400">{c.institute_name} ({c.district})</div>
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold">
+                          {c.role_title}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono text-slate-600 dark:text-slate-400">
+                        {c.placement_date || '—'}
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          c.status === 'FEEDBACK_RECEIVED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300' :
+                          'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300'
+                        }`}>
+                          {c.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        {c.status === 'FEEDBACK_RECEIVED' ? (
+                          <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                            <span>✓</span>
+                            <span>Feedback Recorded</span>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setActiveFeedbackCandidate(c);
+                              setFeedbackForm({
+                                skill_adequacy_score: 4,
+                                practical_readiness: 'PRODUCTION_READY',
+                                missing_skills: [],
+                                customMissingSkill: '',
+                                training_relevance: 'HIGHLY_RELEVANT',
+                                hiring_difficulty: 'MODERATE',
+                                feedback_notes: '',
+                              });
+                            }}
+                            className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold text-xs shadow-xs transition-colors cursor-pointer"
+                          >
+                            Rate Readiness & Gaps →
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* CORRECTION / REFINEMENT MODAL */}
       {activeFeedback && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
@@ -1737,6 +1869,214 @@ export default function EmployerDashboard() {
                 Save Industry Signal
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {activeFeedbackCandidate && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white dark:bg-slate-900 rounded-xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div>
+                <span className="text-[10px] font-mono uppercase text-teal-600 font-bold block">
+                  Workforce Intelligence Feedback
+                </span>
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  Rate Candidate: {activeFeedbackCandidate.candidate_name}
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                  {activeFeedbackCandidate.role_title} &bull; {activeFeedbackCandidate.course_name}
+                </p>
+              </div>
+              <button
+                onClick={() => setActiveFeedbackCandidate(null)}
+                className="text-slate-400 hover:text-slate-600 text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSubmittingFeedback(true);
+                try {
+                  const res = await api.submitPlacementEmployerFeedback(activeFeedbackCandidate.id, {
+                    skill_adequacy_score: Number(feedbackForm.skill_adequacy_score),
+                    practical_readiness: feedbackForm.practical_readiness,
+                    missing_skills: feedbackForm.missing_skills,
+                    training_relevance: feedbackForm.training_relevance,
+                    hiring_difficulty: feedbackForm.hiring_difficulty,
+                    feedback_notes: feedbackForm.feedback_notes,
+                  });
+                  if (res?.feedback) {
+                    showToast('success', 'Workforce feedback recorded! Syllabus blueprints updated.');
+                    setPlacedCandidates((prev) =>
+                      prev.map((c) =>
+                        c.id === activeFeedbackCandidate.id
+                          ? { ...c, status: 'FEEDBACK_RECEIVED' }
+                          : c
+                      )
+                    );
+                    setActiveFeedbackCandidate(null);
+                  }
+                } catch (err) {
+                  showToast('error', `Failed submitting feedback: ${err.message}`);
+                } finally {
+                  setSubmittingFeedback(false);
+                }
+              }}
+              className="space-y-3.5 text-xs"
+            >
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Overall Skill Adequacy (1 - Poor to 5 - Exceptional)
+                </label>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((val) => (
+                    <button
+                      type="button"
+                      key={val}
+                      onClick={() => setFeedbackForm({ ...feedbackForm, skill_adequacy_score: val })}
+                      className={`flex-1 py-1.5 rounded-lg border font-bold text-xs transition-all cursor-pointer ${
+                        feedbackForm.skill_adequacy_score === val
+                          ? 'bg-teal-600 text-white border-teal-600 shadow-xs'
+                          : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      {val} ★
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Practical Readiness
+                  </label>
+                  <select
+                    value={feedbackForm.practical_readiness}
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, practical_readiness: e.target.value })}
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="PRODUCTION_READY">Production Ready</option>
+                    <option value="NEEDS_SUPERVISION">Needs Supervision (&gt; 30d)</option>
+                    <option value="UNPREPARED">Unprepared for Industrial Tools</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Syllabus Relevance
+                  </label>
+                  <select
+                    value={feedbackForm.training_relevance}
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, training_relevance: e.target.value })}
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="HIGHLY_RELEVANT">Highly Relevant</option>
+                    <option value="PARTIALLY_RELEVANT">Partially Relevant</option>
+                    <option value="OUTDATED">Outdated Toolset</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Hiring Difficulty
+                  </label>
+                  <select
+                    value={feedbackForm.hiring_difficulty}
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, hiring_difficulty: e.target.value })}
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="LOW">Low Difficulty</option>
+                    <option value="MODERATE">Moderate Difficulty</option>
+                    <option value="EXTREME">Extreme Scarcity</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Reported Missing Skills (Fed to Curriculum Engine)
+                </label>
+                <div className="flex gap-2 mb-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. CI/CD Pipelines, High-Voltage Safety"
+                    value={feedbackForm.customMissingSkill}
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, customMissingSkill: e.target.value })}
+                    className="flex-1 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (feedbackForm.customMissingSkill.trim()) {
+                        setFeedbackForm((prev) => ({
+                          ...prev,
+                          missing_skills: [...prev.missing_skills, prev.customMissingSkill.trim()],
+                          customMissingSkill: '',
+                        }));
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg font-bold hover:bg-slate-300 cursor-pointer"
+                  >
+                    Add
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {feedbackForm.missing_skills.map((sk, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-300 border border-rose-200 dark:border-rose-800 text-[10px] font-bold flex items-center gap-1"
+                    >
+                      <span>{sk}</span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFeedbackForm((prev) => ({
+                            ...prev,
+                            missing_skills: prev.missing_skills.filter((_, i) => i !== idx),
+                          }))
+                        }
+                        className="hover:text-rose-950 dark:hover:text-white cursor-pointer"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Qualitative Feedback Notes
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Provide context on why this candidate or trade batch struggled or succeeded..."
+                  value={feedbackForm.feedback_notes}
+                  onChange={(e) => setFeedbackForm({ ...feedbackForm, feedback_notes: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setActiveFeedbackCandidate(null)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingFeedback}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {submittingFeedback ? 'Submitting...' : 'Submit Workforce Review'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

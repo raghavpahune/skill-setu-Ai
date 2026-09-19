@@ -228,7 +228,8 @@ def init_db():
             "placements", "employers", "employer_feedback", "industry_signals",
             "skill_forecasts", "student_profiles", "schemes", "sync_logs",
             "employer_demands", "difficult_skills", "student_assessments",
-            "gov_opportunities", "users", "employer_verifications", "curriculum_proposals"
+            "gov_opportunities", "users", "employer_verifications", "curriculum_proposals",
+            "placement_outcomes", "placement_employer_feedback"
         ]
         for tbl in tables:
             try:
@@ -277,7 +278,8 @@ def get_data_governance_summary() -> dict[str, Any]:
         "student_assessments", "student_profiles", "employee_profiles", "employer_demands",
         "employer_feedback", "courses", "industry_signals",
         "gov_opportunities", "users", "jobs", "skills",
-        "employers", "employer_verifications", "curriculum_proposals"
+        "employers", "employer_verifications", "curriculum_proposals",
+        "placement_outcomes", "placement_employer_feedback"
     ]
     summary = {}
     total_real = 0
@@ -319,6 +321,12 @@ def get_data_governance_summary() -> dict[str, Any]:
             elif tbl == "curriculum_proposals":
                 from app.repositories.supabase_repository import list_curriculum_proposals
                 records = list_curriculum_proposals(limit=10000)
+            elif tbl == "placement_outcomes":
+                from app.repositories.supabase_repository import list_placement_outcomes
+                records = list_placement_outcomes(limit=10000)
+            elif tbl == "placement_employer_feedback":
+                from app.repositories.supabase_repository import list_placement_employer_feedback
+                records = list_placement_employer_feedback(limit=10000)
             else:
                 records = _cache.get(tbl, [])
         except Exception:
@@ -1628,6 +1636,99 @@ def delete_curriculum_proposal_record(proposal_id: str) -> bool:
     _cache["curriculum_proposals"] = [p for p in records if p.get("id") != proposal_id]
     _flush_real_table("curriculum_proposals")
     return res
+
+
+def get_placement_outcome_by_id(outcome_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_placement_outcome
+        repo_o = get_placement_outcome(outcome_id)
+        if repo_o:
+            return repo_o
+    except Exception:
+        pass
+    outcomes = _cache.get("placement_outcomes", [])
+    return next((o for o in outcomes if o.get("id") == outcome_id), None)
+
+
+def save_placement_outcome_record(outcome_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    outcome_data.setdefault("created_at", now_iso)
+    outcome_data["updated_at"] = now_iso
+    outcome_data.setdefault("source", "INSTITUTE_REPORTED")
+    outcome_data.setdefault("data_provenance", "INSTITUTE_AUTHORITATIVE")
+    outcome_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_placement_outcome
+    saved = create_placement_outcome(outcome_data)
+    merged = {**outcome_data, **saved}
+
+    records = _cache.setdefault("placement_outcomes", [])
+    oid = merged.get("id")
+    matched_idx = next((i for i, o in enumerate(records) if o.get("id") == oid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("placement_outcomes")
+    return merged
+
+
+def update_placement_outcome_record(outcome_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    from app.repositories.supabase_repository import update_placement_outcome
+    saved = update_placement_outcome(outcome_id, updates)
+    records = _cache.setdefault("placement_outcomes", [])
+    matched_idx = next((i for i, o in enumerate(records) if o.get("id") == outcome_id), None)
+    if matched_idx is not None:
+        merged = {**records[matched_idx], **updates, **saved}
+        records[matched_idx] = merged
+    else:
+        merged = {**updates, **saved}
+        records.insert(0, merged)
+    _flush_real_table("placement_outcomes")
+    return merged
+
+
+def get_placement_employer_feedback_by_id(feedback_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_placement_employer_feedback
+        repo_f = get_placement_employer_feedback(feedback_id)
+        if repo_f:
+            return repo_f
+    except Exception:
+        pass
+    feedbacks = _cache.get("placement_employer_feedback", [])
+    return next((f for f in feedbacks if f.get("id") == feedback_id), None)
+
+
+def save_placement_employer_feedback_record(feedback_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    feedback_data.setdefault("created_at", now_iso)
+    feedback_data.setdefault("updated_at", now_iso)
+    feedback_data.setdefault("source", "EMPLOYER_SUBMITTED")
+    feedback_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_placement_employer_feedback
+    saved = create_placement_employer_feedback(feedback_data)
+    merged = {**feedback_data, **saved}
+
+    records = _cache.setdefault("placement_employer_feedback", [])
+    fid = merged.get("id")
+    matched_idx = next((i for i, f in enumerate(records) if f.get("id") == fid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("placement_employer_feedback")
+    return merged
 
 
 from app.core.security import is_demo_student_id  # noqa: E402
