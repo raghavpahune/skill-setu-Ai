@@ -1711,6 +1711,7 @@ def save_placement_employer_feedback_record(feedback_data: dict[str, Any]) -> di
         init_db()
     now_iso = datetime.now(timezone.utc).isoformat()
     feedback_data.setdefault("created_at", now_iso)
+    feedback_data.setdefault("updated_at", now_iso)
     feedback_data.setdefault("source", "EMPLOYER_SUBMITTED")
     feedback_data.setdefault("is_demo", False)
 

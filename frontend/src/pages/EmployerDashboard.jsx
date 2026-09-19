@@ -94,7 +94,7 @@ export default function EmployerDashboard() {
   const [feedbackForm, setFeedbackForm] = useState({
     skill_adequacy_score: 4,
     practical_readiness: 'PRODUCTION_READY',
-    missing_skills: ['Docker', 'Industrial Testing'],
+    missing_skills: [],
     customMissingSkill: '',
     training_relevance: 'HIGHLY_RELEVANT',
     hiring_difficulty: 'MODERATE',
@@ -1757,7 +1757,7 @@ export default function EmployerDashboard() {
                               setFeedbackForm({
                                 skill_adequacy_score: 4,
                                 practical_readiness: 'PRODUCTION_READY',
-                                missing_skills: ['Docker', 'Industrial Testing'],
+                                missing_skills: [],
                                 customMissingSkill: '',
                                 training_relevance: 'HIGHLY_RELEVANT',
                                 hiring_difficulty: 'MODERATE',
@@ -1950,7 +1950,7 @@ export default function EmployerDashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
                     Practical Readiness
@@ -1958,10 +1958,10 @@ export default function EmployerDashboard() {
                   <select
                     value={feedbackForm.practical_readiness}
                     onChange={(e) => setFeedbackForm({ ...feedbackForm, practical_readiness: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   >
                     <option value="PRODUCTION_READY">Production Ready</option>
-                    <option value="NEEDS_SUPERVISION">Needs Supervision (Ramp &gt; 30d)</option>
+                    <option value="NEEDS_SUPERVISION">Needs Supervision (&gt; 30d)</option>
                     <option value="UNPREPARED">Unprepared for Industrial Tools</option>
                   </select>
                 </div>
@@ -1972,11 +1972,25 @@ export default function EmployerDashboard() {
                   <select
                     value={feedbackForm.training_relevance}
                     onChange={(e) => setFeedbackForm({ ...feedbackForm, training_relevance: e.target.value })}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   >
-                    <option value="HIGHLY_RELEVANT">Highly Relevant to Real Work</option>
-                    <option value="PARTIALLY_RELEVANT">Partially Relevant (Theory Heavy)</option>
-                    <option value="OUTDATED">Outdated Core Toolset</option>
+                    <option value="HIGHLY_RELEVANT">Highly Relevant</option>
+                    <option value="PARTIALLY_RELEVANT">Partially Relevant</option>
+                    <option value="OUTDATED">Outdated Toolset</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Hiring Difficulty
+                  </label>
+                  <select
+                    value={feedbackForm.hiring_difficulty}
+                    onChange={(e) => setFeedbackForm({ ...feedbackForm, hiring_difficulty: e.target.value })}
+                    className="w-full px-2.5 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="LOW">Low Difficulty</option>
+                    <option value="MODERATE">Moderate Difficulty</option>
+                    <option value="EXTREME">Extreme Scarcity</option>
                   </select>
                 </div>
               </div>

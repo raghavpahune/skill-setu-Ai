@@ -311,12 +311,37 @@ async def submit_placement_employer_feedback_endpoint(
     user_emp_name = current_user.get("company_name") or current_user.get("full_name") or "Employer Partner"
 
     if user_role != "ADMIN":
-        if outcome.get("employer_id") and user_emp_id:
-            if outcome["employer_id"].lower() != user_emp_id.lower():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Forbidden: You can only provide post-hire feedback for candidates employed by your organization.",
-                )
+        outcome_emp_id = outcome.get("employer_id")
+        if not outcome_emp_id or not user_emp_id or outcome_emp_id.lower() != user_emp_id.lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You can only provide post-hire feedback for candidates employed by your organization.",
+            )
+
+    current_status = outcome.get("status", "TRAINING_COMPLETED")
+    if current_status == "FEEDBACK_RECEIVED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Employer feedback has already been submitted for this placement outcome.",
+        )
+
+    try:
+        existing_feedback = list_placement_employer_feedback(is_demo=bool(outcome.get("is_demo")), limit=1000)
+        if any(f.get("placement_outcome_id") == outcome_id for f in existing_feedback):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Employer feedback has already been submitted for this placement outcome.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    if not validate_placement_lifecycle_transition(current_status, "FEEDBACK_RECEIVED"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot record employer feedback for an outcome in status '{current_status}'.",
+        )
 
     employer_id = user_emp_id or outcome.get("employer_id") or f"emp-{current_user.get('id')}"
     employer_name = outcome.get("employer_name") or user_emp_name
@@ -357,8 +382,10 @@ async def submit_placement_employer_feedback_endpoint(
         "user_id": current_user.get("id"),
         "user_email": current_user.get("email"),
         "created_at": now_iso,
+        "updated_at": now_iso,
     }
 
+    saved_feedback = None
     try:
         saved_feedback = save_placement_employer_feedback_record(feedback_record)
         update_placement_outcome_record(outcome_id, {
@@ -367,6 +394,13 @@ async def submit_placement_employer_feedback_endpoint(
             "employer_name": employer_name,
         })
     except Exception as e:
+        if saved_feedback:
+            try:
+                from app.db import _cache
+                records = _cache.get("placement_employer_feedback", [])
+                _cache["placement_employer_feedback"] = [f for f in records if f.get("id") != feedback_id]
+            except Exception:
+                pass
         logger.error("[PlacementsRouter] Failed saving feedback for outcome '%s': %s", outcome_id, e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

@@ -69,7 +69,7 @@ export default function InstituteDashboard() {
     district: user?.district || 'Pune',
     industry: 'IT/ITES',
     status: 'TRAINING_COMPLETED',
-    salary_annual_inr: 500000,
+    salary_annual_inr: 0,
   });
 
   const [formState, setFormState] = useState({
@@ -590,7 +590,7 @@ export default function InstituteDashboard() {
                   district: user?.district || 'Pune',
                   industry: 'IT/ITES',
                   status: 'TRAINING_COMPLETED',
-                  salary_annual_inr: 500000,
+                  salary_annual_inr: 0,
                 });
                 setIsOutcomeModalOpen(true);
               }}
@@ -624,7 +624,7 @@ export default function InstituteDashboard() {
               <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Avg Annual Package</div>
               <div className="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
                 &#8377;{(() => {
-                  const s = placementOutcomes.filter(o => o.salary_annual_inr > 0).map(o => o.salary_annual_inr);
+                  const s = placementOutcomes.filter(o => ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(o.status) && o.salary_annual_inr > 0).map(o => o.salary_annual_inr);
                   return s.length > 0 ? `${(Math.round(s.reduce((a, b) => a + b, 0) / s.length) / 100000).toFixed(1)}L` : 'N/A';
                 })()}
               </div>
@@ -1325,7 +1325,13 @@ export default function InstituteDashboard() {
                 e.preventDefault();
                 setSavingOutcome(true);
                 try {
-                  const res = await api.createPlacementOutcome(outcomeForm);
+                  const payload = {
+                    ...outcomeForm,
+                    salary_annual_inr: ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(outcomeForm.status)
+                      ? (Number(outcomeForm.salary_annual_inr) || null)
+                      : null,
+                  };
+                  const res = await api.createPlacementOutcome(payload);
                   if (res?.placement_outcome) {
                     setPlacementOutcomes((prev) => [res.placement_outcome, ...prev]);
                     showToast('success', `Recorded outcome for ${outcomeForm.candidate_name}`);
@@ -1409,8 +1415,8 @@ export default function InstituteDashboard() {
                     min={0}
                     step={10000}
                     placeholder="e.g. 600000"
-                    value={outcomeForm.salary_annual_inr}
-                    onChange={(e) => setOutcomeForm({ ...outcomeForm, salary_annual_inr: parseInt(e.target.value) || 0 })}
+                    value={outcomeForm.salary_annual_inr || ''}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, salary_annual_inr: e.target.value ? parseInt(e.target.value) : 0 })}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   />
                 </div>

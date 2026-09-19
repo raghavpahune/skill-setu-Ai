@@ -172,7 +172,7 @@ def test_update_placement_outcome_lifecycle(client, coep_headers):
     assert inv_resp.status_code == 400
 
 
-def test_submit_employer_feedback_success_and_idor(client, coep_headers, tcs_headers, persistent_headers):
+def test_submit_employer_feedback_success_and_idor(client, coep_headers, tcs_headers, persistent_headers, admin_headers):
     c_resp = client.post("/api/placements/outcomes", json={
         "course_id": "cr-001",
         "candidate_id": "cand-fb-01",
@@ -207,6 +207,25 @@ def test_submit_employer_feedback_success_and_idor(client, coep_headers, tcs_hea
 
     o_after = client.get(f"/api/placements/outcomes/{oid}", headers=tcs_headers).json()["placement_outcome"]
     assert o_after["status"] == "FEEDBACK_RECEIVED"
+
+    dup_resp = client.post(f"/api/placements/outcomes/{oid}/feedback", json=fb_data, headers=tcs_headers)
+    assert dup_resp.status_code == 409
+
+    unplaced_resp = client.post("/api/placements/outcomes", json={
+        "course_id": "cr-001",
+        "candidate_id": "cand-fb-02",
+        "candidate_name": "Suresh Kale",
+        "role_title": "Trainee",
+        "status": "TRAINING_COMPLETED",
+    }, headers=coep_headers)
+    assert unplaced_resp.status_code == 201
+    unplaced_oid = unplaced_resp.json()["placement_outcome"]["id"]
+
+    unassigned_resp = client.post(f"/api/placements/outcomes/{unplaced_oid}/feedback", json=fb_data, headers=tcs_headers)
+    assert unassigned_resp.status_code == 403
+
+    lifecycle_resp = client.post(f"/api/placements/outcomes/{unplaced_oid}/feedback", json=fb_data, headers=admin_headers)
+    assert lifecycle_resp.status_code == 400
 
 
 def test_course_placement_performance_intelligence(client):

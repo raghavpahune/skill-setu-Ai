@@ -217,7 +217,7 @@ def compute_statewide_placement_analytics(
     except Exception:
         outcomes = [
             o for o in _cache.get("placement_outcomes", [])
-            if (not district or o.get("district", "").lower() == district.lower())
+            if (not district or (o.get("district") or "").lower() == district.lower())
             and (is_demo is None or o.get("is_demo") == is_demo)
         ]
 

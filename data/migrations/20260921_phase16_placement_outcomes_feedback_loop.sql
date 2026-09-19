@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS placement_outcomes (
 
 CREATE TABLE IF NOT EXISTS placement_employer_feedback (
     id TEXT PRIMARY KEY,
-    placement_outcome_id TEXT NOT NULL,
+    placement_outcome_id TEXT NOT NULL REFERENCES placement_outcomes(id) ON DELETE CASCADE,
     employer_id TEXT NOT NULL,
     employer_name TEXT NOT NULL,
     skill_adequacy_score INT NOT NULL CHECK (skill_adequacy_score BETWEEN 1 AND 5),
@@ -42,8 +42,12 @@ CREATE TABLE IF NOT EXISTS placement_employer_feedback (
     is_demo BOOLEAN NOT NULL DEFAULT FALSE,
     user_id TEXT,
     user_email TEXT,
-    created_at TIMESTAMPTZ DEFAULT now()
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    CONSTRAINT uq_placement_feedback_outcome UNIQUE (placement_outcome_id)
 );
+
+ALTER TABLE placement_employer_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
 
 CREATE INDEX IF NOT EXISTS idx_placement_outcomes_course_id ON placement_outcomes(course_id);
 CREATE INDEX IF NOT EXISTS idx_placement_outcomes_institute_id ON placement_outcomes(institute_id);

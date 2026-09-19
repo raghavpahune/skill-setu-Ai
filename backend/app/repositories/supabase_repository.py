@@ -2754,6 +2754,7 @@ VALID_PLACEMENT_EMPLOYER_FEEDBACK_COLUMNS = {
     "user_id",
     "user_email",
     "created_at",
+    "updated_at",
 }
 
 

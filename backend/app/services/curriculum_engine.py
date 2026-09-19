@@ -119,8 +119,8 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             employer_demands = list_employer_demands(is_demo=is_demo) or []
             gov_opportunities = list_gov_opportunities(is_demo=is_demo, limit=None) or []
             employers = list_employers(is_demo=is_demo, limit=10000) or []
-            placement_outcomes = list_placement_outcomes(is_demo=is_demo, limit=10000) or []
-            placement_employer_feedback = list_placement_employer_feedback(is_demo=is_demo, limit=10000) or []
+            placement_outcomes = list_placement_outcomes(is_demo=is_demo_mode, limit=None) or []
+            placement_employer_feedback = list_placement_employer_feedback(is_demo=is_demo_mode, limit=None) or []
         except Exception as e:
             logger.warning("[CurriculumEngine] Authoritative audit inputs unavailable: %s", e)
             return []
