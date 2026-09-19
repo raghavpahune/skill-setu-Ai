@@ -839,7 +839,16 @@ async def submit_employer_verification(
     try:
         create_employer_verification(v_record)
     except Exception as e:
-        logger.warning("[Employer] Failed inserting employer_verifications row: %s", e)
+        if existing_emp:
+            try:
+                save_employer_record(existing_emp)
+            except Exception:
+                pass
+        logger.exception("[Employer] Failed inserting employer_verifications row: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed for employer verification evidence.",
+        ) from e
 
     return {
         "status": "submitted",

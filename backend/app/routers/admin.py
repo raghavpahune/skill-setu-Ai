@@ -1386,6 +1386,7 @@ async def approve_admin_employer_verification(
         InvalidVerificationTransitionError,
     )
     admin_notes = payload.admin_notes if payload else None
+    verification_method = payload.verification_method if payload and payload.verification_method else "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
     admin_id = "admin"
     if isinstance(admin_user, dict):
         admin_id = admin_user.get("id") or admin_user.get("email") or "admin"
@@ -1396,6 +1397,7 @@ async def approve_admin_employer_verification(
             new_status="VERIFIED",
             verifier_id=admin_id,
             admin_notes=admin_notes,
+            verification_method=verification_method,
         )
     except EmployerNotFoundError as e:
         raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=str(e)) from e

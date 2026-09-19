@@ -405,8 +405,9 @@ def test_job_integration_does_not_imply_employer_verification(client, employer_a
         "description": "Production architecture and Kubernetes infrastructure engineering.",
         "skills": ["Cloud Architecture", "Python"],
         "deadline": future_deadline,
+        "employer_id": "emp-001",
     }
-    job_res = client.post("/api/jobs", json=job_payload, headers=employer_a_headers)
+    job_res = client.post("/api/jobs", json=job_payload, headers=admin_headers)
     assert job_res.status_code == 201
     created_job = job_res.json()["job"]
 
@@ -437,14 +438,37 @@ def test_job_integration_does_not_imply_employer_verification(client, employer_a
     assert jobs_list_res.status_code == 200
     jobs_data = jobs_list_res.json()
     matching_job = next((j for j in jobs_data if j.get("id") == created_job["id"]), None)
-    if matching_job:
-        assert matching_job["is_employer_verified"] is True
-        assert matching_job["employer_verification_status"] == "VERIFIED"
+    assert matching_job is not None
+    assert matching_job["is_employer_verified"] is True
+    assert matching_job["employer_verification_status"] == "VERIFIED"
 
     opps_res = client.get("/api/opportunities?district=pune")
     assert opps_res.status_code == 200
     opps_data = opps_res.json()
     matching_opp = next((o for o in opps_data if o.get("id") == created_job["id"]), None)
-    if matching_opp:
-        assert matching_opp["is_employer_verified"] is True
-        assert matching_opp["employer_verification_status"] == "VERIFIED"
+    assert matching_opp is not None
+    assert matching_opp["is_employer_verified"] is True
+    assert matching_opp["employer_verification_status"] == "VERIFIED"
+
+
+def test_rejected_employer_verified_at_is_none(client, employer_b_headers, admin_headers):
+    client.post(
+        "/api/employer/verification/submit",
+        json={
+            "company_name": "Rejection Verification Test Org",
+            "industry": "Manufacturing",
+            "district": "Pune",
+            "gstin": "27AAACB1234F1Z5",
+        },
+        headers=employer_b_headers,
+    )
+    rej_res = client.post(
+        "/api/admin/employer/verifications/emp-002/reject",
+        json={"rejection_reason": "Documentation mismatch"},
+        headers=admin_headers,
+    )
+    assert rej_res.status_code == 200
+    rej_emp = rej_res.json()["employer"]
+    assert rej_emp["verification_status"] == "REJECTED"
+    assert rej_emp["verified_at"] is None
+

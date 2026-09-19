@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS skills (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employer_id TEXT,
     external_id TEXT,
     title TEXT NOT NULL,
     company TEXT NOT NULL,
@@ -176,7 +177,7 @@ CREATE INDEX IF NOT EXISTS idx_employer_verifications_is_demo ON employer_verifi
 -- ============================================================
 CREATE TABLE IF NOT EXISTS employer_feedback (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    employer_id UUID REFERENCES employers(id) ON DELETE CASCADE,
+    employer_id TEXT REFERENCES employers(id) ON DELETE CASCADE,
     skill_id UUID REFERENCES skills(id) ON DELETE CASCADE,
     demand_level TEXT CHECK (demand_level IN ('low', 'medium', 'high', 'critical')),
     proficiency_required TEXT CHECK (proficiency_required IN ('beginner', 'intermediate', 'advanced')),
@@ -388,6 +389,8 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active';
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS data_provenance TEXT;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS employer_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_jobs_employer_id ON jobs(employer_id);
 
 -- SCHEMES provenance and verification extensions
 ALTER TABLE schemes ADD COLUMN IF NOT EXISTS content_hash TEXT;

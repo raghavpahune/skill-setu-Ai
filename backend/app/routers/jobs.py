@@ -43,6 +43,7 @@ class JobSubmission(BaseModel):
     status: str = Field(default="active")
     is_active: bool = True
     data_provenance: str | None = None
+    employer_id: str | None = None
 
     @field_validator("deadline")
     @classmethod
@@ -55,7 +56,7 @@ class JobSubmission(BaseModel):
         return v.strip()
 
 
-def _enrich_job_employer_verification(job: dict, is_demo_mode: bool) -> dict:
+def _enrich_job_employer_verification(job: dict, is_demo_mode: bool, employer_record: dict | None = None) -> dict:
     enriched = dict(job)
     if is_demo_mode:
         enriched["employer_verification_status"] = "UNVERIFIED"
@@ -63,22 +64,14 @@ def _enrich_job_employer_verification(job: dict, is_demo_mode: bool) -> dict:
         return enriched
 
     emp_id = job.get("employer_id")
-    comp_name = (job.get("company") or "").strip().lower()
-    emp_record = None
+    emp_record = employer_record
 
-    if emp_id:
+    if not emp_record and emp_id:
         try:
             from app.repositories.supabase_repository import get_employer
             emp_record = get_employer(emp_id)
         except Exception:
             pass
-
-    if not emp_record and comp_name:
-        from app.db import _cache
-        for e in _cache.get("employers", []):
-            if (e.get("name") or "").strip().lower() == comp_name or (e.get("company_name") or "").strip().lower() == comp_name:
-                emp_record = e
-                break
 
     if emp_record and (emp_record.get("is_demo") is True or emp_record.get("source") == "DEMO_SYNTHETIC"):
         emp_record = None
@@ -151,7 +144,17 @@ async def list_jobs(
             continue
         filtered_jobs.append(j)
 
-    return [_enrich_job_employer_verification(j, False) for j in filtered_jobs[:limit]]
+    target_jobs = filtered_jobs[:limit]
+    distinct_emp_ids = list({j.get("employer_id") for j in target_jobs if j.get("employer_id")})
+    emp_map = {}
+    if distinct_emp_ids:
+        try:
+            from app.repositories.supabase_repository import get_employers_by_ids
+            emp_map = get_employers_by_ids(distinct_emp_ids)
+        except Exception as exc:
+            logger.warning("[Jobs API] Batch employer lookup failed: %s", exc)
+
+    return [_enrich_job_employer_verification(j, False, emp_map.get(j.get("employer_id"))) for j in target_jobs]
 
 
 @router.post("/jobs", status_code=http_status.HTTP_201_CREATED)
@@ -168,13 +171,14 @@ async def create_job_endpoint(
     job_id = f"job-{uuid.uuid4().hex[:12]}"
 
     role = (current_user.get("role") or "").upper()
-    employer_id = current_user.get("organization_id") or f"emp-{current_user.get('id')}"
     if role == "ADMIN":
+        employer_id = data.employer_id or current_user.get("organization_id") or f"emp-{current_user.get('id')}"
         provenance = data.data_provenance or "ADMIN_CREATED"
         verification_status = "VERIFIED"
         status = data.status.lower()
         is_active = data.is_active
     else:
+        employer_id = current_user.get("organization_id") or f"emp-{current_user.get('id')}"
         provenance = "EMPLOYER_SUBMITTED"
         verification_status = "PENDING"
         status = "pending"

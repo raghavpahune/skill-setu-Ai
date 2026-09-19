@@ -1448,7 +1448,7 @@ delete_skill_forecast = delete_skill_forecast_repo
 # ============================================================================
 
 VALID_JOB_COLUMNS: set[str] = {
-    "id", "title", "company", "district", "industry", "description",
+    "id", "employer_id", "title", "company", "district", "industry", "description",
     "source", "source_label", "source_type", "posted_date", "opportunity_type",
     "external_id", "portal_source", "stipend_amount", "duration_months",
     "min_education", "vacancies_count", "apply_url", "last_synced_at",
@@ -2284,6 +2284,24 @@ def get_employer_by_user_id(user_id: str) -> dict[str, Any] | None:
         raise SupabaseRepositoryError(f"Database query failed for employer by user_id '{user_id}': {e}") from e
 
 
+def get_employers_by_ids(employer_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not employer_ids:
+        return {}
+    try:
+        client = get_client()
+        unique_ids = list({eid.strip() for eid in employer_ids if eid and str(eid).strip()})
+        if not unique_ids:
+            return {}
+        res = client.table("employers").select("*").in_("id", unique_ids).execute()
+        rows = getattr(res, "data", []) or []
+        return {r["id"]: r for r in rows if "id" in r}
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employers by ids: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed for employers by ids: {e}") from e
+
+
 def list_employers(
     verification_status: str | None = None,
     is_demo: bool | None = None,
@@ -2303,9 +2321,22 @@ def list_employers(
             query = query.ilike("district", f"%{district}%")
         if industry and industry.lower() != "all":
             query = query.ilike("industry", f"%{industry}%")
-        query = query.range(offset, offset + limit - 1)
-        res = query.execute()
-        return getattr(res, "data", []) or []
+        query = query.order("id")
+        if limit is not None and limit <= 1000:
+            res = query.range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+        all_items = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_items)) if limit is not None else page_size
+            res = query.range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_items.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_items) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_items
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -2375,9 +2406,22 @@ def list_employer_verifications(
             query = query.eq("status", status.upper())
         if is_demo is not None:
             query = query.eq("is_demo", is_demo)
-        query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
-        res = query.execute()
-        return getattr(res, "data", []) or []
+        query = query.order("created_at", desc=True)
+        if limit is not None and limit <= 1000:
+            res = query.range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+        all_items = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_items)) if limit is not None else page_size
+            res = query.range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_items.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_items) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_items
     except SupabaseRepositoryError:
         raise
     except Exception as e:
@@ -2435,6 +2479,7 @@ def update_employer_verification_status(
     rejection_reason: str | None = None,
     admin_notes: str | None = None,
     evidence_updates: dict[str, Any] | None = None,
+    verification_method: str | None = None,
 ) -> dict[str, Any]:
     try:
         client = get_client()
@@ -2461,14 +2506,14 @@ def update_employer_verification_status(
             emp_updates["verified_at"] = now_iso
             emp_updates["verified_by"] = verifier_id or "ADMIN"
             emp_updates["verification_source"] = "AUTHORITATIVE_ADMIN_VERIFICATION"
-            emp_updates["verification_method"] = "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
+            emp_updates["verification_method"] = verification_method or "GOVERNMENT_REGISTRY_AND_DOCUMENT_AUDIT"
             emp_updates["data_provenance"] = "AUTHORITATIVE_VERIFIED"
             emp_updates["confidence"] = 95
             emp_updates["rejection_reason"] = None
         elif target_status == "REJECTED":
             if not rejection_reason or not rejection_reason.strip():
                 raise InvalidVerificationTransitionError("Rejection reason is mandatory when rejecting verification")
-            emp_updates["verified_at"] = now_iso
+            emp_updates["verified_at"] = None
             emp_updates["verified_by"] = verifier_id or "ADMIN"
             emp_updates["rejection_reason"] = rejection_reason.strip()
             emp_updates["data_provenance"] = "ADMIN_REJECTED"
@@ -2516,10 +2561,29 @@ def update_employer_verification_status(
             "is_demo": emp.get("is_demo", False),
             "evidence_payload": emp_updates.get("evidence", emp.get("evidence") or {}),
             "confidence": emp_updates.get("confidence", 0),
+            "verification_method": emp_updates.get("verification_method"),
             "created_at": now_iso,
             "updated_at": now_iso,
         }
-        client.table("employer_verifications").insert(verification_record).execute()
+        try:
+            client.table("employer_verifications").insert(verification_record).execute()
+        except Exception as insert_err:
+            revert_updates = {
+                "verification_status": current_status,
+                "verified_at": emp.get("verified_at"),
+                "verified_by": emp.get("verified_by"),
+                "verification_source": emp.get("verification_source"),
+                "verification_method": emp.get("verification_method"),
+                "data_provenance": emp.get("data_provenance"),
+                "confidence": emp.get("confidence", 0),
+                "rejection_reason": emp.get("rejection_reason"),
+                "updated_at": emp.get("updated_at") or now_iso,
+            }
+            try:
+                client.table("employers").update(revert_updates).eq("id", employer_id).execute()
+            except Exception:
+                pass
+            raise insert_err
 
         return merged_emp
     except (EmployerNotFoundError, InvalidVerificationTransitionError):
