@@ -224,6 +224,30 @@ function BlueprintModal({ courseId, courseName, onClose, onProposalCreated }) {
                 </div>
               )}
 
+              {blueprint.evidence_summary?.employer_reported_missing_skills?.length > 0 && (
+                <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60">
+                  <div className="text-[11px] font-bold text-amber-900 dark:text-amber-200 mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      Post-Hiring Workforce Deficits (Recruiting Employers)
+                    </span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-900 text-amber-900 dark:text-amber-100 font-bold">
+                      {blueprint.evidence_summary.placement_feedback_count ?? 0} Reviews
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-amber-800 dark:text-amber-300 mb-2">
+                    Employers recruiting from this course reported these practical competencies were missing during on-the-job execution:
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {blueprint.evidence_summary.employer_reported_missing_skills.map((skill, idx) => (
+                      <span key={idx} className="px-2 py-0.5 text-[10px] font-bold rounded-md bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {Array.isArray(blueprint.modernization_blueprint?.top_missing_skills) && blueprint.modernization_blueprint.top_missing_skills.length > 0 && (
                 <div>
                   <h3 className="text-xs font-bold text-slate-900 dark:text-white mb-2">Demand-Validated Skills Gap</h3>

@@ -53,10 +53,24 @@ export default function InstituteDashboard() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState(null);
 
-  // Submit Modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+
+  const [placementOutcomes, setPlacementOutcomes] = useState([]);
+  const [activeTab, setActiveTab] = useState('courses');
+  const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
+  const [savingOutcome, setSavingOutcome] = useState(false);
+  const [outcomeForm, setOutcomeForm] = useState({
+    course_id: '',
+    candidate_name: '',
+    role_title: '',
+    employer_name: '',
+    district: user?.district || 'Pune',
+    industry: 'IT/ITES',
+    status: 'TRAINING_COMPLETED',
+    salary_annual_inr: 500000,
+  });
 
   const [formState, setFormState] = useState({
     name: '',
@@ -138,6 +152,14 @@ export default function InstituteDashboard() {
       }
       if (Array.isArray(recsRes)) {
         setRecommendations(recsRes);
+      }
+      try {
+        const outcomesRes = await api.getPlacementOutcomes();
+        if (outcomesRes?.placement_outcomes) {
+          setPlacementOutcomes(outcomesRes.placement_outcomes);
+        }
+      } catch (e) {
+        console.warn('Could not fetch placement outcomes:', e);
       }
     } catch (err) {
       console.warn('Failed loading institute live data:', err);
@@ -518,7 +540,164 @@ export default function InstituteDashboard() {
         </div>
       </div>
 
-      {/* Courses Catalog & Search Workbench */}
+      <div className="flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => setActiveTab('courses')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+            activeTab === 'courses'
+              ? 'bg-teal-600 text-white shadow-xs'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          Accredited Programs ({courses.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('placements')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'placements'
+              ? 'bg-teal-600 text-white shadow-xs'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <span>Placement Outcomes & Workforce Tracking</span>
+          <span className="px-1.5 py-0.5 bg-teal-800/60 text-teal-100 rounded text-[10px] font-mono">
+            {placementOutcomes.length}
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'placements' && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Placement Outcomes & Workforce Tracking</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-bold border border-teal-200 dark:border-teal-800">
+                  Authoritative Outcomes
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Track candidate employment transitions, salaries, and recruiting employer retention across training batches.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setOutcomeForm({
+                  course_id: courses[0]?.id || '',
+                  candidate_name: '',
+                  role_title: '',
+                  employer_name: '',
+                  district: user?.district || 'Pune',
+                  industry: 'IT/ITES',
+                  status: 'TRAINING_COMPLETED',
+                  salary_annual_inr: 500000,
+                });
+                setIsOutcomeModalOpen(true);
+              }}
+              className="px-4 py-2 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer self-start sm:self-auto"
+            >
+              <span>➕</span>
+              <span>Record Placement Outcome</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Tracked Candidates</div>
+              <div className="text-xl font-extrabold text-slate-900 dark:text-white mt-1">{placementOutcomes.length}</div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Placed / Employed</div>
+              <div className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
+                {placementOutcomes.filter(o => ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(o.status)).length}
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Placement Rate</div>
+              <div className="text-xl font-extrabold text-teal-600 dark:text-teal-400 mt-1">
+                {placementOutcomes.length > 0
+                  ? Math.round((placementOutcomes.filter(o => ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(o.status)).length / placementOutcomes.length) * 100)
+                  : 0}%
+              </div>
+            </div>
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+              <div className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Avg Annual Package</div>
+              <div className="text-xl font-extrabold text-indigo-600 dark:text-indigo-400 mt-1">
+                &#8377;{(() => {
+                  const s = placementOutcomes.filter(o => o.salary_annual_inr > 0).map(o => o.salary_annual_inr);
+                  return s.length > 0 ? `${(Math.round(s.reduce((a, b) => a + b, 0) / s.length) / 100000).toFixed(1)}L` : 'N/A';
+                })()}
+              </div>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold uppercase text-[10px]">
+                  <th className="p-3">Candidate</th>
+                  <th className="p-3">Course Program</th>
+                  <th className="p-3">Hiring Employer</th>
+                  <th className="p-3">Role</th>
+                  <th className="p-3">Status</th>
+                  <th className="p-3">Salary INR</th>
+                  <th className="p-3">Provenance</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                {placementOutcomes.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-slate-400">
+                      No placement outcomes recorded yet. Click &quot;Record Placement Outcome&quot; to begin tracking graduates.
+                    </td>
+                  </tr>
+                ) : (
+                  placementOutcomes.map((po) => (
+                    <tr key={po.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                      <td className="p-3 font-bold text-slate-900 dark:text-white">
+                        <div>{po.candidate_name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{po.id}</div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-semibold">{po.course_name}</div>
+                        <div className="text-[10px] text-slate-400">{po.district}</div>
+                      </td>
+                      <td className="p-3 font-semibold text-slate-700 dark:text-slate-300">
+                        {po.employer_name || '—'}
+                      </td>
+                      <td className="p-3">
+                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px]">
+                          {po.role_title}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          po.status === 'FEEDBACK_RECEIVED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300' :
+                          po.status === 'PLACED' || po.status === 'EMPLOYED' ? 'bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-300' :
+                          po.status === 'PLACEMENT_PENDING' ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300' :
+                          'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                        }`}>
+                          {po.status}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                        {po.salary_annual_inr ? `₹${(po.salary_annual_inr / 100000).toFixed(1)}L` : '—'}
+                      </td>
+                      <td className="p-3">
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+                          {po.data_provenance || 'INSTITUTE_AUTHORITATIVE'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'courses' && (
       <div data-demo="course-health-grid" className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8 p-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4 pb-4 border-b border-slate-100 dark:border-slate-800">
           <div>
@@ -761,6 +940,7 @@ export default function InstituteDashboard() {
           </div>
         )}
       </div>
+      )}
 
       {/* Curriculum Recommendations */}
       <div data-demo="curriculum-recommendations-grid" className="mb-8">
@@ -1116,6 +1296,175 @@ export default function InstituteDashboard() {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {isOutcomeModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Record Graduate Placement Outcome
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                  Register authoritative employment and wage data for your accredited program graduates.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsOutcomeModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setSavingOutcome(true);
+                try {
+                  const res = await api.createPlacementOutcome(outcomeForm);
+                  if (res?.placement_outcome) {
+                    setPlacementOutcomes((prev) => [res.placement_outcome, ...prev]);
+                    showToast('success', `Recorded outcome for ${outcomeForm.candidate_name}`);
+                    setIsOutcomeModalOpen(false);
+                  }
+                } catch (err) {
+                  showToast('error', `Failed to record outcome: ${err.message}`);
+                } finally {
+                  setSavingOutcome(false);
+                }
+              }}
+              className="space-y-3.5"
+            >
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Accredited Program *
+                </label>
+                <select
+                  required
+                  value={outcomeForm.course_id}
+                  onChange={(e) => setOutcomeForm({ ...outcomeForm, course_id: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="">Select a Course...</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.title} ({c.district})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Candidate Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Aarav Patil"
+                    value={outcomeForm.candidate_name}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, candidate_name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Role Title *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Associate AI Engineer"
+                    value={outcomeForm.role_title}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, role_title: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Hiring Employer
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Tata Consultancy Services"
+                    value={outcomeForm.employer_name}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, employer_name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Annual Salary INR
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={10000}
+                    placeholder="e.g. 600000"
+                    value={outcomeForm.salary_annual_inr}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, salary_annual_inr: parseInt(e.target.value) || 0 })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Placement Status
+                  </label>
+                  <select
+                    value={outcomeForm.status}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, status: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="TRAINING_COMPLETED">Training Completed</option>
+                    <option value="PLACEMENT_PENDING">Placement Pending</option>
+                    <option value="PLACED">Placed</option>
+                    <option value="EMPLOYED">Employed</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    District
+                  </label>
+                  <select
+                    value={outcomeForm.district}
+                    onChange={(e) => setOutcomeForm({ ...outcomeForm, district: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    {DISTRICTS.filter((d) => d !== 'All Districts').map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsOutcomeModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingOutcome}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {savingOutcome ? 'Saving...' : 'Record Outcome'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

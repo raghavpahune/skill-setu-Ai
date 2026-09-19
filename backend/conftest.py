@@ -228,6 +228,8 @@ class MockSupabaseClient:
         employers_rows=None,
         employer_verifications_rows=None,
         curriculum_proposals_rows=None,
+        placement_outcomes_rows=None,
+        placement_employer_feedback_rows=None,
         users_rows=None,
         difficult_skills_rows=None,
     ):
@@ -252,6 +254,8 @@ class MockSupabaseClient:
             "employers": MockSupabaseTable(employers_rows),
             "employer_verifications": MockSupabaseTable(employer_verifications_rows),
             "curriculum_proposals": MockSupabaseTable(curriculum_proposals_rows),
+            "placement_outcomes": MockSupabaseTable(placement_outcomes_rows),
+            "placement_employer_feedback": MockSupabaseTable(placement_employer_feedback_rows),
             "users": MockSupabaseTable(users_rows),
             "difficult_skills": MockSupabaseTable(difficult_skills_rows),
         }
@@ -731,6 +735,8 @@ def mock_supabase_for_tests():
     _cache["employers"] = deepcopy(_PRISTINE_CACHE.get("employers", []))
     _cache["employer_verifications"] = deepcopy(_PRISTINE_CACHE.get("employer_verifications", []))
     _cache["curriculum_proposals"] = deepcopy(_PRISTINE_CACHE.get("curriculum_proposals", []))
+    _cache["placement_outcomes"] = deepcopy(_PRISTINE_CACHE.get("placement_outcomes", []))
+    _cache["placement_employer_feedback"] = deepcopy(_PRISTINE_CACHE.get("placement_employer_feedback", []))
 
     mock_client = MockSupabaseClient(
         feedback_rows=deepcopy(_PRISTINE_FEEDBACK),
@@ -753,6 +759,8 @@ def mock_supabase_for_tests():
         employers_rows=deepcopy(_cache.get("employers", [])),
         employer_verifications_rows=deepcopy(_cache.get("employer_verifications", [])),
         curriculum_proposals_rows=deepcopy(_cache.get("curriculum_proposals", [])),
+        placement_outcomes_rows=deepcopy(_cache.get("placement_outcomes", [])),
+        placement_employer_feedback_rows=deepcopy(_cache.get("placement_employer_feedback", [])),
         users_rows=[deepcopy(u) for u in _cache.get("users", []) if not u.get("is_demo")],
         difficult_skills_rows=deepcopy(_cache.get("difficult_skills", [])),
     )

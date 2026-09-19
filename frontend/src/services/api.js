@@ -613,6 +613,43 @@ export const api = {
     const headers = key ? { 'X-Admin-Key': key } : {};
     return fetchJSON('/admin/integrations/health', { headers });
   },
+  getPlacementOutcomes: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/placements/outcomes${query ? `?${query}` : ''}`);
+  },
+  createPlacementOutcome: (data) => {
+    return fetchJSON('/placements/outcomes', {
+      method: 'POST',
+      body: data,
+    });
+  },
+  getPlacementOutcome: (outcomeId) => {
+    return fetchJSON(`/placements/outcomes/${encodeURIComponent(outcomeId)}`);
+  },
+  updatePlacementOutcome: (outcomeId, data) => {
+    return fetchJSON(`/placements/outcomes/${encodeURIComponent(outcomeId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  submitPlacementEmployerFeedback: (outcomeId, data) => {
+    return fetchJSON(`/placements/outcomes/${encodeURIComponent(outcomeId)}/feedback`, {
+      method: 'POST',
+      body: data,
+    });
+  },
+  getCoursePlacementPerformance: (courseId, isDemo = null) => {
+    const query = isDemo !== null ? `?is_demo=${isDemo}` : '';
+    return fetchJSON(`/placements/course/${encodeURIComponent(courseId)}/performance${query}`);
+  },
+  getSkillPlacementSignals: (isDemo = null) => {
+    const query = isDemo !== null ? `?is_demo=${isDemo}` : '';
+    return fetchJSON(`/placements/analytics/skills${query}`);
+  },
+  getStatewidePlacementAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/placements/analytics/statewide${query ? `?${query}` : ''}`);
+  },
 };
 
 
