@@ -43,6 +43,7 @@ class JobSubmission(BaseModel):
     status: str = Field(default="active")
     is_active: bool = True
     data_provenance: str | None = None
+    employer_id: str | None = None
 
     @field_validator("deadline")
     @classmethod
@@ -53,6 +54,42 @@ class JobSubmission(BaseModel):
         if dt == UTC_MIN:
             raise ValueError("Invalid deadline format. Must be a valid ISO timestamp.")
         return v.strip()
+
+
+def _enrich_job_employer_verification(
+    job: dict,
+    is_demo_mode: bool,
+    employer_record: dict | None = None,
+    allow_fallback: bool = True,
+) -> dict:
+    enriched = dict(job)
+    if is_demo_mode:
+        enriched["employer_verification_status"] = "UNVERIFIED"
+        enriched["is_employer_verified"] = False
+        return enriched
+
+    emp_id = job.get("employer_id")
+    emp_record = employer_record
+
+    if not emp_record and emp_id and allow_fallback:
+        try:
+            from app.repositories.supabase_repository import get_employer
+            emp_record = get_employer(emp_id)
+        except Exception:
+            pass
+
+    if emp_record and (emp_record.get("is_demo") is True or emp_record.get("source") == "DEMO_SYNTHETIC"):
+        emp_record = None
+
+    if emp_record:
+        ev_status = (emp_record.get("verification_status") or "UNVERIFIED").upper()
+        enriched["employer_verification_status"] = ev_status
+        enriched["is_employer_verified"] = (ev_status == "VERIFIED")
+    else:
+        enriched["employer_verification_status"] = "UNVERIFIED"
+        enriched["is_employer_verified"] = False
+
+    return enriched
 
 
 @router.get("/jobs")
@@ -72,7 +109,7 @@ async def list_jobs(
             jobs = [j for j in jobs if j.get("industry", "").lower() == industry.strip().lower()]
         if opportunity_type:
             jobs = [j for j in jobs if j.get("opportunity_type", "job").lower() == opportunity_type.strip().lower()]
-        return jobs[:limit]
+        return [_enrich_job_employer_verification(j, True) for j in jobs[:limit]]
 
     try:
         from app.repositories.supabase_repository import list_jobs as list_jobs_repo, SupabaseRepositoryError
@@ -112,7 +149,20 @@ async def list_jobs(
             continue
         filtered_jobs.append(j)
 
-    return filtered_jobs[:limit]
+    target_jobs = filtered_jobs[:limit]
+    distinct_emp_ids = list({j.get("employer_id") for j in target_jobs if j.get("employer_id")})
+    emp_map = {}
+    if distinct_emp_ids:
+        try:
+            from app.repositories.supabase_repository import get_employers_by_ids
+            emp_map = get_employers_by_ids(distinct_emp_ids)
+        except Exception as exc:
+            logger.warning("[Jobs API] Batch employer lookup failed: %s", exc)
+
+    return [
+        _enrich_job_employer_verification(j, False, emp_map.get(j.get("employer_id")), allow_fallback=False)
+        for j in target_jobs
+    ]
 
 
 @router.post("/jobs", status_code=http_status.HTTP_201_CREATED)
@@ -130,11 +180,13 @@ async def create_job_endpoint(
 
     role = (current_user.get("role") or "").upper()
     if role == "ADMIN":
+        employer_id = data.employer_id or current_user.get("organization_id") or f"emp-{current_user.get('id')}"
         provenance = data.data_provenance or "ADMIN_CREATED"
         verification_status = "VERIFIED"
         status = data.status.lower()
         is_active = data.is_active
     else:
+        employer_id = current_user.get("organization_id") or f"emp-{current_user.get('id')}"
         provenance = "EMPLOYER_SUBMITTED"
         verification_status = "PENDING"
         status = "pending"
@@ -146,6 +198,7 @@ async def create_job_endpoint(
 
     record = {
         "id": job_id,
+        "employer_id": employer_id,
         "title": norm_title,
         "company": norm_company,
         "district": norm_district,
@@ -245,7 +298,7 @@ async def create_job_endpoint(
     return {
         "status": "created",
         "message": f"Job '{saved['id']}' created successfully.",
-        "job": saved,
+        "job": _enrich_job_employer_verification(saved, False),
     }
 
 

@@ -109,7 +109,7 @@ async def list_opportunities(
                 continue
             jobs.append(j)
 
-    filtered = []
+    candidate_items = []
     for j in jobs:
         opp_type = j.get("opportunity_type", "job")
 
@@ -155,7 +155,30 @@ async def list_opportunities(
             if q_lower not in corpus:
                 continue
 
-        # Enriched opportunity item
+        candidate_items.append((j, opp_type, opp_skills))
+
+    page_items = candidate_items[offset : offset + limit]
+    emp_map = {}
+    if not is_demo_mode:
+        emp_ids = list({item[0].get("employer_id") for item in page_items if item[0].get("employer_id")})
+        if emp_ids:
+            try:
+                from app.repositories.supabase_repository import get_employers_by_ids
+                emp_map = get_employers_by_ids(emp_ids)
+            except Exception as exc:
+                logger.warning("[Opportunities API] Batch employer lookup failed: %s", exc)
+
+    filtered = []
+    for j, opp_type, opp_skills in page_items:
+        ev_status = "UNVERIFIED"
+        if not is_demo_mode:
+            emp_id = j.get("employer_id")
+            emp_rec = emp_map.get(emp_id) if emp_id else None
+            if emp_rec and (emp_rec.get("is_demo") is True or emp_rec.get("source") == "DEMO_SYNTHETIC"):
+                emp_rec = None
+            if emp_rec:
+                ev_status = (emp_rec.get("verification_status") or "UNVERIFIED").upper()
+
         filtered.append({
             "id": j.get("id"),
             "title": j.get("title"),
@@ -174,9 +197,11 @@ async def list_opportunities(
             "status": j.get("status", "active"),
             "source": j.get("source") or ("DEMO_SYNTHETIC" if is_demo_mode else "UNKNOWN"),
             "skills": opp_skills,
+            "employer_verification_status": ev_status,
+            "is_employer_verified": (ev_status == "VERIFIED"),
         })
 
-    return filtered[offset : offset + limit]
+    return filtered
 
 
 @router.get("/opportunities/summary")

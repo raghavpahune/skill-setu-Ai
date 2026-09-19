@@ -5,6 +5,7 @@ Eliminates reliance on in-memory _cache and JSON writes for migrated domains.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import logging
 import re
@@ -82,6 +83,19 @@ class SchemeNotFoundError(SupabaseRepositoryError):
 
 class GovOpportunityNotFoundError(SupabaseRepositoryError):
     pass
+
+
+class EmployerNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class VerificationNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class InvalidVerificationTransitionError(SupabaseRepositoryError):
+    pass
+
 
 
 class SupabaseConnectionError(SupabaseRepositoryError):
@@ -1434,7 +1448,7 @@ delete_skill_forecast = delete_skill_forecast_repo
 # ============================================================================
 
 VALID_JOB_COLUMNS: set[str] = {
-    "id", "title", "company", "district", "industry", "description",
+    "id", "employer_id", "title", "company", "district", "industry", "description",
     "source", "source_label", "source_type", "posted_date", "opportunity_type",
     "external_id", "portal_source", "stipend_amount", "duration_months",
     "min_education", "vacancies_count", "apply_url", "last_synced_at",
@@ -2238,3 +2252,263 @@ def upsert_skills(skills_data: list[dict[str, Any]]) -> list[dict[str, Any]]:
     except Exception as e:
         logger.error("[SupabaseRepo] Failed upserting skills: %s", e)
         raise SupabaseRepositoryError(f"Database upsert failed for skills: {e}") from e
+
+
+def get_employer(employer_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employers").select("*").eq("id", employer_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for employer '{employer_id}': {e}") from e
+
+
+def get_employer_by_user_id(user_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employers").select("*").eq("user_id", user_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer by user_id '%s': %s", user_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for employer by user_id '{user_id}': {e}") from e
+
+
+def get_employers_by_ids(employer_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not employer_ids:
+        return {}
+    try:
+        client = get_client()
+        unique_ids = list({eid.strip() for eid in employer_ids if eid and str(eid).strip()})
+        if not unique_ids:
+            return {}
+        res = client.table("employers").select("*").in_("id", unique_ids).execute()
+        rows = getattr(res, "data", []) or []
+        return {r["id"]: r for r in rows if "id" in r}
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employers by ids: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed for employers by ids: {e}") from e
+
+
+def list_employers(
+    verification_status: str | None = None,
+    is_demo: bool | None = None,
+    district: str | None = None,
+    industry: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("employers").select("*")
+        if verification_status and verification_status.lower() != "all":
+            query = query.eq("verification_status", verification_status.upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        if district and district.lower() != "all":
+            query = query.ilike("district", f"%{district}%")
+        if industry and industry.lower() != "all":
+            query = query.ilike("industry", f"%{industry}%")
+        query = query.order("id")
+        if limit is not None and limit <= 1000:
+            res = query.range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+        all_items = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_items)) if limit is not None else page_size
+            res = query.range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_items.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_items) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_items
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing employers: %s", e)
+        raise SupabaseRepositoryError(f"Database listing failed for employers: {e}") from e
+
+
+def upsert_employer(employer_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(employer_data)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload.setdefault("created_at", now_iso)
+        payload["updated_at"] = now_iso
+        res = client.table("employers").upsert(payload, on_conflict="id").execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return payload
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed upserting employer: %s", e)
+        raise SupabaseRepositoryError(f"Database upsert failed for employer: {e}") from e
+
+
+def get_employer_verification(verification_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employer_verifications").select("*").eq("id", verification_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying employer verification '%s': %s", verification_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for verification '{verification_id}': {e}") from e
+
+
+def get_latest_employer_verification(employer_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("employer_verifications").select("*").eq("employer_id", employer_id).order("created_at", desc=True).limit(1).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return None
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed querying latest verification for employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for latest verification of employer '{employer_id}': {e}") from e
+
+
+def list_employer_verifications(
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("employer_verifications").select("*")
+        if status and status.lower() != "all":
+            query = query.eq("status", status.upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+        query = query.order("created_at", desc=True)
+        if limit is not None and limit <= 1000:
+            res = query.range(offset, offset + limit - 1).execute()
+            return getattr(res, "data", []) or []
+        all_items = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_items)) if limit is not None else page_size
+            res = query.range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_items.extend(batch)
+            if len(batch) < fetch_size or (limit is not None and len(all_items) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_items
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing employer verifications: %s", e)
+        raise SupabaseRepositoryError(f"Database listing failed for employer verifications: {e}") from e
+
+
+def create_employer_verification(verification_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(verification_data)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if "id" not in payload or not payload["id"]:
+            payload["id"] = f"ev-{uuid.uuid4().hex[:12]}"
+        payload.setdefault("submitted_at", now_iso)
+        payload.setdefault("created_at", now_iso)
+        payload["updated_at"] = now_iso
+        res = client.table("employer_verifications").insert(payload).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        return payload
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed inserting employer verification: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for employer verification: {e}") from e
+
+
+def update_employer_verification(verification_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        payload = deepcopy(updates)
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        res = client.table("employer_verifications").update(payload).eq("id", verification_id).execute()
+        rows = getattr(res, "data", []) or []
+        if rows:
+            return rows[0]
+        existing = get_employer_verification(verification_id)
+        if not existing:
+            raise VerificationNotFoundError(f"Employer verification '{verification_id}' not found")
+        existing.update(payload)
+        return existing
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating employer verification '%s': %s", verification_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for employer verification '{verification_id}': {e}") from e
+
+
+def update_employer_verification_status(
+    employer_id: str,
+    new_status: str,
+    verifier_id: str | None = None,
+    rejection_reason: str | None = None,
+    admin_notes: str | None = None,
+    evidence_updates: dict[str, Any] | None = None,
+    verification_method: str | None = None,
+) -> dict[str, Any]:
+    try:
+        client = get_client()
+        params = {
+            "employer_id": employer_id,
+            "target_status": new_status,
+            "verifier_id": verifier_id,
+            "rejection_reason": rejection_reason,
+            "admin_notes": admin_notes,
+            "evidence_updates": evidence_updates,
+            "verification_method": verification_method,
+        }
+        res = client.rpc("update_employer_verification_atomic", {"p_params": params}).execute()
+        data = getattr(res, "data", None)
+        if not data:
+            raise SupabaseRepositoryError(f"Atomic verification update returned empty response for employer '{employer_id}'")
+        return data if isinstance(data, dict) else data[0]
+    except Exception as e:
+        err_str = str(e)
+        if "not found" in err_str.lower():
+            raise EmployerNotFoundError(f"Employer '{employer_id}' not found") from e
+        if "already verified" in err_str.lower():
+            raise InvalidVerificationTransitionError("Employer is already verified") from e
+        if "rejection reason is mandatory" in err_str.lower() or "mandatory" in err_str.lower():
+            raise InvalidVerificationTransitionError("Rejection reason is mandatory when rejecting verification") from e
+        if "invalid verification status" in err_str.lower():
+            raise InvalidVerificationTransitionError(f"Invalid verification status '{new_status}'") from e
+        if isinstance(e, (EmployerNotFoundError, InvalidVerificationTransitionError, SupabaseRepositoryError)):
+            raise
+        logger.error("[SupabaseRepo] Failed updating verification status for employer '%s': %s", employer_id, e)
+        raise SupabaseRepositoryError(f"Database status update failed for employer '{employer_id}': {e}") from e
+

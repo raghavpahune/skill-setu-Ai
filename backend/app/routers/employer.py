@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status as http_sta
 from app.core.security import get_current_user, get_optional_current_user, require_roles
 from pydantic import BaseModel, Field, model_validator
 from app.core.data_mode import is_explicit_demo_mode
-from app.db import get_demo
+from app.db import get_demo, save_employer_record
 from app.services.employer_verification import verify_employer_credentials, validate_gstin
 from app.repositories.supabase_repository import (
     get_employer_feedback,
@@ -21,6 +21,10 @@ from app.repositories.supabase_repository import (
     delete_employer_demand_repo,
     DemandNotFoundError,
     SupabaseRepositoryError,
+    get_employer,
+    upsert_employer,
+    create_employer_verification,
+    get_latest_employer_verification,
 )
 
 logger = logging.getLogger("skillsetu.employer")
@@ -638,4 +642,291 @@ async def employer_summary():
         "hard_to_hire_count": len(difficult),
         "top_industries": top_industries,
     }
+
+
+class EmployerVerificationSubmitRequest(BaseModel):
+    company_name: str = Field(..., min_length=2, max_length=200)
+    industry: str = Field(..., min_length=2, max_length=150)
+    district: str = Field(..., min_length=2, max_length=100)
+    gstin: str | None = Field(default=None, max_length=15)
+    corporate_website: str | None = Field(default=None, max_length=500)
+    official_documents: list[str] = Field(default_factory=list)
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+def _resolve_authenticated_employer_id(current_user: dict) -> str:
+    user_org = current_user.get("organization_id")
+    user_id = current_user.get("id")
+    return (user_org or f"emp-{user_id}").strip()
+
+
+@router.get("/employer/verification")
+async def get_my_verification_status(current_user: dict = Depends(require_roles(["EMPLOYER", "ADMIN"]))):
+    employer_id = _resolve_authenticated_employer_id(current_user)
+    emp = None
+    try:
+        emp = get_employer(employer_id)
+    except Exception:
+        pass
+
+    if not emp:
+        from app.db import _cache
+        for e in _cache.get("employers", []):
+            if e.get("id") == employer_id or e.get("user_id") == current_user.get("id"):
+                emp = e
+                break
+
+    if not emp:
+        return {
+            "status": "success",
+            "employer_id": employer_id,
+            "verification_status": "UNVERIFIED",
+            "is_verified": False,
+            "company_name": current_user.get("full_name") or current_user.get("organization_id") or "Employer",
+            "industry": None,
+            "district": current_user.get("district"),
+            "email": current_user.get("email"),
+            "gstin": None,
+            "corporate_website": None,
+            "verification_source": None,
+            "verification_method": None,
+            "verified_at": None,
+            "verified_by": None,
+            "rejection_reason": None,
+            "data_provenance": "UNVERIFIED",
+            "confidence": 0,
+            "evidence": {},
+            "is_demo": False,
+            "updated_at": None,
+        }
+
+    status_val = (emp.get("verification_status") or "UNVERIFIED").upper()
+    return {
+        "status": "success",
+        "employer_id": emp.get("id", employer_id),
+        "verification_status": status_val,
+        "is_verified": (status_val == "VERIFIED"),
+        "company_name": emp.get("company_name") or emp.get("name") or current_user.get("full_name"),
+        "industry": emp.get("industry"),
+        "district": emp.get("district") or current_user.get("district"),
+        "email": emp.get("email") or current_user.get("email"),
+        "gstin": emp.get("gstin"),
+        "corporate_website": emp.get("corporate_website"),
+        "verification_source": emp.get("verification_source"),
+        "verification_method": emp.get("verification_method"),
+        "verified_at": emp.get("verified_at"),
+        "verified_by": emp.get("verified_by"),
+        "rejection_reason": emp.get("rejection_reason"),
+        "data_provenance": emp.get("data_provenance", "UNVERIFIED"),
+        "confidence": emp.get("confidence", 0),
+        "evidence": emp.get("evidence", {}),
+        "is_demo": emp.get("is_demo", False),
+        "updated_at": emp.get("updated_at"),
+    }
+
+
+@router.post("/employer/verification/submit")
+async def submit_employer_verification(
+    submission: EmployerVerificationSubmitRequest,
+    current_user: dict = Depends(require_roles(["EMPLOYER", "ADMIN"])),
+):
+    employer_id = _resolve_authenticated_employer_id(current_user)
+    existing_emp = None
+    try:
+        existing_emp = get_employer(employer_id)
+    except Exception:
+        pass
+
+    if not existing_emp:
+        from app.db import _cache
+        for e in _cache.get("employers", []):
+            if e.get("id") == employer_id or e.get("user_id") == current_user.get("id"):
+                existing_emp = e
+                break
+
+    if existing_emp and (existing_emp.get("verification_status") or "").upper() == "VERIFIED":
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Employer is already verified. Re-verification not allowed unless status reset by Admin.",
+        )
+
+    clean_gstin = None
+    if submission.gstin and submission.gstin.strip():
+        gstin_res = validate_gstin(submission.gstin.strip())
+        if not gstin_res.get("valid"):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid GSTIN format: {gstin_res.get('reason')}",
+            )
+        clean_gstin = gstin_res.get("gstin")
+
+    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    company_clean = submission.company_name.strip()
+    evidence_payload = {
+        "company_name": company_clean,
+        "industry": submission.industry.strip(),
+        "district": submission.district.strip(),
+        "gstin": clean_gstin,
+        "corporate_website": submission.corporate_website.strip() if submission.corporate_website else None,
+        "official_documents": submission.official_documents,
+        "notes": submission.notes.strip() if submission.notes else None,
+        "submitted_by_user_id": current_user.get("id"),
+        "submitted_by_email": current_user.get("email"),
+        "self_declared_at": now_iso,
+    }
+
+    emp_record = {
+        "id": employer_id,
+        "user_id": current_user.get("id"),
+        "name": company_clean,
+        "company_name": company_clean,
+        "industry": submission.industry.strip(),
+        "district": submission.district.strip(),
+        "email": current_user.get("email"),
+        "gstin": clean_gstin,
+        "corporate_website": submission.corporate_website.strip() if submission.corporate_website else None,
+        "verification_status": "PENDING",
+        "verification_source": "EMPLOYER_SUBMISSION",
+        "verification_method": "SELF_DECLARATION_PENDING_REVIEW",
+        "verified_at": None,
+        "verified_by": None,
+        "rejection_reason": None,
+        "evidence": evidence_payload,
+        "data_provenance": "EMPLOYER_SELF_DECLARED",
+        "source": "USER_SUBMITTED",
+        "source_label": "Employer Self-Declaration",
+        "confidence": 25,
+        "is_demo": False,
+        "created_at": existing_emp.get("created_at", now_iso) if existing_emp else now_iso,
+        "updated_at": now_iso,
+    }
+
+    try:
+        saved_emp = save_employer_record(emp_record)
+    except Exception as e:
+        logger.exception("[Employer] Failed saving employer verification submission: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed for employer verification.",
+        ) from e
+
+    v_record = {
+        "id": f"ev-{uuid.uuid4().hex[:12]}",
+        "employer_id": employer_id,
+        "user_id": current_user.get("id"),
+        "company_name": company_clean,
+        "email": current_user.get("email"),
+        "gstin": clean_gstin,
+        "corporate_website": submission.corporate_website.strip() if submission.corporate_website else None,
+        "official_documents": submission.official_documents,
+        "notes": submission.notes.strip() if submission.notes else None,
+        "status": "PENDING",
+        "action": "SUBMIT",
+        "submitted_at": now_iso,
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "admin_notes": None,
+        "rejection_reason": None,
+        "data_provenance": "EMPLOYER_SELF_DECLARED",
+        "source": "USER_SUBMITTED",
+        "is_demo": False,
+        "evidence_payload": evidence_payload,
+        "confidence": 25,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+
+    try:
+        create_employer_verification(v_record)
+    except Exception as e:
+        if existing_emp:
+            try:
+                save_employer_record(existing_emp)
+            except Exception:
+                pass
+        logger.exception("[Employer] Failed inserting employer_verifications row: %s", e)
+        raise HTTPException(
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database persistence failed for employer verification evidence.",
+        ) from e
+
+    return {
+        "status": "submitted",
+        "message": "Verification evidence submitted for administrative review.",
+        "employer_id": employer_id,
+        "verification_status": "PENDING",
+        "is_verified": False,
+        "data_provenance": "EMPLOYER_SELF_DECLARED",
+        "employer": saved_emp,
+    }
+
+
+@router.get("/employer/verification/{employer_id}")
+async def get_employer_verification_by_id(
+    employer_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    user_role = (current_user.get("role") or "").upper()
+    if user_role == "STUDENT":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Students do not have permission to access employer verification records.",
+        )
+
+    if user_role == "EMPLOYER":
+        my_emp_id = _resolve_authenticated_employer_id(current_user)
+        if my_emp_id.lower() != employer_id.strip().lower():
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You do not have permission to access another employer's verification record.",
+            )
+    elif user_role != "ADMIN":
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Insufficient role permissions.",
+        )
+
+    emp = None
+    try:
+        emp = get_employer(employer_id.strip())
+    except Exception:
+        pass
+
+    if not emp:
+        from app.db import _cache
+        for e in _cache.get("employers", []):
+            if e.get("id") == employer_id.strip():
+                emp = e
+                break
+
+    if not emp:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Employer '{employer_id}' not found.",
+        )
+
+    status_val = (emp.get("verification_status") or "UNVERIFIED").upper()
+    return {
+        "status": "success",
+        "employer_id": emp.get("id", employer_id),
+        "verification_status": status_val,
+        "is_verified": (status_val == "VERIFIED"),
+        "company_name": emp.get("company_name") or emp.get("name"),
+        "industry": emp.get("industry"),
+        "district": emp.get("district"),
+        "email": emp.get("email"),
+        "gstin": emp.get("gstin"),
+        "corporate_website": emp.get("corporate_website"),
+        "verification_source": emp.get("verification_source"),
+        "verification_method": emp.get("verification_method"),
+        "verified_at": emp.get("verified_at"),
+        "verified_by": emp.get("verified_by"),
+        "rejection_reason": emp.get("rejection_reason"),
+        "data_provenance": emp.get("data_provenance", "UNVERIFIED"),
+        "confidence": emp.get("confidence", 0),
+        "evidence": emp.get("evidence", {}),
+        "is_demo": emp.get("is_demo", False),
+        "updated_at": emp.get("updated_at"),
+    }
+
 
