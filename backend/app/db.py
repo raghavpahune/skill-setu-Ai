@@ -228,7 +228,7 @@ def init_db():
             "placements", "employers", "employer_feedback", "industry_signals",
             "skill_forecasts", "student_profiles", "schemes", "sync_logs",
             "employer_demands", "difficult_skills", "student_assessments",
-            "gov_opportunities", "users", "employer_verifications"
+            "gov_opportunities", "users", "employer_verifications", "curriculum_proposals"
         ]
         for tbl in tables:
             try:
@@ -277,7 +277,7 @@ def get_data_governance_summary() -> dict[str, Any]:
         "student_assessments", "student_profiles", "employee_profiles", "employer_demands",
         "employer_feedback", "courses", "industry_signals",
         "gov_opportunities", "users", "jobs", "skills",
-        "employers", "employer_verifications"
+        "employers", "employer_verifications", "curriculum_proposals"
     ]
     summary = {}
     total_real = 0
@@ -316,6 +316,9 @@ def get_data_governance_summary() -> dict[str, Any]:
             elif tbl == "employer_verifications":
                 from app.repositories.supabase_repository import list_employer_verifications
                 records = list_employer_verifications(limit=10000)
+            elif tbl == "curriculum_proposals":
+                from app.repositories.supabase_repository import list_curriculum_proposals
+                records = list_curriculum_proposals(limit=10000)
             else:
                 records = _cache.get(tbl, [])
         except Exception:
@@ -1558,6 +1561,73 @@ def save_employer_verification_record(verification_data: dict[str, Any]) -> dict
 
     _flush_real_table("employer_verifications")
     return merged
+
+
+def get_curriculum_proposal_by_id(proposal_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_curriculum_proposal
+        repo_p = get_curriculum_proposal(proposal_id)
+        if repo_p:
+            return repo_p
+    except Exception:
+        pass
+    proposals = _cache.get("curriculum_proposals", [])
+    return next((p for p in proposals if p.get("id") == proposal_id), None)
+
+
+def save_curriculum_proposal_record(proposal_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    proposal_data.setdefault("created_at", now_iso)
+    proposal_data["updated_at"] = now_iso
+    proposal_data.setdefault("source", "INSTITUTE_SUBMITTED")
+    proposal_data.setdefault("data_provenance", "INSTITUTE_SUBMITTED")
+    proposal_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_curriculum_proposal
+    saved = create_curriculum_proposal(proposal_data)
+    merged = {**proposal_data, **saved}
+
+    records = _cache.setdefault("curriculum_proposals", [])
+    pid = merged.get("id")
+    matched_idx = next((i for i, p in enumerate(records) if p.get("id") == pid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("curriculum_proposals")
+    return merged
+
+
+def update_curriculum_proposal_record(proposal_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    from app.repositories.supabase_repository import update_curriculum_proposal
+    saved = update_curriculum_proposal(proposal_id, updates)
+    records = _cache.setdefault("curriculum_proposals", [])
+    matched_idx = next((i for i, p in enumerate(records) if p.get("id") == proposal_id or p.get("proposal_id") == proposal_id), None)
+    if matched_idx is not None:
+        merged = {**records[matched_idx], **updates, **saved}
+        records[matched_idx] = merged
+    else:
+        merged = {**updates, **saved}
+        records.insert(0, merged)
+    _flush_real_table("curriculum_proposals")
+    return merged
+
+
+def delete_curriculum_proposal_record(proposal_id: str) -> bool:
+    if not _cache:
+        init_db()
+    from app.repositories.supabase_repository import delete_curriculum_proposal
+    res = delete_curriculum_proposal(proposal_id)
+    records = _cache.setdefault("curriculum_proposals", [])
+    _cache["curriculum_proposals"] = [p for p in records if p.get("id") != proposal_id]
+    _flush_real_table("curriculum_proposals")
+    return res
 
 
 from app.core.security import is_demo_student_id  # noqa: E402

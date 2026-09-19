@@ -64,7 +64,7 @@ TRAINER_UPGRADE_CATALOG = {
 
 
 def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
-    """Execute deep health, obsolescence, and oversupply audit across all institutional courses."""
+    from collections import Counter
     from app.core.data_mode import is_explicit_demo_mode
     is_demo_mode = is_explicit_demo_mode(is_demo)
 
@@ -78,10 +78,25 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
         }
         skills_map = {s["id"]: s for s in get_demo("skills")}
         forecasts = {f["skill_id"]: f for f in compute_multi_horizon_forecasts(is_demo=True)}
+        jobs = get_demo("jobs")
+        job_skills = get_demo("job_skills")
+        employer_demands = get_demo("employer_demands")
+        gov_opportunities = get_demo("gov_opportunities")
+        employers = get_demo("employers")
     else:
         try:
-            from app.repositories.supabase_repository import list_courses, list_course_skills, list_skills, list_placements
-            courses = list_courses() or []
+            from app.repositories.supabase_repository import (
+                list_courses,
+                list_course_skills,
+                list_skills,
+                list_placements,
+                list_jobs,
+                list_job_skills,
+                list_employer_demands,
+                list_gov_opportunities,
+                list_employers,
+            )
+            courses = list_courses(is_demo=is_demo) or []
             if not courses:
                 return []
             c_ids = [c["id"] for c in courses if c.get("id")]
@@ -94,12 +109,85 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             }
             repo_skills = list_skills(limit=10000) or []
             skills_map = {s["id"]: s for s in repo_skills if "id" in s}
+            jobs = list_jobs(is_demo=is_demo, limit=None) or []
+            j_ids = [j["id"] for j in jobs if j.get("id")]
+            job_skills = list_job_skills(job_ids=j_ids) if j_ids else []
+            employer_demands = list_employer_demands(is_demo=is_demo) or []
+            gov_opportunities = list_gov_opportunities(is_demo=is_demo, limit=None) or []
+            employers = list_employers(is_demo=is_demo, limit=10000) or []
         except Exception as e:
             logger.warning("[CurriculumEngine] Authoritative audit inputs unavailable: %s", e)
             return []
-        forecasts = {f["skill_id"]: f for f in compute_multi_horizon_forecasts(is_demo=False)}
+        forecasts = {f["skill_id"]: f for f in compute_multi_horizon_forecasts(is_demo=is_demo)}
 
-    # Group skills taught by course
+    skills_by_name = {s.get("name", "").strip().lower(): s["id"] for s in skills_map.values() if s.get("name") and "id" in s}
+    verified_emp_ids = {e["id"] for e in employers if e.get("verification_status") == "VERIFIED" and e.get("id")}
+    verified_emp_names = {
+        (e.get("company_name") or e.get("name", "")).strip().lower(): (e.get("company_name") or e.get("name", ""))
+        for e in employers
+        if e.get("verification_status") == "VERIFIED" and (e.get("company_name") or e.get("name"))
+    }
+
+    jobs_by_district: dict[str, list[dict]] = {}
+    for j in jobs:
+        d = (j.get("district") or "").strip().lower()
+        if d not in jobs_by_district:
+            jobs_by_district[d] = []
+        jobs_by_district[d].append(j)
+
+    job_id_to_district = {j["id"]: (j.get("district") or "").strip().lower() for j in jobs if j.get("id")}
+    district_skill_job_counts: dict[str, Counter] = {}
+    state_skill_job_counts = Counter()
+    for js in job_skills:
+        sid = js.get("skill_id")
+        jid = js.get("job_id")
+        if sid:
+            state_skill_job_counts[sid] += 1
+            dist = job_id_to_district.get(jid, "")
+            if dist:
+                if dist not in district_skill_job_counts:
+                    district_skill_job_counts[dist] = Counter()
+                district_skill_job_counts[dist][sid] += 1
+
+    district_verified_demands: dict[str, dict[str, list[dict]]] = {}
+    state_verified_demands: dict[str, list[dict]] = {}
+    for d in employer_demands:
+        eid = d.get("employer_id")
+        cname = (d.get("company_name") or d.get("employer_name") or d.get("company") or "").strip()
+        val_status = (d.get("validation_status") or d.get("status") or "").upper()
+        is_verified = bool(
+            (eid and eid in verified_emp_ids)
+            or (cname and cname.lower() in verified_emp_names)
+            or (val_status in ("VALIDATED", "APPROVED"))
+        )
+        if not is_verified:
+            continue
+
+        resolved_name = verified_emp_names.get(cname.lower(), cname) if cname else "Verified Industry Partner"
+        openings = int(d.get("openings_count") or d.get("positions_count") or d.get("openings") or 1)
+        dist = (d.get("district") or "").strip().lower()
+        req_skills = d.get("required_skills") or d.get("skills") or []
+        for sk in req_skills:
+            sk_id = sk if sk in skills_map else skills_by_name.get(str(sk).strip().lower())
+            if sk_id:
+                demand_entry = {"company": resolved_name, "openings": openings, "district": d.get("district")}
+                if sk_id not in state_verified_demands:
+                    state_verified_demands[sk_id] = []
+                state_verified_demands[sk_id].append(demand_entry)
+                if dist:
+                    if dist not in district_verified_demands:
+                        district_verified_demands[dist] = {}
+                    if sk_id not in district_verified_demands[dist]:
+                        district_verified_demands[dist][sk_id] = []
+                    district_verified_demands[dist][sk_id].append(demand_entry)
+
+    gov_by_district: dict[str, list[dict]] = {}
+    for g in gov_opportunities:
+        dist = (g.get("district") or "").strip().lower()
+        if dist not in gov_by_district:
+            gov_by_district[dist] = []
+        gov_by_district[dist].append(g)
+
     course_skills_map: dict[str, list[dict]] = {}
     for cs in course_skills_raw:
         cid = cs["course_id"]
@@ -121,11 +209,14 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
         placed_count = p.get("placed_count", 0) if has_placement_data else 0
         placement_rate = round((placed_count / max(1, student_count)) * 100, 1) if (has_placement_data and student_count) else 0.0
 
-        # Evaluate syllabus coverage
         taught_skills = course_skills_map.get(cid, [])
         taught_sids = {ts["skill_id"] for ts in taught_skills}
+        extra_skills = c.get("skills") or c.get("skills_taught") or []
+        for es in extra_skills:
+            es_id = es if es in skills_map else skills_by_name.get(str(es).strip().lower())
+            if es_id:
+                taught_sids.add(es_id)
 
-        # Analyze modern skills taught vs missing
         rising_skills_in_syllabus = []
         obsolete_or_declining_in_syllabus = []
 
@@ -138,12 +229,14 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             elif fc.get("trend") == "DECLINING" or fc.get("current_demand_score", 50) < 30:
                 obsolete_or_declining_in_syllabus.append(sk_info.get("name", sid))
 
-        # Identify missing market-critical skills in this course's domain
         category_hint = "Artificial Intelligence" if any(w in c_name.lower() for w in ["ai", "data", "software", "computer", "cloud"]) else (
             "Electric Vehicles" if any(w in c_name.lower() for w in ["ev", "electric", "auto", "vehicle", "battery"]) else (
                 "Robotics & Automation" if any(w in c_name.lower() for w in ["robot", "mechanical", "automation", "mechatronics", "smart"]) else "General Technical"
             )
         )
+
+        dist_key = district.strip().lower()
+        total_district_jobs = len(jobs_by_district.get(dist_key, []))
 
         missing_critical_skills = []
         for sid, fc in forecasts.items():
@@ -151,18 +244,87 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
                 sk_info = skills_map.get(sid, {})
                 sk_cat = sk_info.get("category", "")
                 if category_hint in sk_cat or category_hint in sk_info.get("name", "") or fc.get("projected_24m", 0) > 85:
+                    dist_counts = district_skill_job_counts.get(dist_key, Counter())
+                    job_cnt = dist_counts.get(sid, 0)
+                    if job_cnt == 0:
+                        job_cnt = state_skill_job_counts.get(sid, 0)
+
+                    dist_v_demands = district_verified_demands.get(dist_key, {}).get(sid, [])
+                    if not dist_v_demands:
+                        dist_v_demands = state_verified_demands.get(sid, [])
+
+                    v_openings = sum(item["openings"] for item in dist_v_demands)
+                    v_companies = sorted({item["company"] for item in dist_v_demands if item.get("company")})[:3]
+
+                    gov_opps_matching = [
+                        gov for gov in gov_by_district.get(dist_key, gov_opportunities)
+                        if sid in (gov.get("skills_covered") or []) or category_hint.lower() in (gov.get("sector") or "").lower()
+                    ]
+                    gov_cnt = len(gov_opps_matching)
+
+                    src_types = []
+                    if job_cnt > 0:
+                        src_types.append("JOB_POSTING_INGESTION")
+                    if v_openings > 0:
+                        src_types.append("AUTHORITATIVE_VERIFIED")
+                    if gov_cnt > 0:
+                        src_types.append("GOVERNMENT_OFFICIAL")
+                    if not src_types:
+                        src_types.append("STATISTICAL_FORECAST")
+
                     missing_critical_skills.append({
                         "skill_id": sid,
                         "skill_name": sk_info.get("name", sid),
                         "projected_24m_demand": fc.get("projected_24m", 80),
                         "trend": fc.get("trend", "RISING"),
-                        "nsqf_level": sk_info.get("nsqf_level", 5)
+                        "nsqf_level": sk_info.get("nsqf_level", 5),
+                        "job_demand_count": job_cnt,
+                        "verified_employer_openings": v_openings,
+                        "verified_employers": v_companies,
+                        "gov_opportunities_count": gov_cnt,
+                        "demand_source_types": src_types,
                     })
 
-        missing_critical_skills.sort(key=lambda x: x["projected_24m_demand"], reverse=True)
+        if not missing_critical_skills:
+            for sid, sk_info in skills_map.items():
+                if sid not in taught_sids:
+                    fc = forecasts.get(sid, {})
+                    dist_counts = district_skill_job_counts.get(dist_key, Counter())
+                    job_cnt = dist_counts.get(sid, 0) or state_skill_job_counts.get(sid, 0)
+                    dist_v_demands = district_verified_demands.get(dist_key, {}).get(sid, []) or state_verified_demands.get(sid, [])
+                    v_openings = sum(item["openings"] for item in dist_v_demands)
+                    v_companies = sorted({item["company"] for item in dist_v_demands if item.get("company")})[:3]
+                    gov_cnt = len(gov_by_district.get(dist_key, gov_opportunities)[:2])
+                    src_types = []
+                    if job_cnt > 0:
+                        src_types.append("JOB_POSTING")
+                    if v_openings > 0:
+                        src_types.append("VERIFIED_EMPLOYER")
+                    if gov_cnt > 0:
+                        src_types.append("GOVERNMENT_OFFICIAL")
+                    if not src_types:
+                        src_types.append("STATISTICAL_FORECAST")
+                    missing_critical_skills.append({
+                        "skill_id": sid,
+                        "skill_name": sk_info.get("name", sid),
+                        "projected_24m_demand": fc.get("projected_24m", 80),
+                        "trend": fc.get("trend", "RISING"),
+                        "nsqf_level": sk_info.get("nsqf_level", 5),
+                        "job_demand_count": job_cnt,
+                        "verified_employer_openings": v_openings,
+                        "verified_employers": v_companies,
+                        "gov_opportunities_count": gov_cnt,
+                        "demand_source_types": src_types,
+                    })
+                    if len(missing_critical_skills) >= 4:
+                        break
+
+        missing_critical_skills.sort(
+            key=lambda x: (x["verified_employer_openings"] * 2 + x["job_demand_count"], x["projected_24m_demand"]),
+            reverse=True,
+        )
         top_missing = missing_critical_skills[:4]
 
-        # Calculate Modernity and Overall Health Scores
         modernity_score = max(10, min(100, int(
             (len(rising_skills_in_syllabus) * 22) - (len(obsolete_or_declining_in_syllabus) * 15) + 40
         )))
@@ -205,10 +367,32 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
         trainer_items = TRAINER_UPGRADE_CATALOG.get(category_hint, TRAINER_UPGRADE_CATALOG["General Technical"])
         total_equip_budget_inr = sum(eq["units"] * eq["unit_cost_inr"] for eq in equip_items)
 
+        total_missing_jobs = sum(m.get("job_demand_count", 0) for m in top_missing)
+        total_v_openings = sum(m.get("verified_employer_openings", 0) for m in top_missing)
+        all_v_employers = sorted({emp for m in top_missing for emp in m.get("verified_employers", [])})
+        gov_schemes = sorted({
+            g.get("scheme_name") or g.get("opportunity_type") or "NAPS Apprenticeship"
+            for g in gov_by_district.get(dist_key, gov_opportunities)[:3]
+            if g.get("scheme_name") or g.get("opportunity_type")
+        })
+
+        evidence_summary = {
+            "total_job_vacancies_in_district": total_district_jobs,
+            "matching_job_vacancies": total_missing_jobs,
+            "live_jobs_matched": total_missing_jobs,
+            "verified_employer_openings": total_v_openings,
+            "verified_employers": all_v_employers[:4],
+            "verified_employers_count": len(all_v_employers),
+            "gov_opportunities_count": len(gov_schemes),
+            "gov_apprenticeship_schemes": gov_schemes[:3],
+            "is_backed_by_verified_demand": bool(total_v_openings > 0 or total_missing_jobs > 0),
+        }
+
         audited_courses.append({
             "course_id": cid,
             "course_name": c_name,
             "institute": institute,
+            "institute_id": c.get("institute_id") or f"inst-{institute.replace(' ', '-').lower()}",
             "district": district,
             "category": category_hint,
             "enrolment_count": enrolment,
@@ -230,6 +414,7 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
             "equipment_requirements": equip_items,
             "total_equipment_budget_inr": total_equip_budget_inr,
             "trainer_upskilling": trainer_items,
+            "evidence_summary": evidence_summary,
         })
 
     audited_courses.sort(key=lambda x: x["health_score"])
@@ -237,17 +422,14 @@ def audit_all_courses(is_demo: bool | None = None) -> list[dict[str, Any]]:
 
 
 def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = None) -> dict[str, Any] | None:
-    """Generate a detailed 5-point modernization blueprint for a specific institutional course."""
     audited = audit_all_courses(is_demo=is_demo)
     course = next((c for c in audited if c["course_id"] == course_id), None)
     if not course:
         return None
 
-    # Construct modular upgrade action steps
     action_plan = []
     step_num = 1
 
-    # Step 1: Syllabus Pruning
     if course["obsolete_modules"]:
         action_plan.append({
             "step": step_num,
@@ -258,18 +440,26 @@ def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = No
         })
         step_num += 1
 
-    # Step 2: Modern Competency Insertion
     for missing_sk in course["top_missing_skills"][:2]:
+        v_emps = missing_sk.get("verified_employers", [])
+        v_ops = missing_sk.get("verified_employer_openings", 0)
+        j_cnt = missing_sk.get("job_demand_count", 0)
+        if v_emps and v_ops > 0:
+            desc = f"Grounded in verified employer hiring demand from {', '.join(v_emps)} ({v_ops} openings) and {j_cnt} active job postings in {course['district']}."
+        elif j_cnt > 0:
+            desc = f"Grounded in {j_cnt} active job postings in {course['district']} with 24-month demand score {missing_sk['projected_24m_demand']}/100."
+        else:
+            desc = f"Grounded in 24-month labour market demand score ({missing_sk['projected_24m_demand']}/100, trend: {missing_sk['trend']})."
+
         action_plan.append({
             "step": step_num,
             "phase": "Competency Integration (Weeks 3-6)",
             "title": f"Introduce NSQF Level {missing_sk['nsqf_level']} module: {missing_sk['skill_name']}",
-            "description": f"Grounded in 24-month labour market demand score ({missing_sk['projected_24m_demand']}/100, trend: {missing_sk['trend']}).",
+            "description": desc,
             "impact": "Directly resolves the critical hiring bottleneck reported by Maharashtra employers."
         })
         step_num += 1
 
-    # Step 3: Lab Infrastructure
     action_plan.append({
         "step": step_num,
         "phase": "Lab Modernization & Procurement (Month 2)",
@@ -279,7 +469,6 @@ def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = No
     })
     step_num += 1
 
-    # Step 4: Faculty Enablement
     action_plan.append({
         "step": step_num,
         "phase": "Faculty Development Program (Month 2-3)",
@@ -287,6 +476,22 @@ def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = No
         "description": f"Mastery program in {course['trainer_upskilling'][0]['program']}.",
         "impact": "Ensures curriculum delivery standards match national NSQC guidelines."
     })
+
+    proposal_ready = {
+        "course_id": course_id,
+        "course_name": course["course_name"],
+        "institute_id": course.get("institute_id") or f"inst-{course['institute']}",
+        "institute_name": course["institute"],
+        "district": course["district"],
+        "title": f"Curriculum Modernization Proposal — {course['course_name']} ({course['district']})",
+        "target_academic_cycle": "2026-2027 Academic Cycle",
+        "modules_to_add": course["top_missing_skills"],
+        "modules_to_prune": course["obsolete_modules"],
+        "equipment_requirements": course["equipment_requirements"],
+        "total_equipment_budget_inr": course["total_equipment_budget_inr"],
+        "trainer_upskilling": course["trainer_upskilling"],
+        "supporting_evidence": course.get("evidence_summary", {}),
+    }
 
     return {
         "status": "success",
@@ -305,9 +510,18 @@ def get_course_modernization_blueprint(course_id: str, is_demo: bool | None = No
         },
         "modernization_blueprint": {
             "action_plan": action_plan,
+            "top_missing_skills": course["top_missing_skills"],
+            "skills_to_add": [m.get("skill_name") if isinstance(m, dict) else str(m) for m in course["top_missing_skills"]],
+            "skills_to_remove": course["obsolete_modules"],
             "equipment_requirements": course["equipment_requirements"],
             "total_equipment_budget_inr": course["total_equipment_budget_inr"],
             "trainer_upskilling": course["trainer_upskilling"],
             "target_placement_lift": "+25% to +35% within 1 academic cycle",
-        }
+        },
+        "evidence_summary": course.get("evidence_summary", {}),
+        "proposal_ready_blueprint": proposal_ready,
     }
+
+
+generate_course_modernization_blueprint = get_course_modernization_blueprint
+

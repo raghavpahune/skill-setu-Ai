@@ -97,6 +97,14 @@ class InvalidVerificationTransitionError(SupabaseRepositoryError):
     pass
 
 
+class CurriculumProposalNotFoundError(SupabaseRepositoryError):
+    pass
+
+
+class InvalidProposalTransitionError(SupabaseRepositoryError):
+    pass
+
+
 
 class SupabaseConnectionError(SupabaseRepositoryError):
     """Raised when Supabase client is not configured or fails to connect."""
@@ -2511,4 +2519,180 @@ def update_employer_verification_status(
             raise
         logger.error("[SupabaseRepo] Failed updating verification status for employer '%s': %s", employer_id, e)
         raise SupabaseRepositoryError(f"Database status update failed for employer '{employer_id}': {e}") from e
+
+
+VALID_CURRICULUM_PROPOSAL_COLUMNS = {
+    "id",
+    "proposal_id",
+    "course_id",
+    "course_name",
+    "institute_id",
+    "institute_name",
+    "district",
+    "title",
+    "status",
+    "academic_cycle",
+    "target_academic_cycle",
+    "proposed_changes_summary",
+    "proposed_skills_to_add",
+    "proposed_skills_to_remove",
+    "modules_to_add",
+    "modules_to_prune",
+    "equipment_requirements",
+    "total_equipment_budget_inr",
+    "trainer_upskilling",
+    "target_placement_lift",
+    "supporting_evidence",
+    "evidence_summary",
+    "previous_curriculum_snapshot",
+    "adopted_curriculum_snapshot",
+    "adoption_metadata",
+    "data_provenance",
+    "is_demo",
+    "user_id",
+    "created_by",
+    "user_email",
+    "submitted_at",
+    "reviewed_by",
+    "reviewed_at",
+    "review_notes",
+    "adopted_at",
+    "adopted_by",
+    "created_at",
+    "updated_at",
+}
+
+
+def _enrich_proposal_record(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return row
+    enriched = dict(row)
+    p_id = enriched.get("id") or enriched.get("proposal_id")
+    if p_id:
+        enriched["id"] = p_id
+        enriched["proposal_id"] = p_id
+    if "modules_to_add" in enriched and "proposed_skills_to_add" not in enriched:
+        enriched["proposed_skills_to_add"] = enriched["modules_to_add"]
+    if "proposed_skills_to_add" in enriched and "modules_to_add" not in enriched:
+        enriched["modules_to_add"] = enriched["proposed_skills_to_add"]
+    if "modules_to_prune" in enriched and "proposed_skills_to_remove" not in enriched:
+        enriched["proposed_skills_to_remove"] = enriched["modules_to_prune"]
+    if "proposed_skills_to_remove" in enriched and "modules_to_prune" not in enriched:
+        enriched["modules_to_prune"] = enriched["proposed_skills_to_remove"]
+    if "target_academic_cycle" in enriched and "academic_cycle" not in enriched:
+        enriched["academic_cycle"] = enriched["target_academic_cycle"]
+    if "academic_cycle" in enriched and "target_academic_cycle" not in enriched:
+        enriched["target_academic_cycle"] = enriched["academic_cycle"]
+    if "supporting_evidence" in enriched and "evidence_summary" not in enriched:
+        enriched["evidence_summary"] = enriched["supporting_evidence"]
+    if "evidence_summary" in enriched and "supporting_evidence" not in enriched:
+        enriched["supporting_evidence"] = enriched["evidence_summary"]
+    if "user_id" in enriched and "created_by" not in enriched:
+        enriched["created_by"] = enriched["user_id"]
+    if "created_by" in enriched and "user_id" not in enriched:
+        enriched["user_id"] = enriched["created_by"]
+    return enriched
+
+
+def create_curriculum_proposal(proposal_data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in proposal_data.items() if k in VALID_CURRICULUM_PROPOSAL_COLUMNS}
+        res = client.table("curriculum_proposals").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating curriculum_proposals record in Supabase.")
+        return _enrich_proposal_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating curriculum proposal: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for curriculum proposal: {e}") from e
+
+
+def get_curriculum_proposal(proposal_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("curriculum_proposals").select("*").eq("id", proposal_id).execute()
+        rows = res.data or []
+        return _enrich_proposal_record(rows[0]) if rows else None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching curriculum proposal '%s': %s", proposal_id, e)
+        raise SupabaseRepositoryError(f"Database query failed for curriculum proposal '{proposal_id}': {e}") from e
+
+
+def list_curriculum_proposals(
+    institute_id: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    course_id: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("curriculum_proposals").select("*")
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if district and district.lower() not in ("all", "all districts"):
+            query = query.eq("district", district.strip())
+        if status and status.lower() != "all":
+            query = query.eq("status", status.strip().upper())
+        if course_id:
+            query = query.eq("course_id", course_id)
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_proposal_record(p) for p in (getattr(res, "data", []) or [])]
+
+        all_proposals = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_proposals)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_proposals.extend([_enrich_proposal_record(p) for p in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_proposals) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_proposals
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing curriculum proposals: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing curriculum proposals: {e}") from e
+
+
+def update_curriculum_proposal(proposal_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        existing = get_curriculum_proposal(proposal_id)
+        if not existing:
+            raise CurriculumProposalNotFoundError(f"Curriculum proposal '{proposal_id}' not found.")
+        payload = {k: v for k, v in updates.items() if k in VALID_CURRICULUM_PROPOSAL_COLUMNS}
+        res = client.table("curriculum_proposals").update(payload).eq("id", proposal_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise CurriculumProposalNotFoundError(f"Curriculum proposal '{proposal_id}' not found.")
+        return _enrich_proposal_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating curriculum proposal '%s': %s", proposal_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for curriculum proposal '{proposal_id}': {e}") from e
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating curriculum proposal '%s': %s", proposal_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for curriculum proposal '{proposal_id}': {e}") from e
+
+
+def delete_curriculum_proposal(proposal_id: str) -> bool:
+    try:
+        client = get_client()
+        res = client.table("curriculum_proposals").delete().eq("id", proposal_id).execute()
+        return bool(res.data and len(res.data) > 0)
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed deleting curriculum proposal '%s': %s", proposal_id, e)
+        raise SupabaseRepositoryError(f"Database deletion failed for curriculum proposal '{proposal_id}': {e}") from e
 

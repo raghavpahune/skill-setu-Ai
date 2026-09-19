@@ -573,6 +573,41 @@ export const api = {
   getCourseModernizationBlueprint: (courseId) => {
     return fetchJSON(`/curriculum/recommendations/${encodeURIComponent(courseId)}`);
   },
+  getCurriculumProposals: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/curriculum/proposals${query ? `?${query}` : ''}`);
+  },
+  getCurriculumProposal: (proposalId) => {
+    return fetchJSON(`/curriculum/proposals/${encodeURIComponent(proposalId)}`);
+  },
+  createCurriculumProposal: (data) => {
+    return fetchJSON('/curriculum/proposals', {
+      method: 'POST',
+      body: data,
+    });
+  },
+  updateCurriculumProposal: (proposalId, data) => {
+    return fetchJSON(`/curriculum/proposals/${encodeURIComponent(proposalId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  submitCurriculumProposal: (proposalId) => {
+    return fetchJSON(`/curriculum/proposals/${encodeURIComponent(proposalId)}/submit`, {
+      method: 'POST',
+    });
+  },
+  reviewCurriculumProposal: (proposalId, data) => {
+    return fetchJSON(`/curriculum/proposals/${encodeURIComponent(proposalId)}/review`, {
+      method: 'POST',
+      body: data,
+    });
+  },
+  adoptCurriculumProposal: (proposalId) => {
+    return fetchJSON(`/curriculum/proposals/${encodeURIComponent(proposalId)}/adopt`, {
+      method: 'POST',
+    });
+  },
   getAdminIntegrationsHealth: (adminKey = '') => {
     const key = adminKey || (typeof window !== 'undefined' ? window.localStorage?.getItem('skillsetu_admin_key') : '');
     const headers = key ? { 'X-Admin-Key': key } : {};
