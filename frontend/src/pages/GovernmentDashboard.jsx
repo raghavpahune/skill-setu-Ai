@@ -288,7 +288,7 @@ export default function GovernmentDashboard() {
   const [auditNotices, setAuditNotices] = useState([]);
   const [statewideTrainers, setStatewideTrainers] = useState(null);
   const [allFacultyNominations, setAllFacultyNominations] = useState([]);
-  const [sanctioningNomId, setSanctioningNomId] = useState(null);
+  const [pendingNomId, setPendingNomId] = useState(null);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [submittingAudit, setSubmittingAudit] = useState(false);
   const [evaluatingInstId, setEvaluatingInstId] = useState(null);
@@ -450,7 +450,7 @@ export default function GovernmentDashboard() {
   };
 
   const handleSanctionFacultyNomination = async (nominationId) => {
-    setSanctioningNomId(nominationId);
+    setPendingNomId(nominationId);
     try {
       const res = await api.updateFacultyNomination(nominationId, {
         status: 'SANCTIONED',
@@ -464,11 +464,12 @@ export default function GovernmentDashboard() {
     } catch (err) {
       setToastMessage({ type: 'error', text: err?.message || 'Failed to sanction FDP grant.' });
     } finally {
-      setSanctioningNomId(null);
+      setPendingNomId(null);
     }
   };
 
   const handleRejectFacultyNomination = async (nominationId) => {
+    setPendingNomId(nominationId);
     try {
       const res = await api.updateFacultyNomination(nominationId, {
         status: 'REJECTED',
@@ -481,6 +482,8 @@ export default function GovernmentDashboard() {
       }
     } catch (err) {
       setToastMessage({ type: 'error', text: err?.message || 'Failed to update nomination.' });
+    } finally {
+      setPendingNomId(null);
     }
   };
 
@@ -2115,14 +2118,15 @@ export default function GovernmentDashboard() {
                             <div className="flex items-center gap-1.5">
                               <button
                                 onClick={() => handleSanctionFacultyNomination(nom.id)}
-                                disabled={sanctioningNomId === nom.id}
+                                disabled={pendingNomId === nom.id}
                                 className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
                               >
-                                {sanctioningNomId === nom.id ? 'Sanctioning...' : 'Sanction Grant'}
+                                {pendingNomId === nom.id ? 'Processing...' : 'Sanction Grant'}
                               </button>
                               <button
                                 onClick={() => handleRejectFacultyNomination(nom.id)}
-                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[10px] font-semibold transition-colors cursor-pointer"
+                                disabled={pendingNomId === nom.id}
+                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[10px] font-semibold transition-colors cursor-pointer disabled:opacity-50"
                               >
                                 Reject
                               </button>

@@ -18,22 +18,21 @@ from app.db import (
 from app.repositories.supabase_repository import (
     get_faculty_nomination,
     get_institution_trainer,
-    list_faculty_nominations,
-    list_institution_trainers,
 )
 from app.services.curriculum_engine import TRAINER_UPGRADE_CATALOG
 
 VALID_NOMINATION_TRANSITIONS = {
     "NOMINATED": {"SANCTIONED", "REJECTED"},
-    "SANCTIONED": {"IN_PROGRESS", "COMPLETED", "REJECTED", "FAILED"},
-    "IN_PROGRESS": {"COMPLETED", "FAILED"},
+    "SANCTIONED": {"IN_PROGRESS", "COMPLETED", "REJECTED"},
+    "IN_PROGRESS": {"COMPLETED"},
     "COMPLETED": set(),
     "REJECTED": set(),
-    "FAILED": set(),
 }
 from app.services.trainer_service import (
     compute_institute_faculty_scorecard,
     compute_statewide_trainer_analytics,
+    list_faculty_nominations_service,
+    list_institution_trainers_service,
 )
 
 logger = logging.getLogger("skillsetu.trainers")
@@ -55,7 +54,7 @@ class TrainerCreate(BaseModel):
     industry_experience_years: float = Field(default=0.0, ge=0.0)
     highest_qualification: Optional[str] = Field(None, max_length=150)
     assigned_course_ids: list[str] = Field(default_factory=list)
-    status: Optional[str] = Field(default="ACTIVE", pattern="^(ACTIVE|IN_TRAINING|ON_LEAVE|TRANSFERRED|RETIRED)$")
+    status: Optional[str] = Field(default="ACTIVE", pattern="^(ACTIVE|IN_TRAINING|ON_LEAVE|RETIRED)$")
 
 
 class TrainerUpdate(BaseModel):
@@ -70,7 +69,7 @@ class TrainerUpdate(BaseModel):
     industry_experience_years: Optional[float] = Field(None, ge=0.0)
     highest_qualification: Optional[str] = Field(None, max_length=150)
     assigned_course_ids: Optional[list[str]] = None
-    status: Optional[str] = Field(None, pattern="^(ACTIVE|IN_TRAINING|ON_LEAVE|TRANSFERRED|RETIRED)$")
+    status: Optional[str] = Field(None, pattern="^(ACTIVE|IN_TRAINING|ON_LEAVE|RETIRED)$")
 
 
 class FacultyNominationCreate(BaseModel):
@@ -86,7 +85,7 @@ class FacultyNominationCreate(BaseModel):
 
 
 class FacultyNominationUpdate(BaseModel):
-    status: Optional[str] = Field(None, pattern="^(NOMINATED|SUBMITTED|SANCTIONED|REJECTED|IN_PROGRESS|COMPLETED|FAILED)$")
+    status: Optional[str] = Field(None, pattern="^(NOMINATED|SANCTIONED|REJECTED|IN_PROGRESS|COMPLETED)$")
     sanction_reference: Optional[str] = Field(None, max_length=100)
     sanction_amount_inr: Optional[int] = Field(None, ge=0)
     completion_date: Optional[str] = None
@@ -169,16 +168,15 @@ async def list_trainers_endpoint(
 
     demo_flag = is_demo if is_demo is not None else current_user.get("is_demo")
 
-    records = list_institution_trainers(
+    records = list_institution_trainers_service(
         institute_id=target_institute_id,
         district=district,
         trade=trade,
+        status=status_filter,
         is_demo=demo_flag,
         limit=limit,
         offset=offset,
     )
-    if status_filter:
-        records = [r for r in records if (r.get("status") or "").upper() == status_filter.strip().upper()]
 
     return {
         "trainers": records,
@@ -199,9 +197,11 @@ async def create_trainer_endpoint(
     if user_role == "INSTITUTE":
         assigned_inst_id = user_inst_id
         assigned_inst_name = current_user.get("institute_name") or current_user.get("organization_id") or "Technical Institute"
+        assigned_district = current_user.get("district") or "Maharashtra"
     else:
         assigned_inst_id = data.institute_id or user_inst_id
         assigned_inst_name = data.institute_name or "Technical Institute"
+        assigned_district = data.district or current_user.get("district") or "Maharashtra"
 
     now_iso = datetime.now(timezone.utc).isoformat()
     trainer_id = f"tr-{uuid.uuid4().hex[:10]}"
@@ -215,7 +215,7 @@ async def create_trainer_endpoint(
         "phone": data.phone,
         "institute_id": assigned_inst_id,
         "institute_name": assigned_inst_name,
-        "district": data.district or current_user.get("district") or "Maharashtra",
+        "district": assigned_district,
         "primary_trade": data.primary_trade.strip(),
         "skills": data.skills,
         "certifications": data.certifications,
@@ -256,7 +256,7 @@ async def list_faculty_nominations_endpoint(
 
     demo_flag = is_demo if is_demo is not None else current_user.get("is_demo")
 
-    records = list_faculty_nominations(
+    records = list_faculty_nominations_service(
         institute_id=target_institute_id,
         district=district,
         status=status_filter,
@@ -317,7 +317,7 @@ async def create_faculty_nomination_endpoint(
         "nominated_at": now_iso,
         "rationale": data.rationale,
         "justification": data.rationale,
-        "data_provenance": "INSTITUTE_AUTHORITATIVE",
+        "data_provenance": "INSTITUTE_NOMINATION",
         "is_demo": demo_flag,
         "created_at": now_iso,
         "updated_at": now_iso,
@@ -399,9 +399,12 @@ async def update_faculty_nomination_endpoint(
             updates["review_notes"] = f"Sanctioned under ref {updates['sanction_reference']}"
 
     try:
-        updated = update_faculty_nomination_record(nomination_id, updates)
+        updated = update_faculty_nomination_record(nomination_id, updates, expected_status=curr_status)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        err_str = str(e)
+        if "stale" in err_str.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_str)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_str)
 
     if updated.get("status") == "COMPLETED" and updated.get("certification_earned"):
         trainer_id = updated.get("trainer_id")

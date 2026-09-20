@@ -1929,19 +1929,23 @@ def save_faculty_nomination_record(nomination_data: dict[str, Any]) -> dict[str,
     return merged
 
 
-def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any], expected_status: str | None = None) -> dict[str, Any]:
     if not _cache:
         init_db()
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     saved = {}
     try:
         from app.repositories.supabase_repository import update_faculty_nomination
-        saved = update_faculty_nomination(nomination_id, updates)
+        saved = update_faculty_nomination(nomination_id, updates, expected_status=expected_status)
     except Exception:
         pass
     records = _cache.setdefault("faculty_upskilling_nominations", [])
     matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nomination_id), None)
     if matched_idx is not None:
+        if expected_status:
+            current_status = (records[matched_idx].get("status") or "").upper()
+            if current_status != expected_status.upper():
+                raise ValueError(f"Stale nomination status: expected {expected_status}, found {current_status}")
         merged = {**records[matched_idx], **updates, **saved}
         records[matched_idx] = merged
     elif saved:

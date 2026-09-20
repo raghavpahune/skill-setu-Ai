@@ -3423,11 +3423,14 @@ def list_faculty_nominations(
         raise SupabaseRepositoryError(f"Database query failed listing nominations: {e}") from e
 
 
-def update_faculty_nomination(nomination_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+def update_faculty_nomination(nomination_id: str, updates: dict[str, Any], expected_status: str | None = None) -> dict[str, Any]:
     try:
         client = get_client()
         row = {k: v for k, v in updates.items() if k in VALID_FACULTY_NOMINATION_COLUMNS}
-        res = client.table("faculty_upskilling_nominations").update(row).eq("id", nomination_id).execute()
+        query = client.table("faculty_upskilling_nominations").update(row).eq("id", nomination_id)
+        if expected_status:
+            query = query.eq("status", expected_status.upper())
+        res = query.execute()
         if not res.data or len(res.data) == 0:
             raise SupabaseRepositoryError(f"Failed updating faculty nomination '{nomination_id}'.")
         return _enrich_nomination_record(res.data[0])

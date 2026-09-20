@@ -285,3 +285,161 @@ def test_db_update_incomplete_record_prevention():
 
     with pytest.raises(ValueError):
         update_faculty_nomination_record("nom-nonexistent-9999", {"status": "SANCTIONED"})
+
+
+def test_institute_trainer_district_authorization():
+    headers_coep = _get_headers("INSTITUTE", user_id="usr-institute-001", email="institute@skillsetu.gov.in", org_id="inst-coep")
+    res = client.post(
+        "/api/trainers",
+        headers=headers_coep,
+        json={
+            "name": "Prof Spoof District",
+            "primary_trade": "Mechatronics",
+            "district": "Gadchiroli",
+        },
+    )
+    assert res.status_code == 201
+    assert res.json()["district"] == "Pune"
+
+    from app.db import _cache
+    users = _cache.setdefault("users", [])
+    if not any(u.get("id") == "usr-inst-nodist" for u in users):
+        users.append({
+            "id": "usr-inst-nodist",
+            "email": "nodist@skillsetu.gov.in",
+            "role": "INSTITUTE",
+            "organization_id": "inst-nodist",
+            "district": None,
+            "is_active": True,
+        })
+    headers_nodist = _get_headers("INSTITUTE", user_id="usr-inst-nodist", email="nodist@skillsetu.gov.in", org_id="inst-nodist")
+    res2 = client.post(
+        "/api/trainers",
+        headers=headers_nodist,
+        json={
+            "name": "Prof Fallback District",
+            "primary_trade": "Mechatronics",
+            "district": "Nagpur",
+        },
+    )
+    assert res2.status_code == 201
+    assert res2.json()["district"] == "Maharashtra"
+
+    headers_admin = _get_headers("ADMIN", user_id="73e35d08-a564-4cd2-b503-a641a8a0a5aa", email="admin@skillsetu.gov.in", org_id="admin-gov")
+    res3 = client.post(
+        "/api/trainers",
+        headers=headers_admin,
+        json={
+            "name": "Prof Admin Set District",
+            "primary_trade": "Mechatronics",
+            "district": "Kolhapur",
+        },
+    )
+    assert res3.status_code == 201
+    assert res3.json()["district"] == "Kolhapur"
+
+
+def test_faculty_nomination_provenance_and_status_validation():
+    headers_inst = _get_headers("INSTITUTE", user_id="usr-institute-001", email="institute@skillsetu.gov.in", org_id="inst-coep")
+    res_tr = client.post(
+        "/api/trainers",
+        headers=headers_inst,
+        json={"name": "Trainer For Prov", "primary_trade": "Automotive"},
+    )
+    assert res_tr.status_code == 201
+    tr_id = res_tr.json()["id"]
+
+    res_nom = client.post(
+        "/api/trainers/nominations",
+        headers=headers_inst,
+        json={
+            "trainer_id": tr_id,
+            "program_code": "EV-01",
+            "program_title": "EV Master Training",
+            "domain": "Electric Vehicles",
+            "partner_agency": "Tata Motors",
+            "duration_weeks": 3,
+            "budget_inr": 30000,
+        },
+    )
+    assert res_nom.status_code == 201
+    assert res_nom.json()["data_provenance"] == "INSTITUTE_NOMINATION"
+
+    res_inv_tr = client.post(
+        "/api/trainers",
+        headers=headers_inst,
+        json={"name": "Trainer Transferred", "primary_trade": "Automotive", "status": "TRANSFERRED"},
+    )
+    assert res_inv_tr.status_code == 422
+
+    nom_id = res_nom.json()["id"]
+    headers_gov = _get_headers("GOVERNMENT", user_id="usr-gov-001", email="government@skillsetu.gov.in", org_id="gov-msis")
+    res_inv_sub = client.patch(
+        f"/api/trainers/nominations/{nom_id}",
+        headers=headers_gov,
+        json={"status": "SUBMITTED"},
+    )
+    assert res_inv_sub.status_code == 422
+
+    res_inv_fail = client.patch(
+        f"/api/trainers/nominations/{nom_id}",
+        headers=headers_gov,
+        json={"status": "FAILED"},
+    )
+    assert res_inv_fail.status_code == 422
+
+
+def test_service_level_list_fallbacks():
+    from unittest.mock import patch
+    from app.services.trainer_service import (
+        list_faculty_nominations_service,
+        list_institution_trainers_service,
+    )
+
+    with patch("app.repositories.supabase_repository.list_institution_trainers", side_effect=RuntimeError("SB Down")):
+        trainers = list_institution_trainers_service(is_demo=True, limit=5)
+        assert isinstance(trainers, list)
+        assert len(trainers) > 0
+
+    with patch("app.repositories.supabase_repository.list_faculty_nominations", side_effect=RuntimeError("SB Down")):
+        noms = list_faculty_nominations_service(is_demo=True, limit=5)
+        assert isinstance(noms, list)
+        assert len(noms) > 0
+
+
+def test_faculty_nomination_stale_update_conflict():
+    headers_inst = _get_headers("INSTITUTE", user_id="usr-institute-001", email="institute@skillsetu.gov.in", org_id="inst-coep")
+    res_tr = client.post(
+        "/api/trainers",
+        headers=headers_inst,
+        json={"name": "Trainer Concurrency", "primary_trade": "Welding"},
+    )
+    assert res_tr.status_code == 201
+    tr_id = res_tr.json()["id"]
+
+    res_nom = client.post(
+        "/api/trainers/nominations",
+        headers=headers_inst,
+        json={
+            "trainer_id": tr_id,
+            "program_code": "WELD-01",
+            "program_title": "Robotic Welding",
+            "domain": "Welding",
+            "partner_agency": "L&T",
+        },
+    )
+    assert res_nom.status_code == 201
+    nom_id = res_nom.json()["id"]
+
+    headers_gov = _get_headers("GOVERNMENT", user_id="usr-gov-001", email="government@skillsetu.gov.in", org_id="gov-msis")
+    res_sanc = client.patch(
+        f"/api/trainers/nominations/{nom_id}",
+        headers=headers_gov,
+        json={"status": "SANCTIONED"},
+    )
+    assert res_sanc.status_code == 200
+
+    from app.db import update_faculty_nomination_record
+    with pytest.raises(ValueError) as exc:
+        update_faculty_nomination_record(nom_id, {"status": "REJECTED"}, expected_status="NOMINATED")
+    assert "stale" in str(exc.value).lower()

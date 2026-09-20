@@ -60,6 +60,95 @@ def _get_nominations(institute_id: str | None = None, district: str | None = Non
     return filtered
 
 
+def list_institution_trainers_service(
+    institute_id: str | None = None,
+    district: str | None = None,
+    trade: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    if not _cache:
+        init_db()
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+    trainers = None
+    if not is_demo_mode:
+        try:
+            from app.repositories.supabase_repository import list_institution_trainers
+            trainers = list_institution_trainers(
+                institute_id=institute_id,
+                district=district,
+                trade=trade,
+                is_demo=is_demo,
+                limit=limit,
+                offset=offset,
+            )
+        except Exception:
+            trainers = None
+
+    if trainers is None:
+        cached = _cache.get("institution_trainers", [])
+        filtered = cached
+        if institute_id:
+            filtered = [t for t in filtered if t.get("institute_id", "").lower() == institute_id.strip().lower()]
+        if district:
+            filtered = [t for t in filtered if district.strip().lower() in (t.get("district") or "").lower()]
+        if trade:
+            filtered = [t for t in filtered if trade.strip().lower() in (t.get("primary_trade") or "").lower()]
+        if is_demo is not None:
+            filtered = [t for t in filtered if t.get("is_demo") == is_demo]
+        if status:
+            filtered = [t for t in filtered if (t.get("status") or "").upper() == status.strip().upper()]
+        trainers = filtered[offset: offset + limit]
+    elif status:
+        trainers = [t for t in trainers if (t.get("status") or "").upper() == status.strip().upper()]
+
+    return trainers
+
+
+def list_faculty_nominations_service(
+    institute_id: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    if not _cache:
+        init_db()
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+    noms = None
+    if not is_demo_mode:
+        try:
+            from app.repositories.supabase_repository import list_faculty_nominations
+            noms = list_faculty_nominations(
+                institute_id=institute_id,
+                district=district,
+                status=status,
+                is_demo=is_demo,
+                limit=limit,
+                offset=offset,
+            )
+        except Exception:
+            noms = None
+
+    if noms is None:
+        cached = _cache.get("faculty_upskilling_nominations", [])
+        filtered = cached
+        if institute_id:
+            filtered = [n for n in filtered if n.get("institute_id", "").lower() == institute_id.strip().lower()]
+        if district:
+            filtered = [n for n in filtered if district.strip().lower() in (n.get("district") or "").lower()]
+        if status:
+            filtered = [n for n in filtered if (n.get("status") or "").upper() == status.strip().upper()]
+        if is_demo is not None:
+            filtered = [n for n in filtered if n.get("is_demo") == is_demo]
+        noms = filtered[offset: offset + limit]
+
+    return noms
+
+
 def compute_course_trainer_capacity(
     course: dict[str, Any],
     trainers: list[dict[str, Any]],

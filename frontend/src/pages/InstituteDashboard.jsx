@@ -337,6 +337,9 @@ export default function InstituteDashboard() {
     }
     setSavingNomination(true);
     try {
+      const rawBudget = nominationForm.budget_inr;
+      const parsedBudget = (rawBudget == null || rawBudget === '') ? 25000 : Number(rawBudget);
+      const budget_inr = Number.isFinite(parsedBudget) ? parsedBudget : 25000;
       const payload = {
         trainer_id: nominationForm.trainer_id,
         program_code: nominationForm.program_code.trim() || 'FDP-GEN',
@@ -344,7 +347,7 @@ export default function InstituteDashboard() {
         domain: nominationForm.domain.trim(),
         partner_agency: nominationForm.partner_agency.trim(),
         duration_weeks: Number(nominationForm.duration_weeks) || 2,
-        budget_inr: nominationForm.budget_inr == null || nominationForm.budget_inr === '' ? 25000 : Number(nominationForm.budget_inr),
+        budget_inr: budget_inr,
         rationale: nominationForm.rationale.trim() || null,
       };
       const res = await api.createFacultyNomination(payload);
