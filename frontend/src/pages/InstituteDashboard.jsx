@@ -66,6 +66,36 @@ export default function InstituteDashboard() {
   const [instituteNotices, setInstituteNotices] = useState([]);
   const [remediationNotesMap, setRemediationNotesMap] = useState({});
   const [submittingNoticeId, setSubmittingNoticeId] = useState(null);
+  const [trainers, setTrainers] = useState([]);
+  const [facultyScorecard, setFacultyScorecard] = useState(null);
+  const [facultyNominations, setFacultyNominations] = useState([]);
+  const [upgradeCatalog, setUpgradeCatalog] = useState([]);
+  const [isTrainerModalOpen, setIsTrainerModalOpen] = useState(false);
+  const [isNominationModalOpen, setIsNominationModalOpen] = useState(false);
+  const [savingTrainer, setSavingTrainer] = useState(false);
+  const [savingNomination, setSavingNomination] = useState(false);
+  const [trainerForm, setTrainerForm] = useState({
+    name: '',
+    employee_id: '',
+    email: '',
+    phone: '',
+    primary_trade: 'Computer Science & AI',
+    skillsInput: '',
+    certificationsInput: '',
+    experience_years: 5,
+    industry_experience_years: 2,
+    highest_qualification: 'M.Tech / ME',
+  });
+  const [nominationForm, setNominationForm] = useState({
+    trainer_id: '',
+    program_code: '',
+    program_title: '',
+    domain: 'Artificial Intelligence & Deep Learning',
+    partner_agency: 'IIT Bombay / NPTEL',
+    duration_weeks: 4,
+    budget_inr: 25000,
+    rationale: '',
+  });
   const [outcomeForm, setOutcomeForm] = useState({
     course_id: '',
     candidate_name: '',
@@ -100,25 +130,21 @@ export default function InstituteDashboard() {
     if (!syllabusText.trim()) return;
     setExtractingSyllabus(true);
     try {
-      const res = await api.extractInstituteSyllabus({
-        syllabus_text: syllabusText.trim(),
-        course_name: formState.name,
-      });
-      if (res?.extracted_skills?.length > 0) {
+      const res = await api.extractInstituteSyllabus({ syllabus_text: syllabusText });
+      if (res && res.extracted) {
         setFormState((prev) => ({
           ...prev,
-          name: prev.name.trim() || res.suggested_course_name,
-          skillsInput: res.extracted_skills.join(', '),
-          nsqf_level: res.suggested_nsqf_level || prev.nsqf_level,
-          category: res.suggested_category || prev.category,
+          name: res.extracted.course_name || prev.name,
+          category: res.extracted.category || prev.category,
+          description: res.extracted.description || prev.description,
+          skillsInput: (res.extracted.skills || []).join(', ') || prev.skillsInput,
+          nsqf_level: res.extracted.suggested_nsqf_level || prev.nsqf_level,
+          duration_weeks: res.extracted.duration_weeks || prev.duration_weeks,
         }));
-        showToast('success', res.summary);
-      } else {
-        showToast('error', 'No standard taxonomy skills recognized from syllabus text.');
+        showToast('success', 'Syllabus auto-parsed! Review details below.');
       }
     } catch (err) {
-      console.error('Syllabus extraction error:', err);
-      showToast('error', `Failed to analyze syllabus: ${err?.message || 'Server error'}`);
+      showToast('error', err.message || 'Syllabus extraction failed.');
     } finally {
       setExtractingSyllabus(false);
     }
@@ -131,41 +157,43 @@ export default function InstituteDashboard() {
     reader.onload = (evt) => {
       const content = evt.target?.result;
       if (typeof content === 'string') {
-        setSyllabusText(content.slice(0, 10000));
-        showToast('success', `Loaded "${file.name}" into syllabus assistant. Click "Auto-Extract Skills".`);
+        setSyllabusText(content);
       }
     };
     reader.readAsText(file);
   };
 
-  const showToast = (type, message) => {
-    setToastMessage({ type, message });
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
+  const showToast = (type, text) => {
+    setToastMessage({ type, message: text, text });
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
   const fetchCourses = async () => {
     setLoading(true);
     setApiError(null);
     try {
-      const [coursesRes, recsRes] = await Promise.all([
+      const [coursesData, recsData, outcomesData] = await Promise.all([
         api.getInstituteCourses(),
-        api.getCourseRecommendations(),
+        api.getCourseRecommendations().catch(() => ({ recommendations: [] })),
+        api.getPlacementOutcomes().catch(() => ({ placement_outcomes: [] })),
       ]);
-      if (Array.isArray(coursesRes)) {
-        setCourses(coursesRes);
-      }
-      if (Array.isArray(recsRes)) {
-        setRecommendations(recsRes);
-      }
-      try {
-        const outcomesRes = await api.getPlacementOutcomes();
-        if (outcomesRes?.placement_outcomes) {
-          setPlacementOutcomes(outcomesRes.placement_outcomes);
-        }
-      } catch (e) {
-        console.warn('Could not fetch placement outcomes:', e);
+
+      const coursesList = Array.isArray(coursesData)
+        ? coursesData
+        : coursesData.courses || [];
+      const recsList = Array.isArray(recsData)
+        ? recsData
+        : recsData.recommendations || [];
+      const outcomesList = Array.isArray(outcomesData)
+        ? outcomesData
+        : outcomesData.placement_outcomes || outcomesData.outcomes || [];
+
+      setCourses(coursesList);
+      setRecommendations(recsList);
+      setPlacementOutcomes(outcomesList);
+
+      if (coursesList.length > 0 && !selectedCourse) {
+        setSelectedCourse(coursesList[0]);
       }
     } catch (err) {
       console.warn('Failed loading institute live data:', err);
@@ -179,9 +207,13 @@ export default function InstituteDashboard() {
     setScorecardLoading(true);
     const instituteId = user?.institute_id || user?.organization_id || 'inst_gp_pune';
     try {
-      const [scRes, noticesRes] = await Promise.allSettled([
+      const [scRes, noticesRes, trainersRes, facultyScRes, nomsRes, catalogRes] = await Promise.allSettled([
         api.getInstituteScorecard(instituteId),
         api.getInstituteAuditNotices(instituteId),
+        api.getTrainers({ institute_id: instituteId }),
+        api.getInstituteFacultyScorecard(instituteId),
+        api.getFacultyNominations({ institute_id: instituteId }),
+        api.getTrainerUpgradeCatalog(),
       ]);
       let scorecardSuccess = false;
       if (scRes.status === 'fulfilled' && (scRes.value?.scorecard || scRes.value?.accreditation)) {
@@ -190,6 +222,18 @@ export default function InstituteDashboard() {
       }
       if (noticesRes.status === 'fulfilled' && Array.isArray(noticesRes.value?.audit_notices)) {
         setInstituteNotices(noticesRes.value.audit_notices);
+      }
+      if (trainersRes.status === 'fulfilled' && Array.isArray(trainersRes.value?.trainers)) {
+        setTrainers(trainersRes.value.trainers);
+      }
+      if (facultyScRes.status === 'fulfilled' && facultyScRes.value) {
+        setFacultyScorecard(facultyScRes.value);
+      }
+      if (nomsRes.status === 'fulfilled' && Array.isArray(nomsRes.value?.nominations)) {
+        setFacultyNominations(nomsRes.value.nominations);
+      }
+      if (catalogRes.status === 'fulfilled' && Array.isArray(catalogRes.value?.catalog)) {
+        setUpgradeCatalog(catalogRes.value.catalog);
       }
       if (!scorecardSuccess) {
         const failureReason = scRes.status === 'rejected'
@@ -233,6 +277,99 @@ export default function InstituteDashboard() {
       showToast('error', err?.message || 'Failed to submit remediation response.');
     } finally {
       setSubmittingNoticeId(null);
+    }
+  };
+
+  const handleRegisterTrainer = async (e) => {
+    e.preventDefault();
+    if (!trainerForm.name.trim() || !trainerForm.primary_trade.trim()) {
+      showToast('error', 'Please enter trainer name and primary trade.');
+      return;
+    }
+    setSavingTrainer(true);
+    try {
+      const skills = trainerForm.skillsInput.split(',').map((s) => s.trim()).filter(Boolean);
+      const certifications = trainerForm.certificationsInput.split(',').map((c) => c.trim()).filter(Boolean);
+      const payload = {
+        name: trainerForm.name.trim(),
+        employee_id: trainerForm.employee_id.trim() || null,
+        email: trainerForm.email.trim() || null,
+        phone: trainerForm.phone.trim() || null,
+        primary_trade: trainerForm.primary_trade.trim(),
+        skills,
+        certifications,
+        experience_years: Number(trainerForm.experience_years) || 0,
+        industry_experience_years: Number(trainerForm.industry_experience_years) || 0,
+        highest_qualification: trainerForm.highest_qualification || null,
+        status: 'ACTIVE',
+      };
+      const res = await api.registerTrainer(payload);
+      if (res?.id) {
+        setTrainers((prev) => [res, ...prev]);
+        showToast('success', `Faculty member ${res.name} registered.`);
+        setIsTrainerModalOpen(false);
+        setTrainerForm({
+          name: '',
+          employee_id: '',
+          email: '',
+          phone: '',
+          primary_trade: 'Computer Science & AI',
+          skillsInput: '',
+          certificationsInput: '',
+          experience_years: 5,
+          industry_experience_years: 2,
+          highest_qualification: 'M.Tech / ME',
+        });
+        fetchScorecardData();
+      }
+    } catch (err) {
+      showToast('error', err?.message || 'Failed to register trainer.');
+    } finally {
+      setSavingTrainer(false);
+    }
+  };
+
+  const handleCreateNomination = async (e) => {
+    e.preventDefault();
+    if (!nominationForm.trainer_id || !nominationForm.program_title.trim()) {
+      showToast('error', 'Please select a faculty member and FDP program.');
+      return;
+    }
+    setSavingNomination(true);
+    try {
+      const rawBudget = nominationForm.budget_inr;
+      const parsedBudget = (rawBudget == null || rawBudget === '') ? 25000 : Number(rawBudget);
+      const budget_inr = Number.isFinite(parsedBudget) ? parsedBudget : 25000;
+      const payload = {
+        trainer_id: nominationForm.trainer_id,
+        program_code: nominationForm.program_code.trim() || 'FDP-GEN',
+        program_title: nominationForm.program_title.trim(),
+        domain: nominationForm.domain.trim(),
+        partner_agency: nominationForm.partner_agency.trim(),
+        duration_weeks: Number(nominationForm.duration_weeks) || 2,
+        budget_inr: budget_inr,
+        rationale: nominationForm.rationale.trim() || null,
+      };
+      const res = await api.createFacultyNomination(payload);
+      if (res?.id) {
+        setFacultyNominations((prev) => [res, ...prev]);
+        showToast('success', `Faculty upskilling nomination submitted for state grant sanction.`);
+        setIsNominationModalOpen(false);
+        setNominationForm({
+          trainer_id: '',
+          program_code: '',
+          program_title: '',
+          domain: 'Artificial Intelligence & Deep Learning',
+          partner_agency: 'IIT Bombay / NPTEL',
+          duration_weeks: 4,
+          budget_inr: 25000,
+          rationale: '',
+        });
+      }
+    } catch (err) {
+      showToast('error', err?.message || 'Failed to submit nomination.');
+    } finally {
+      setSavingNomination(false);
     }
   };
 
@@ -641,6 +778,19 @@ export default function InstituteDashboard() {
               {scorecard.tier.replace('TIER_', 'T').replace('_', ' ')}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setActiveTab('trainers')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'trainers'
+              ? 'bg-teal-600 text-white shadow-xs'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <span>Faculty & Trainer Capacity</span>
+          <span className="px-1.5 py-0.5 bg-teal-800/60 text-teal-100 rounded text-[10px] font-mono">
+            {trainers.length}
+          </span>
         </button>
       </div>
 
@@ -1702,6 +1852,279 @@ export default function InstituteDashboard() {
         </div>
       )}
 
+      {activeTab === 'trainers' && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-5 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>Vocational Faculty & Trainer Competency Pipeline</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 font-bold border border-teal-200 dark:border-teal-800">
+                  NSQF 1:20 Norm
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Audited faculty student-trainer ratios, syllabus alignment scoring, and state-sanctioned Faculty Development Programs (FDP).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsTrainerModalOpen(true)}
+                className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <span>+</span>
+                <span>Register Instructor</span>
+              </button>
+              <button
+                onClick={() => setIsNominationModalOpen(true)}
+                className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <span>🚀</span>
+                <span>Nominate for State FDP</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Faculty Readiness Index
+              </div>
+              <div className="text-2xl font-black text-teal-600 dark:text-teal-400">
+                {facultyScorecard?.faculty_readiness_index || 0}%
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                Norm Ratio & Competency Composite
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                NSQF Ratio Norm Status
+              </div>
+              <div className={`text-base font-black flex items-center gap-1.5 ${
+                facultyScorecard?.overall_compliance_status === 'COMPLIANT'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-amber-600 dark:text-amber-400'
+              }`}>
+                <span>{facultyScorecard?.overall_compliance_status === 'COMPLIANT' ? '✅' : '⚠️'}</span>
+                <span>{facultyScorecard?.overall_compliance_status || 'AUDITING'}</span>
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                Benchmark: Maximum 20 Students / Trainer
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Student-Trainer Ratio
+              </div>
+              <div className="text-2xl font-black text-slate-900 dark:text-white font-mono">
+                {facultyScorecard?.overall_student_trainer_ratio || '1:20'}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                Enrolled: {facultyScorecard?.total_enrolment || 0} | Faculty: {facultyScorecard?.total_instructors || trainers.length}
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Modernized Instructors
+              </div>
+              <div className="text-2xl font-black text-indigo-600 dark:text-indigo-400">
+                {facultyScorecard?.certified_instructors_count || 0} / {facultyScorecard?.total_instructors || trainers.length}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1">
+                Certified in Industry 4.0 / Modern Tech
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3">
+              Program-wise Trainer Adequacy & Syllabus Competency
+            </h3>
+            {facultyScorecard?.course_capacity_breakdown?.length > 0 ? (
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">Program Title</th>
+                      <th className="py-2.5 px-3">Enrolment</th>
+                      <th className="py-2.5 px-3">Required (1:20)</th>
+                      <th className="py-2.5 px-3">Assigned Faculty</th>
+                      <th className="py-2.5 px-3">Capacity %</th>
+                      <th className="py-2.5 px-3">Competency %</th>
+                      <th className="py-2.5 px-3">Missing Skill Gaps</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                    {facultyScorecard.course_capacity_breakdown.map((cc) => (
+                      <tr key={cc.course_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                          {cc.course_name}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono">{cc.enrolment_capacity}</td>
+                        <td className="py-2.5 px-3 font-mono text-slate-500">{cc.required_trainers}</td>
+                        <td className="py-2.5 px-3 font-mono font-bold">{cc.assigned_trainers_count}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
+                            cc.capacity_ratio_pct >= 100
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              : 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                          }`}>
+                            {cc.capacity_ratio_pct}%
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded font-mono font-bold text-[11px] ${
+                            cc.competency_score_pct >= 80
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                              : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                          }`}>
+                            {cc.competency_score_pct}%
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {cc.uncovered_skills?.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {cc.uncovered_skills.map((s) => (
+                                <span key={s} className="px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 text-[10px]">
+                                  {s}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-emerald-600 font-semibold">100% Covered</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                No course capacity evaluations available.
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  Vocational Faculty Roster ({trainers.length})
+                </h3>
+              </div>
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">Faculty Member</th>
+                      <th className="py-2.5 px-3">Primary Trade</th>
+                      <th className="py-2.5 px-3">Experience</th>
+                      <th className="py-2.5 px-3">Certifications</th>
+                      <th className="py-2.5 px-3">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                    {trainers.map((t) => (
+                      <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3">
+                          <div className="font-bold text-slate-900 dark:text-white">{t.name}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{t.employee_id || t.id}</div>
+                        </td>
+                        <td className="py-2.5 px-3 font-medium">{t.primary_trade}</td>
+                        <td className="py-2.5 px-3 font-mono">{(t.experience_years ?? t.years_experience ?? 0)} yrs</td>
+                        <td className="py-2.5 px-3">
+                          <div className="flex flex-wrap gap-1 max-w-[180px]">
+                            {(t.certifications || t.certified_skills || []).slice(0, 2).map((c) => (
+                              <span key={c} className="px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 text-[9px] font-medium">
+                                {c}
+                              </span>
+                            ))}
+                            {(t.certifications || t.certified_skills || []).length > 2 && (
+                              <span className="text-[9px] text-slate-400">+{(t.certifications || t.certified_skills || []).length - 2}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <button
+                            onClick={() => {
+                              setNominationForm((prev) => ({ ...prev, trainer_id: t.id }));
+                              setIsNominationModalOpen(true);
+                            }}
+                            className="px-2 py-1 bg-teal-50 hover:bg-teal-100 dark:bg-teal-950 dark:hover:bg-teal-900 text-teal-700 dark:text-teal-300 rounded text-[10px] font-bold transition-colors cursor-pointer"
+                          >
+                            Nominate
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  State-Sponsored FDP Nominations ({facultyNominations.length})
+                </h3>
+              </div>
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">Instructor</th>
+                      <th className="py-2.5 px-3">FDP Program</th>
+                      <th className="py-2.5 px-3">Agency</th>
+                      <th className="py-2.5 px-3">Grant Budget</th>
+                      <th className="py-2.5 px-3">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                    {facultyNominations.map((n) => (
+                      <tr key={n.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
+                          {n.trainer_name || n.trainer_id}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-medium">{n.program_title || n.program_name}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{n.program_code || n.domain}</div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{n.partner_agency || n.certifying_body}</td>
+                        <td className="py-2.5 px-3 font-mono">₹{((n.budget_inr ?? n.stipend_grant_inr) ?? 25000).toLocaleString('en-IN')}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                            n.status === 'SANCTIONED'
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : n.status === 'COMPLETED'
+                              ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'
+                              : n.status === 'REJECTED'
+                              ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                              : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                          }`}>
+                            {n.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                    {facultyNominations.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-slate-400 text-xs">
+                          No FDP nominations recorded yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isOutcomeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
@@ -1896,6 +2319,293 @@ export default function InstituteDashboard() {
                   className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                 >
                   {savingOutcome ? 'Saving...' : 'Record Outcome'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isTrainerModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Register Vocational Instructor
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                  Record faculty credentials for NSQF ratio compliance and state curriculum audits.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsTrainerModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRegisterTrainer} className="space-y-3.5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Instructor Full Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Dr. Ramesh Kulkarni"
+                    value={trainerForm.name}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, name: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Employee / Faculty ID
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. EMP-GP-1092"
+                    value={trainerForm.employee_id}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, employee_id: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Primary Trade / Discipline *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Electric Vehicle Engineering"
+                    value={trainerForm.primary_trade}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, primary_trade: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Highest Qualification
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. M.Tech in Power Electronics"
+                    value={trainerForm.highest_qualification}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, highest_qualification: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Skills Competencies (Comma-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. EV Powertrain, BMS Diagnostics, CAN Bus, High-Voltage Safety"
+                  value={trainerForm.skillsInput}
+                  onChange={(e) => setTrainerForm({ ...trainerForm, skillsInput: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Certifications (Comma-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. ARAI Certified EV Specialist, DGT Master Trainer"
+                  value={trainerForm.certificationsInput}
+                  onChange={(e) => setTrainerForm({ ...trainerForm, certificationsInput: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Teaching Exp (Years)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={trainerForm.experience_years}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, experience_years: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Industry Exp (Years)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={trainerForm.industry_experience_years}
+                    onChange={(e) => setTrainerForm({ ...trainerForm, industry_experience_years: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsTrainerModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingTrainer}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {savingTrainer ? 'Registering...' : 'Register Instructor'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isNominationModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                  Nominate Faculty for State-Sponsored FDP
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                  Submit upskilling sponsorship request to Maharashtra State Directorate of Technical Education.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsNominationModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateNomination} className="space-y-3.5">
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Faculty Member to Upskill *
+                </label>
+                <select
+                  required
+                  value={nominationForm.trainer_id}
+                  onChange={(e) => setNominationForm({ ...nominationForm, trainer_id: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="">Select an Instructor...</option>
+                  {trainers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.primary_trade})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Select State-Approved FDP Program *
+                </label>
+                <select
+                  required
+                  value={nominationForm.program_code}
+                  onChange={(e) => {
+                    const selected = upgradeCatalog.find((c) => c.program_code === e.target.value);
+                    if (selected) {
+                      setNominationForm((prev) => ({
+                        ...prev,
+                        program_code: selected.program_code,
+                        program_title: selected.title,
+                        domain: selected.domain,
+                        partner_agency: selected.partner_agency,
+                        duration_weeks: selected.duration_weeks,
+                        budget_inr: selected.budget_per_trainer_inr,
+                      }));
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="">Select from State Catalog...</option>
+                  {upgradeCatalog.map((c) => (
+                    <option key={c.program_code} value={c.program_code}>
+                      {c.program_code} - {c.title} ({c.partner_agency})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Partner / Training Agency
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={nominationForm.partner_agency}
+                    onChange={(e) => setNominationForm({ ...nominationForm, partner_agency: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    State Grant Budget (INR)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1000}
+                    value={nominationForm.budget_inr}
+                    onChange={(e) => setNominationForm({ ...nominationForm, budget_inr: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Institutional Justification / Syllabus Alignment Rationale
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Required to cover automated BMS and high voltage safety syllabus gaps for accredited EV program."
+                  value={nominationForm.rationale}
+                  onChange={(e) => setNominationForm({ ...nominationForm, rationale: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsNominationModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingNomination}
+                  className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {savingNomination ? 'Submitting...' : 'Submit Nomination'}
                 </button>
               </div>
             </form>
