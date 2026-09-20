@@ -130,7 +130,7 @@ export default function InstituteDashboard() {
     if (!syllabusText.trim()) return;
     setExtractingSyllabus(true);
     try {
-      const res = await api.ingestSyllabusText(syllabusText);
+      const res = await api.extractInstituteSyllabus({ syllabus_text: syllabusText });
       if (res && res.extracted) {
         setFormState((prev) => ({
           ...prev,
@@ -150,8 +150,21 @@ export default function InstituteDashboard() {
     }
   };
 
+  const handleSyllabusFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const content = evt.target?.result;
+      if (typeof content === 'string') {
+        setSyllabusText(content);
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const showToast = (type, text) => {
-    setToastMessage({ type, text });
+    setToastMessage({ type, message: text, text });
     setTimeout(() => setToastMessage(null), 4000);
   };
 
@@ -161,8 +174,8 @@ export default function InstituteDashboard() {
     try {
       const [coursesData, recsData, outcomesData] = await Promise.all([
         api.getInstituteCourses(),
-        api.getInstituteRecommendations().catch(() => ({ recommendations: [] })),
-        api.listPlacementOutcomes().catch(() => ({ outcomes: [] })),
+        api.getCourseRecommendations().catch(() => ({ recommendations: [] })),
+        api.getPlacementOutcomes().catch(() => ({ placement_outcomes: [] })),
       ]);
 
       const coursesList = Array.isArray(coursesData)
@@ -173,7 +186,7 @@ export default function InstituteDashboard() {
         : recsData.recommendations || [];
       const outcomesList = Array.isArray(outcomesData)
         ? outcomesData
-        : outcomesData.outcomes || [];
+        : outcomesData.placement_outcomes || outcomesData.outcomes || [];
 
       setCourses(coursesList);
       setRecommendations(recsList);
@@ -2019,16 +2032,16 @@ export default function InstituteDashboard() {
                           <div className="text-[10px] text-slate-400 font-mono">{t.employee_id || t.id}</div>
                         </td>
                         <td className="py-2.5 px-3 font-medium">{t.primary_trade}</td>
-                        <td className="py-2.5 px-3 font-mono">{t.experience_years} yrs</td>
+                        <td className="py-2.5 px-3 font-mono">{(t.experience_years ?? t.years_experience ?? 0)} yrs</td>
                         <td className="py-2.5 px-3">
                           <div className="flex flex-wrap gap-1 max-w-[180px]">
-                            {(t.certifications || []).slice(0, 2).map((c) => (
+                            {(t.certifications || t.certified_skills || []).slice(0, 2).map((c) => (
                               <span key={c} className="px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 text-[9px] font-medium">
                                 {c}
                               </span>
                             ))}
-                            {(t.certifications || []).length > 2 && (
-                              <span className="text-[9px] text-slate-400">+{t.certifications.length - 2}</span>
+                            {(t.certifications || t.certified_skills || []).length > 2 && (
+                              <span className="text-[9px] text-slate-400">+{(t.certifications || t.certified_skills || []).length - 2}</span>
                             )}
                           </div>
                         </td>
@@ -2074,11 +2087,11 @@ export default function InstituteDashboard() {
                           {n.trainer_name || n.trainer_id}
                         </td>
                         <td className="py-2.5 px-3">
-                          <div className="font-medium">{n.program_title}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">{n.program_code}</div>
+                          <div className="font-medium">{n.program_title || n.program_name}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{n.program_code || n.domain}</div>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{n.partner_agency}</td>
-                        <td className="py-2.5 px-3 font-mono">₹{(n.budget_inr || 25000).toLocaleString('en-IN')}</td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{n.partner_agency || n.certifying_body}</td>
+                        <td className="py-2.5 px-3 font-mono">₹{(n.budget_inr || n.stipend_grant_inr || 25000).toLocaleString('en-IN')}</td>
                         <td className="py-2.5 px-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
                             n.status === 'SANCTIONED'

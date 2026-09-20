@@ -147,7 +147,7 @@ async def list_trainers_endpoint(
     is_demo: Optional[bool] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "GOVERNMENT", "ADMIN"])),
 ):
     user_role = (current_user.get("role") or "").upper()
     user_inst_id = _resolve_user_institute_id(current_user)
@@ -208,6 +208,8 @@ async def create_trainer_endpoint(
         "primary_trade": data.primary_trade.strip(),
         "skills": data.skills,
         "certifications": data.certifications,
+        "certified_skills": data.skills,
+        "years_experience": int(data.experience_years),
         "experience_years": data.experience_years,
         "industry_experience_years": data.industry_experience_years,
         "highest_qualification": data.highest_qualification,
@@ -223,52 +225,6 @@ async def create_trainer_endpoint(
     return saved
 
 
-@router.get("/trainers/{trainer_id}")
-async def get_trainer_detail_endpoint(
-    trainer_id: str,
-    current_user: dict = Depends(get_current_user),
-):
-    trainer = get_institution_trainer(trainer_id) or get_institution_trainer_by_id(trainer_id)
-    if not trainer:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trainer '{trainer_id}' not found")
-
-    user_role = (current_user.get("role") or "").upper()
-    user_inst_id = _resolve_user_institute_id(current_user)
-
-    if user_role == "INSTITUTE":
-        t_inst_id = str(trainer.get("institute_id") or "").lower()
-        if t_inst_id and t_inst_id != user_inst_id.lower():
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You cannot access another institute's faculty record.")
-
-    return trainer
-
-
-@router.patch("/trainers/{trainer_id}")
-async def update_trainer_endpoint(
-    trainer_id: str,
-    data: TrainerUpdate,
-    current_user: dict = Depends(require_roles(["INSTITUTE", "ADMIN"])),
-):
-    trainer = get_institution_trainer(trainer_id) or get_institution_trainer_by_id(trainer_id)
-    if not trainer:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trainer '{trainer_id}' not found")
-
-    user_role = (current_user.get("role") or "").upper()
-    user_inst_id = _resolve_user_institute_id(current_user)
-
-    if user_role == "INSTITUTE":
-        t_inst_id = str(trainer.get("institute_id") or "").lower()
-        if t_inst_id and t_inst_id != user_inst_id.lower():
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You cannot modify another institute's faculty record.")
-
-    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
-    if not updates:
-        return trainer
-
-    updated = update_institution_trainer_record(trainer_id, updates)
-    return updated
-
-
 @router.get("/trainers/nominations/list")
 @router.get("/trainers/nominations")
 async def list_faculty_nominations_endpoint(
@@ -278,7 +234,7 @@ async def list_faculty_nominations_endpoint(
     is_demo: Optional[bool] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "GOVERNMENT", "ADMIN"])),
 ):
     user_role = (current_user.get("role") or "").upper()
     user_inst_id = _resolve_user_institute_id(current_user)
@@ -333,16 +289,23 @@ async def create_faculty_nomination_endpoint(
         "trainer_name": trainer["name"],
         "institute_id": trainer["institute_id"],
         "institute_name": trainer["institute_name"],
+        "district": trainer.get("district") or current_user.get("district") or "Maharashtra",
         "course_id": data.course_id,
+        "target_course_id": data.course_id,
         "program_code": data.program_code.strip(),
         "program_title": data.program_title.strip(),
+        "program_name": data.program_title.strip(),
         "domain": data.domain.strip(),
         "partner_agency": data.partner_agency.strip(),
+        "certifying_body": data.partner_agency.strip(),
         "duration_weeks": data.duration_weeks,
         "budget_inr": data.budget_inr,
+        "stipend_grant_inr": data.budget_inr,
+        "target_skills": [data.domain.strip()],
         "status": "NOMINATED",
         "nominated_at": now_iso,
         "rationale": data.rationale,
+        "justification": data.rationale,
         "data_provenance": "INSTITUTE_AUTHORITATIVE",
         "is_demo": demo_flag,
         "created_at": now_iso,
@@ -356,7 +319,7 @@ async def create_faculty_nomination_endpoint(
 @router.get("/trainers/nominations/{nomination_id}")
 async def get_faculty_nomination_detail_endpoint(
     nomination_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "GOVERNMENT", "ADMIN"])),
 ):
     nomination = get_faculty_nomination(nomination_id) or get_faculty_nomination_by_id(nomination_id)
     if not nomination:
@@ -413,9 +376,12 @@ async def update_faculty_nomination_endpoint(
             updates.setdefault("approved_by", current_user.get("id") or current_user.get("email") or "GOVERNMENT_AUTHORITY")
             updates.setdefault("data_provenance", "STATE_SANCTIONED_FDP")
             if not updates.get("sanction_amount_inr"):
-                updates["sanction_amount_inr"] = nomination.get("budget_inr", 25000)
+                updates["sanction_amount_inr"] = nomination.get("stipend_grant_inr") or nomination.get("budget_inr", 25000)
+            updates["stipend_grant_inr"] = updates["sanction_amount_inr"]
             if not updates.get("sanction_reference"):
                 updates["sanction_reference"] = f"MSDE/Maha-FDP/2026/{uuid.uuid4().hex[:6].upper()}"
+            updates["reviewed_by"] = updates["approved_by"]
+            updates["review_notes"] = f"Sanctioned under ref {updates['sanction_reference']}"
 
     updated = update_faculty_nomination_record(nomination_id, updates)
 
@@ -430,4 +396,55 @@ async def update_faculty_nomination_endpoint(
                     curr_certs.append(cert_name)
                     update_institution_trainer_record(trainer_id, {"certifications": curr_certs})
 
+    return updated
+
+
+@router.get("/trainers/{trainer_id}")
+async def get_trainer_detail_endpoint(
+    trainer_id: str,
+    current_user: dict = Depends(require_roles(["INSTITUTE", "GOVERNMENT", "ADMIN"])),
+):
+    trainer = get_institution_trainer(trainer_id) or get_institution_trainer_by_id(trainer_id)
+    if not trainer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trainer '{trainer_id}' not found")
+
+    user_role = (current_user.get("role") or "").upper()
+    user_inst_id = _resolve_user_institute_id(current_user)
+
+    if user_role == "INSTITUTE":
+        t_inst_id = str(trainer.get("institute_id") or "").lower()
+        if t_inst_id and t_inst_id != user_inst_id.lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You cannot access another institute's faculty record.")
+
+    return trainer
+
+
+@router.patch("/trainers/{trainer_id}")
+async def update_trainer_endpoint(
+    trainer_id: str,
+    data: TrainerUpdate,
+    current_user: dict = Depends(require_roles(["INSTITUTE", "ADMIN"])),
+):
+    trainer = get_institution_trainer(trainer_id) or get_institution_trainer_by_id(trainer_id)
+    if not trainer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Trainer '{trainer_id}' not found")
+
+    user_role = (current_user.get("role") or "").upper()
+    user_inst_id = _resolve_user_institute_id(current_user)
+
+    if user_role == "INSTITUTE":
+        t_inst_id = str(trainer.get("institute_id") or "").lower()
+        if t_inst_id and t_inst_id != user_inst_id.lower():
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You cannot modify another institute's faculty record.")
+
+    updates = {k: v for k, v in data.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return trainer
+
+    if "skills" in updates and "certified_skills" not in updates:
+        updates["certified_skills"] = updates["skills"]
+    if "experience_years" in updates and "years_experience" not in updates:
+        updates["years_experience"] = int(updates["experience_years"])
+
+    updated = update_institution_trainer_record(trainer_id, updates)
     return updated

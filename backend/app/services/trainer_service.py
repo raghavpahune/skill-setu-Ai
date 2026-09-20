@@ -174,15 +174,12 @@ def compute_institute_faculty_scorecard(
         or (institute_name and c.get("institute") and c["institute"].strip().lower() == institute_name.strip().lower())
         or (clean_id in (c.get("institute") or "").lower())
     ]
-    if not inst_courses and all_courses:
-        inst_courses = [all_courses[0]]
-
-    resolved_name = institute_name or (inst_courses[0].get("institute") if inst_courses else "State Technical Institute")
-    resolved_district = district or (inst_courses[0].get("district") if inst_courses else "Maharashtra")
-
     trainers = _get_trainers(institute_id=clean_id, is_demo=is_demo)
     if not trainers and (is_demo_mode or is_demo):
         trainers = [t for t in _cache.get("institution_trainers", []) if t.get("institute_id", "").lower() == clean_id.lower()]
+
+    resolved_name = institute_name or (inst_courses[0].get("institute") if inst_courses else (trainers[0].get("institute_name") if trainers else "State Technical Institute"))
+    resolved_district = district or (inst_courses[0].get("district") if inst_courses else (trainers[0].get("district") if trainers else "Maharashtra"))
 
     course_capacities = [compute_course_trainer_capacity(c, trainers) for c in inst_courses]
 
@@ -266,7 +263,7 @@ def compute_statewide_trainer_analytics(
         "COMPLETED": len([n for n in nominations if n.get("status") == "COMPLETED"]),
         "REJECTED": len([n for n in nominations if n.get("status") == "REJECTED"]),
     }
-    total_stipend_sanctioned_inr = sum(n.get("stipend_grant_inr", 0) for n in nominations if n.get("status") in ("SANCTIONED", "IN_PROGRESS", "COMPLETED"))
+    total_stipend_sanctioned_inr = sum(n.get("stipend_grant_inr") or n.get("sanction_amount_inr") or n.get("budget_inr") or 0 for n in nominations if n.get("status") in ("SANCTIONED", "IN_PROGRESS", "COMPLETED"))
 
     district_groups: dict[str, list[dict[str, Any]]] = {}
     for t in trainers:

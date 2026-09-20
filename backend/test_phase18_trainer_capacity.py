@@ -160,3 +160,21 @@ def test_faculty_nomination_lifecycle_and_sanction():
     assert trainer_resp.status_code == 200
     trainer_data = trainer_resp.json()
     assert "NPTEL Certified AI Master Trainer" in trainer_data["certifications"]
+
+
+def test_list_faculty_nominations_route_resolves():
+    headers_inst = _get_headers("INSTITUTE", user_id="usr-institute-001", email="institute@skillsetu.gov.in", org_id="inst-coep")
+    resp = client.get("/api/trainers/nominations?is_demo=true", headers=headers_inst)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "nominations" in data
+    assert isinstance(data["nominations"], list)
+
+    resp_list = client.get("/api/trainers/nominations/list?is_demo=true", headers=headers_inst)
+    assert resp_list.status_code == 200
+    assert "nominations" in resp_list.json()
+
+    headers_employer = _get_headers("EMPLOYER", user_id="usr-employer-001", email="employer@skillsetu.gov.in")
+    resp_emp = client.get("/api/trainers?is_demo=true", headers=headers_employer)
+    assert resp_emp.status_code == 403
+

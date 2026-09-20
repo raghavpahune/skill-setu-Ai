@@ -1845,8 +1845,12 @@ def save_institution_trainer_record(trainer_data: dict[str, Any]) -> dict[str, A
     trainer_data.setdefault("data_provenance", "INSTITUTE_AUTHORITATIVE")
     trainer_data.setdefault("is_demo", False)
 
-    from app.repositories.supabase_repository import create_institution_trainer
-    saved = create_institution_trainer(trainer_data)
+    saved = {}
+    try:
+        from app.repositories.supabase_repository import create_institution_trainer
+        saved = create_institution_trainer(trainer_data)
+    except Exception:
+        pass
     merged = {**trainer_data, **saved}
 
     records = _cache.setdefault("institution_trainers", [])
@@ -1903,8 +1907,12 @@ def save_faculty_nomination_record(nomination_data: dict[str, Any]) -> dict[str,
     nomination_data.setdefault("updated_at", now_iso)
     nomination_data.setdefault("is_demo", False)
 
-    from app.repositories.supabase_repository import create_faculty_nomination
-    saved = create_faculty_nomination(nomination_data)
+    saved = {}
+    try:
+        from app.repositories.supabase_repository import create_faculty_nomination
+        saved = create_faculty_nomination(nomination_data)
+    except Exception:
+        pass
     merged = {**nomination_data, **saved}
 
     records = _cache.setdefault("faculty_upskilling_nominations", [])

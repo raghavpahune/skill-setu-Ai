@@ -506,7 +506,9 @@ export default function GovernmentDashboard() {
       api.getStatewideRoiAnalytics(),
       api.getDistrictRoiAnalytics(),
       api.getInstituteAuditNotices(),
-    ]).then(([jobsRes, gapsRes, sigRes, fcRes, recRes, demRes, metRes, oppsRes, accredRes, stateRoiRes, distRoiRes, auditNoticesRes]) => {
+      api.getStatewideTrainerAnalytics(),
+      api.getFacultyNominations(),
+    ]).then(([jobsRes, gapsRes, sigRes, fcRes, recRes, demRes, metRes, oppsRes, accredRes, stateRoiRes, distRoiRes, auditNoticesRes, trainersAnalyticsRes, facultyNomsRes]) => {
       if (jobsRes.status === 'fulfilled') {
         const jobsArr = extractArray(jobsRes.value, ['jobs', 'data']);
         if (jobsArr.length > 0) {
@@ -2052,11 +2054,11 @@ export default function GovernmentDashboard() {
                       </td>
                       <td className="py-2.5 px-3 font-medium">{nom.trainer_name}</td>
                       <td className="py-2.5 px-3">
-                        <div className="font-medium text-slate-900 dark:text-white">{nom.program_title}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{nom.program_code}</div>
+                        <div className="font-medium text-slate-900 dark:text-white">{nom.program_title || nom.program_name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{nom.program_code || nom.domain}</div>
                       </td>
-                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{nom.partner_agency}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold">₹{(nom.budget_inr || 25000).toLocaleString('en-IN')}</td>
+                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{nom.partner_agency || nom.certifying_body}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold">₹{(nom.budget_inr || nom.stipend_grant_inr || 25000).toLocaleString('en-IN')}</td>
                       <td className="py-2.5 px-3">
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
                           nom.status === 'SANCTIONED'
