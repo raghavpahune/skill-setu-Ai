@@ -43,6 +43,7 @@ class AuditNoticeUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern="^(ISSUED|IN_REMEDIATION|RESOLVED|ESCALATED)$")
     mandated_action: Optional[str] = Field(None, max_length=2000)
     deadline_date: Optional[str] = None
+    remediation_notes: Optional[str] = Field(None, max_length=2000)
 
 
 @router.get("/accreditation/institutes")
@@ -72,8 +73,8 @@ async def list_accredited_institutes(
                 district=district,
                 tier=tier,
                 is_demo=is_demo,
-                limit=limit,
-                offset=offset,
+                limit=None,
+                offset=0,
             ) or []
         except Exception as e:
             logger.warning("[AccreditationRouter] Repo query fallback: %s", e)
@@ -236,14 +237,14 @@ async def list_institute_audit_notices_endpoint(
         all_cached = _cache.get("institution_audit_notices", [])
         notices = [
             n for n in all_cached
-            if n.get("institute_id", "").lower() == institute_id.lower()
+            if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
             and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
             and (not severity or (n.get("severity") or "").upper() == severity.upper())
         ]
     else:
         try:
             notices = list_institution_audit_notices(
-                institute_id=institute_id,
+                institute_id=None if institute_id.lower() in ("all", "*") else institute_id,
                 status=status_filter,
                 severity=severity,
                 is_demo=is_demo,
@@ -254,7 +255,7 @@ async def list_institute_audit_notices_endpoint(
             all_cached = _cache.get("institution_audit_notices", [])
             notices = [
                 n for n in all_cached
-                if n.get("institute_id", "").lower() == institute_id.lower()
+                if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
                 and (is_demo is None or n.get("is_demo") == is_demo)
                 and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
                 and (not severity or (n.get("severity") or "").upper() == severity.upper())
@@ -350,6 +351,8 @@ async def update_audit_notice_endpoint(
         updates["mandated_action"] = data.mandated_action.strip()
     if data.deadline_date is not None:
         updates["deadline_date"] = data.deadline_date
+    if data.remediation_notes is not None:
+        updates["remediation_notes"] = data.remediation_notes.strip()
 
     try:
         updated = update_institution_audit_notice_record(notice_id, updates)

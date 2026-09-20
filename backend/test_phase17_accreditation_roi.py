@@ -71,6 +71,7 @@ def student_headers():
 def test_accreditation_tier_boundaries():
     assert determine_accreditation_tier(88.5, 80.0, 25) == "TIER_1_EXCELLENCE"
     assert determine_accreditation_tier(85.0, 75.0, 15) == "TIER_1_EXCELLENCE"
+    assert determine_accreditation_tier(88.0, 74.9, 20) == "TIER_2_ACCREDITED"
     assert determine_accreditation_tier(84.9, 75.0, 15) == "TIER_2_ACCREDITED"
     assert determine_accreditation_tier(70.0, 65.0, 12) == "TIER_2_ACCREDITED"
     assert determine_accreditation_tier(69.9, 65.0, 12) == "TIER_3_PROVISIONAL"
@@ -195,6 +196,18 @@ def test_list_accredited_institutes(client):
     assert "accreditations" in data
     assert len(data["accreditations"]) > 0
 
+    res_p1 = client.get("/api/accreditation/institutes?is_demo=true&limit=2&offset=0")
+    assert res_p1.status_code == 200
+    p1_data = res_p1.json()
+    assert len(p1_data["accreditations"]) == 2
+
+    res_p2 = client.get("/api/accreditation/institutes?is_demo=true&limit=2&offset=2")
+    assert res_p2.status_code == 200
+    p2_data = res_p2.json()
+    p1_ids = [a["institute_id"] for a in p1_data["accreditations"]]
+    p2_ids = [a["institute_id"] for a in p2_data["accreditations"]]
+    assert not any(i in p1_ids for i in p2_ids)
+
 
 def test_get_institute_scorecard_endpoint(client):
     res = client.get("/api/accreditation/institutes/inst-coep?is_demo=true")
@@ -243,9 +256,14 @@ def test_audit_notice_lifecycle_and_rbac(client, gov_headers, coep_headers, vjti
     view_stu = client.get("/api/accreditation/institutes/inst-coep/notices", headers=student_headers)
     assert view_stu.status_code == 403
 
-    patch_inst = client.patch(f"/api/accreditation/notices/{notice_id}", json={"status": "IN_REMEDIATION"}, headers=coep_headers)
+    patch_inst = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"status": "IN_REMEDIATION", "remediation_notes": "Procured 5 new CNC simulation benches and scheduled faculty training."},
+        headers=coep_headers,
+    )
     assert patch_inst.status_code == 200
     assert patch_inst.json()["audit_notice"]["status"] == "IN_REMEDIATION"
+    assert patch_inst.json()["audit_notice"]["remediation_notes"] == "Procured 5 new CNC simulation benches and scheduled faculty training."
 
     patch_inst_invalid = client.patch(f"/api/accreditation/notices/{notice_id}", json={"status": "RESOLVED"}, headers=coep_headers)
     assert patch_inst_invalid.status_code == 403

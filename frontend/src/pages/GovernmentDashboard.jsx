@@ -289,7 +289,8 @@ export default function GovernmentDashboard() {
   const [evaluatingInstId, setEvaluatingInstId] = useState(null);
   const [auditForm, setAuditForm] = useState({
     institute_id: '',
-    severity: 'MAJOR',
+    notice_type: 'PERFORMANCE_WARNING',
+    severity: 'HIGH',
     title: '',
     description: '',
     findings: '',
@@ -362,16 +363,16 @@ export default function GovernmentDashboard() {
     }
     setSubmittingAudit(true);
     try {
-      const findingsList = auditForm.findings
-        ? auditForm.findings.split('\n').map((f) => f.trim()).filter(Boolean)
-        : [];
-      const res = await api.createInstituteAuditNotice({
-        institute_id: auditForm.institute_id,
-        severity: auditForm.severity,
+      const findingsText = auditForm.findings?.trim() || '';
+      const deadlineDays = Number(auditForm.remediation_deadline_days) || 30;
+      const deadlineDate = new Date(Date.now() + deadlineDays * 86400000).toISOString().split('T')[0];
+      const res = await api.createInstituteAuditNotice(auditForm.institute_id, {
+        notice_type: auditForm.notice_type || 'PERFORMANCE_WARNING',
+        severity: auditForm.severity || 'HIGH',
         title: auditForm.title.trim(),
         description: auditForm.description.trim() || `State institutional audit notice issued on ${new Date().toLocaleDateString()}.`,
-        findings: findingsList,
-        remediation_deadline_days: Number(auditForm.remediation_deadline_days) || 30,
+        mandated_action: findingsText || null,
+        deadline_date: deadlineDate,
       });
       if (res?.audit_notice) {
         setAuditNotices((prev) => [res.audit_notice, ...prev]);
@@ -379,7 +380,8 @@ export default function GovernmentDashboard() {
         setIsAuditModalOpen(false);
         setAuditForm({
           institute_id: '',
-          severity: 'MAJOR',
+          notice_type: 'PERFORMANCE_WARNING',
+          severity: 'HIGH',
           title: '',
           description: '',
           findings: '',
@@ -397,11 +399,13 @@ export default function GovernmentDashboard() {
     setEvaluatingInstId(instId);
     try {
       const res = await api.evaluateInstituteAccreditation(instId);
-      if (res?.scorecard) {
+      const scorecardData = res?.accreditation || res?.scorecard;
+      if (scorecardData) {
         setAccreditedInstitutes((prev) =>
-          prev.map((item) => (item.id === instId || item.institute_id === instId ? { ...item, ...res.scorecard } : item))
+          prev.map((item) => (item.id === instId || item.institute_id === instId ? { ...item, ...scorecardData } : item))
         );
-        setToastMessage({ type: 'success', text: `Accreditation score re-evaluated: ${res.scorecard.tier}` });
+        const tierLabel = scorecardData.accreditation_tier || scorecardData.tier || 'Evaluated';
+        setToastMessage({ type: 'success', text: `Accreditation score re-evaluated: ${tierLabel}` });
       }
     } catch (err) {
       setToastMessage({ type: 'error', text: err?.message || 'Failed to evaluate accreditation.' });
@@ -430,8 +434,9 @@ export default function GovernmentDashboard() {
       const res = await api.getSingleDistrictRoi(districtRoiOverride.districtId, {
         override_cost_per_seat: districtRoiOverride.costPerSeat,
       });
-      setSingleDistrictRoiResult(res);
-      setToastMessage({ type: 'success', text: `Simulated ROI for ${res?.district || districtRoiOverride.districtId}` });
+      const resultData = res?.district_roi || res;
+      setSingleDistrictRoiResult(resultData);
+      setToastMessage({ type: 'success', text: `Simulated ROI for ${resultData?.district || districtRoiOverride.districtId}` });
     } catch (err) {
       setToastMessage({ type: 'error', text: err?.message || 'Failed to calculate district ROI.' });
     } finally {
@@ -573,11 +578,11 @@ export default function GovernmentDashboard() {
       }
 
       if (stateRoiRes && stateRoiRes.status === 'fulfilled' && stateRoiRes.value) {
-        setStatewideRoi(stateRoiRes.value);
+        setStatewideRoi(stateRoiRes.value?.statewide_summary || stateRoiRes.value);
       }
 
       if (distRoiRes && distRoiRes.status === 'fulfilled') {
-        const arr = extractArray(distRoiRes.value, ['districts', 'data', 'items']);
+        const arr = distRoiRes.value?.roi_analytics?.district_leaderboard || extractArray(distRoiRes.value, ['districts', 'data', 'items']);
         setDistrictRoiList(arr);
       }
 
@@ -1492,7 +1497,7 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Tier 1 Excellence</div>
               <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {accreditedInstitutes.filter((i) => i.tier === 'TIER_1_EXCELLENCE').length}
+                {accreditedInstitutes.filter((i) => (i.accreditation_tier || i.tier) === 'TIER_1_EXCELLENCE').length}
               </div>
               <div className="text-[10px] text-emerald-600 font-medium">≥85 Score & Quorum</div>
             </div>
@@ -1617,7 +1622,7 @@ export default function GovernmentDashboard() {
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
                     {accreditedInstitutes
-                      .filter((inst) => selectedAccreditationTier === 'ALL' || inst.tier === selectedAccreditationTier)
+                      .filter((inst) => selectedAccreditationTier === 'ALL' || (inst.accreditation_tier || inst.tier) === selectedAccreditationTier)
                       .map((inst) => (
                         <tr key={inst.id || inst.institute_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="p-3 font-bold text-slate-900 dark:text-white">
@@ -1629,12 +1634,12 @@ export default function GovernmentDashboard() {
                           </td>
                           <td className="p-3">
                             <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              inst.tier === 'TIER_1_EXCELLENCE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300' :
-                              inst.tier === 'TIER_2_ACCREDITED' ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300' :
-                              inst.tier === 'TIER_3_PROVISIONAL' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300' :
+                              (inst.accreditation_tier || inst.tier) === 'TIER_1_EXCELLENCE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300' :
+                              (inst.accreditation_tier || inst.tier) === 'TIER_2_ACCREDITED' ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300' :
+                              (inst.accreditation_tier || inst.tier) === 'TIER_3_PROVISIONAL' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300' :
                               'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300'
                             }`}>
-                              {inst.tier?.replace(/_/g, ' ') || 'PROVISIONAL'}
+                              {(inst.accreditation_tier || inst.tier)?.replace(/_/g, ' ') || 'PROVISIONAL'}
                             </span>
                           </td>
                           <td className="p-3 font-black text-slate-900 dark:text-white text-sm">
@@ -1845,7 +1850,7 @@ export default function GovernmentDashboard() {
                             <option value="ESCALATED">ESCALATED</option>
                           </select>
                           <span className="text-[11px] text-slate-500 font-mono">
-                            Deadline: {notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days'}
+                            Deadline: {notice.deadline_date ? new Date(notice.deadline_date).toLocaleDateString() : (notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days')}
                           </span>
                         </div>
                       </div>
@@ -2174,6 +2179,22 @@ export default function GovernmentDashboard() {
                 </select>
               </div>
 
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Notice Type *
+                </label>
+                <select
+                  value={auditForm.notice_type}
+                  onChange={(e) => setAuditForm({ ...auditForm, notice_type: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="PERFORMANCE_WARNING">PERFORMANCE WARNING (Underplacement Risk)</option>
+                  <option value="CURRICULUM_DEFICIT">CURRICULUM DEFICIT (Modernization Gap)</option>
+                  <option value="COMPLIANCE_REVIEW">COMPLIANCE REVIEW (Statutory Audit)</option>
+                  <option value="EXCELLENCE_COMMENDATION">EXCELLENCE COMMENDATION (Excellence Standard)</option>
+                </select>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
@@ -2184,10 +2205,10 @@ export default function GovernmentDashboard() {
                     onChange={(e) => setAuditForm({ ...auditForm, severity: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   >
-                    <option value="CRITICAL">CRITICAL (Regulatory Action Risk)</option>
-                    <option value="MAJOR">MAJOR (Substantial Non-Compliance)</option>
-                    <option value="MODERATE">MODERATE (Curriculum/Facility Gap)</option>
-                    <option value="ADVISORY">ADVISORY (Improvement Recommended)</option>
+                    <option value="CRITICAL">CRITICAL (Immediate Action)</option>
+                    <option value="HIGH">HIGH (Regulatory Action Risk)</option>
+                    <option value="MEDIUM">MEDIUM (Curriculum / Facility Gap)</option>
+                    <option value="INFO">INFO (Advisory / Observation)</option>
                   </select>
                 </div>
                 <div>

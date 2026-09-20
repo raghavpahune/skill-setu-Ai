@@ -40,7 +40,7 @@ def determine_accreditation_tier(
             return "TIER_4_PERFORMANCE_WATCH"
         return "TIER_3_PROVISIONAL"
 
-    if composite_score >= 85.0 and placement_rate >= 60.0:
+    if composite_score >= 85.0 and placement_rate >= 75.0:
         return "TIER_1_EXCELLENCE"
     if composite_score >= 70.0:
         return "TIER_2_ACCREDITED"
@@ -333,10 +333,7 @@ def evaluate_and_persist_institute_accreditation(
         "updated_at": now_iso,
     }
 
-    try:
-        saved = save_institution_accreditation_record(record_data)
-    except Exception:
-        saved = record_data
+    saved = save_institution_accreditation_record(record_data)
 
     return {
         **scorecard,

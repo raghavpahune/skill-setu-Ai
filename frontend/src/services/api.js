@@ -656,7 +656,7 @@ export const api = {
   },
   getInstituteScorecard: (instituteId, params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/scorecard${query ? `?${query}` : ''}`);
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}${query ? `?${query}` : ''}`);
   },
   evaluateInstituteAccreditation: (instituteId, params = {}) => {
     const query = new URLSearchParams(params).toString();
@@ -664,33 +664,33 @@ export const api = {
       method: 'POST',
     });
   },
-  getInstituteAuditNotices: (params = {}) => {
+  getInstituteAuditNotices: (instituteId = 'all', params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return fetchJSON(`/accreditation/audit-notices${query ? `?${query}` : ''}`);
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/notices${query ? `?${query}` : ''}`);
   },
-  createInstituteAuditNotice: (data) => {
-    return fetchJSON('/accreditation/audit-notices', {
+  createInstituteAuditNotice: (instituteId, data) => {
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/notices`, {
       method: 'POST',
       body: data,
     });
   },
   updateInstituteAuditNotice: (noticeId, data) => {
-    return fetchJSON(`/accreditation/audit-notices/${encodeURIComponent(noticeId)}`, {
+    return fetchJSON(`/accreditation/notices/${encodeURIComponent(noticeId)}`, {
       method: 'PATCH',
       body: data,
     });
   },
   getDistrictRoiAnalytics: (params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return fetchJSON(`/accreditation/analytics/roi/districts${query ? `?${query}` : ''}`);
+    return fetchJSON(`/analytics/roi/districts${query ? `?${query}` : ''}`);
   },
   getSingleDistrictRoi: (districtId, params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return fetchJSON(`/accreditation/analytics/roi/district/${encodeURIComponent(districtId)}${query ? `?${query}` : ''}`);
+    return fetchJSON(`/analytics/roi/districts/${encodeURIComponent(districtId)}${query ? `?${query}` : ''}`);
   },
   getStatewideRoiAnalytics: (params = {}) => {
     const query = new URLSearchParams(params).toString();
-    return fetchJSON(`/accreditation/analytics/roi/statewide${query ? `?${query}` : ''}`);
+    return fetchJSON(`/analytics/roi/statewide${query ? `?${query}` : ''}`);
   },
 };
 

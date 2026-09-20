@@ -126,7 +126,7 @@ The audit reveals four genuinely missing capability pillars that define Phase 17
   3. *Employer Satisfaction & Graduate Readiness (20% weight):* Weighted average of `skill_adequacy_score` (converted to 0–100) and `practical_readiness` from verified employers.
   4. *Salary Performance & Wage Premium (20% weight):* Institute median/average salary benchmarked against district/industry baseline.
 - **Accreditation Tier Grading:**
-  - `TIER_1_EXCELLENCE`: Composite Score >= 85, Placement Rate >= 75%, Sample Quorum >= 15 outcomes.
+  - `TIER_1_EXCELLENCE`: Composite Score >= 85, Placement Rate >= 75%, Sample Quorum >= 10 outcomes.
   - `TIER_2_ACCREDITED`: Composite Score 70–84, Placement Rate >= 60%, Sample Quorum >= 10 outcomes.
   - `TIER_3_PROVISIONAL`: Composite Score 55–69 or Sample Quorum < 10 (flagged "Evidence Pending").
   - `TIER_4_PERFORMANCE_WATCH`: Composite Score < 55 or Placement Rate < 45%.

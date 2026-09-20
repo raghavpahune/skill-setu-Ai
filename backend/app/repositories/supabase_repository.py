@@ -2983,6 +2983,7 @@ VALID_INSTITUTION_AUDIT_NOTICE_COLUMNS = {
     "description",
     "mandated_action",
     "deadline_date",
+    "remediation_notes",
     "status",
     "issued_by",
     "is_demo",

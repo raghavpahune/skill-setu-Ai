@@ -1312,6 +1312,7 @@ CREATE TABLE IF NOT EXISTS institution_audit_notices (
     description TEXT NOT NULL,
     mandated_action TEXT,
     deadline_date DATE,
+    remediation_notes TEXT,
     status TEXT NOT NULL DEFAULT 'ISSUED' CHECK (status IN ('ISSUED', 'IN_REMEDIATION', 'RESOLVED', 'ESCALATED')),
     issued_by TEXT NOT NULL,
     is_demo BOOLEAN NOT NULL DEFAULT FALSE,

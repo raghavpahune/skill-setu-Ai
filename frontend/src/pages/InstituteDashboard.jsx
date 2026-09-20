@@ -181,10 +181,10 @@ export default function InstituteDashboard() {
     try {
       const [scRes, noticesRes] = await Promise.allSettled([
         api.getInstituteScorecard(instituteId),
-        api.getInstituteAuditNotices({ institute_id: instituteId }),
+        api.getInstituteAuditNotices(instituteId),
       ]);
-      if (scRes.status === 'fulfilled' && scRes.value?.scorecard) {
-        setScorecard(scRes.value.scorecard);
+      if (scRes.status === 'fulfilled' && (scRes.value?.scorecard || scRes.value?.accreditation)) {
+        setScorecard(scRes.value.scorecard || scRes.value.accreditation);
       }
       if (noticesRes.status === 'fulfilled' && Array.isArray(noticesRes.value?.audit_notices)) {
         setInstituteNotices(noticesRes.value.audit_notices);
@@ -1388,17 +1388,17 @@ export default function InstituteDashboard() {
                   <h2 className="text-xl font-black text-slate-900 dark:text-white">
                     Institutional Accreditation & Quality Scorecard
                   </h2>
-                  {scorecard?.tier && (
+                  {(scorecard?.accreditation_tier || scorecard?.tier) && (
                     <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider border ${
-                      scorecard.tier === 'TIER_1_EXCELLENCE'
+                      (scorecard.accreditation_tier || scorecard.tier) === 'TIER_1_EXCELLENCE'
                         ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-                        : scorecard.tier === 'TIER_2_ACCREDITED'
+                        : (scorecard.accreditation_tier || scorecard.tier) === 'TIER_2_ACCREDITED'
                         ? 'bg-teal-50 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-800'
-                        : scorecard.tier === 'TIER_3_PROVISIONAL'
+                        : (scorecard.accreditation_tier || scorecard.tier) === 'TIER_3_PROVISIONAL'
                         ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
                         : 'bg-rose-50 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800'
                     }`}>
-                      {scorecard.tier.replace(/_/g, ' ')}
+                      {(scorecard.accreditation_tier || scorecard.tier).replace(/_/g, ' ')}
                     </span>
                   )}
                 </div>
@@ -1414,8 +1414,9 @@ export default function InstituteDashboard() {
                     setScorecardLoading(true);
                     try {
                       const res = await api.evaluateInstituteAccreditation(instId);
-                      if (res?.scorecard) {
-                        setScorecard(res.scorecard);
+                      const sc = res?.accreditation || res?.scorecard;
+                      if (sc) {
+                        setScorecard(sc);
                         showToast('success', 'Accreditation re-evaluated successfully.');
                       }
                     } catch (err) {
@@ -1463,13 +1464,13 @@ export default function InstituteDashboard() {
                       Evidence Confidence & Sample
                     </div>
                     <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                      {scorecard.evidence_confidence_tier || 'PROVISIONAL'}
+                      {scorecard.evidence_confidence || scorecard.evidence_confidence_tier || 'PROVISIONAL'}
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                      {scorecard.sample_size_outcomes} verified placement outcomes
+                      {scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))} verified placement outcomes
                     </div>
                     <div className="mt-2 text-[10px] font-mono px-2 py-0.5 rounded inline-block bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                      {scorecard.sample_quorum_satisfied ? 'Quorum Met (>= 10)' : 'Sample Under Quorum (< 10)'}
+                      {(scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))) >= 10 ? 'Quorum Met (>= 10)' : 'Sample Under Quorum (< 10)'}
                     </div>
                   </div>
 
@@ -1489,22 +1490,22 @@ export default function InstituteDashboard() {
                   </div>
                 </div>
 
-                {!scorecard.sample_quorum_satisfied && (
+                {((scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))) < 10) && (
                   <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5">
                     <span className="text-base">⚠️</span>
                     <div>
                       <span className="font-bold">Statistical Sample Safeguard Active: </span>
-                      Institution currently has {scorecard.sample_size_outcomes} recorded placement outcomes (minimum 10 required for Tier 1 or Tier 2 eligibility). Tier assignment is capped at Tier 3 Provisional until additional verified placement records are submitted.
+                      Institution currently has {scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))} recorded placement outcomes (minimum 10 required for Tier 1 or Tier 2 eligibility). Tier assignment is capped at Tier 3 Provisional until additional verified placement records are submitted.
                     </div>
                   </div>
                 )}
 
-                {scorecard.dimensions?.placement_rate?.raw_metric_pct < 45 && (
+                {((scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 100)) < 45) && (
                   <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-xs flex items-start gap-2.5">
                     <span className="text-base">🚨</span>
                     <div>
                       <span className="font-bold">Critical Placement Threshold Rule Active: </span>
-                      Placement rate ({scorecard.dimensions.placement_rate.raw_metric_pct}%) is below the state regulatory 45% minimum. Institution placed on Tier 4 Performance Watch.
+                      Placement rate ({scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 0)}%) is below the state regulatory 45% minimum. Institution placed on Tier 4 Performance Watch.
                     </div>
                   </div>
                 )}
@@ -1520,16 +1521,16 @@ export default function InstituteDashboard() {
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">35% Weight</span>
                       </div>
                       <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                        {scorecard.dimensions?.placement_rate?.score?.toFixed(1) || '0.0'}
+                        {(scorecard.dimension_breakdown?.placement_employment_rate?.score ?? (scorecard.dimensions?.placement_rate?.score ?? 0)).toFixed(1)}
                         <span className="text-xs text-slate-400 font-normal"> / 35</span>
                       </div>
                       <div className="text-xs text-teal-600 dark:text-teal-400 font-bold mt-1">
-                        {scorecard.dimensions?.placement_rate?.raw_metric_pct || 0}% Verified Placement
+                        {scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 0)}% Verified Placement
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
                         <div
                           className="bg-teal-600 h-full rounded-full"
-                          style={{ width: `${Math.min(100, ((scorecard.dimensions?.placement_rate?.score || 0) / 35) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.placement_employment_rate?.score ?? (scorecard.dimensions?.placement_rate?.score ?? 0))) / 35) * 100)}%` }}
                         ></div>
                       </div>
                     </div>
@@ -1540,16 +1541,16 @@ export default function InstituteDashboard() {
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">25% Weight</span>
                       </div>
                       <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                        {scorecard.dimensions?.curriculum_modernity?.score?.toFixed(1) || '0.0'}
+                        {(scorecard.dimension_breakdown?.curriculum_modernity?.score ?? (scorecard.dimensions?.curriculum_modernity?.score ?? 0)).toFixed(1)}
                         <span className="text-xs text-slate-400 font-normal"> / 25</span>
                       </div>
                       <div className="text-xs text-indigo-600 dark:text-indigo-400 font-bold mt-1">
-                        {scorecard.dimensions?.curriculum_modernity?.raw_metric_pct || 0}% Modernity Index
+                        {scorecard.dimension_breakdown?.curriculum_modernity?.score != null ? Math.round(((scorecard.dimension_breakdown.curriculum_modernity.score) / 25) * 100) : (scorecard.dimensions?.curriculum_modernity?.raw_metric_pct || 0)}% Modernity Index
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
                         <div
                           className="bg-indigo-600 h-full rounded-full"
-                          style={{ width: `${Math.min(100, ((scorecard.dimensions?.curriculum_modernity?.score || 0) / 25) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.curriculum_modernity?.score ?? (scorecard.dimensions?.curriculum_modernity?.score ?? 0))) / 25) * 100)}%` }}
                         ></div>
                       </div>
                     </div>
@@ -1560,16 +1561,16 @@ export default function InstituteDashboard() {
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">20% Weight</span>
                       </div>
                       <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                        {scorecard.dimensions?.employer_readiness?.score?.toFixed(1) || '0.0'}
+                        {(scorecard.dimension_breakdown?.employer_readiness_feedback?.score ?? (scorecard.dimensions?.employer_readiness?.score ?? 0)).toFixed(1)}
                         <span className="text-xs text-slate-400 font-normal"> / 20</span>
                       </div>
                       <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-1">
-                        {scorecard.dimensions?.employer_readiness?.raw_rating_avg?.toFixed(1) || '0.0'} / 5.0 Star Rating
+                        {scorecard.dimension_breakdown?.employer_readiness_feedback?.feedback_responses_count != null ? `${scorecard.dimension_breakdown.employer_readiness_feedback.feedback_responses_count} Verified Responses` : `${((scorecard.dimensions?.employer_readiness?.raw_rating_avg || 0)).toFixed(1)} / 5.0 Star Rating`}
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
                         <div
                           className="bg-emerald-600 h-full rounded-full"
-                          style={{ width: `${Math.min(100, ((scorecard.dimensions?.employer_readiness?.score || 0) / 20) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.employer_readiness_feedback?.score ?? (scorecard.dimensions?.employer_readiness?.score ?? 0))) / 20) * 100)}%` }}
                         ></div>
                       </div>
                     </div>
@@ -1580,16 +1581,16 @@ export default function InstituteDashboard() {
                         <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">20% Weight</span>
                       </div>
                       <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
-                        {scorecard.dimensions?.wage_premium?.score?.toFixed(1) || '0.0'}
+                        {(scorecard.dimension_breakdown?.wage_premium?.score ?? (scorecard.dimensions?.wage_premium?.score ?? 0)).toFixed(1)}
                         <span className="text-xs text-slate-400 font-normal"> / 20</span>
                       </div>
                       <div className="text-xs text-blue-600 dark:text-blue-400 font-bold mt-1">
-                        ₹{((scorecard.dimensions?.wage_premium?.raw_salary_avg || 0) / 100000).toFixed(1)}L Avg Salary
+                        ₹{(((scorecard.dimension_breakdown?.wage_premium?.average_salary_inr ?? (scorecard.dimensions?.wage_premium?.raw_salary_avg ?? 0))) / 100000).toFixed(1)}L Avg Salary
                       </div>
                       <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
                         <div
                           className="bg-blue-600 h-full rounded-full"
-                          style={{ width: `${Math.min(100, ((scorecard.dimensions?.wage_premium?.score || 0) / 20) * 100)}%` }}
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.wage_premium?.score ?? (scorecard.dimensions?.wage_premium?.score ?? 0))) / 20) * 100)}%` }}
                         ></div>
                       </div>
                     </div>
@@ -1639,7 +1640,7 @@ export default function InstituteDashboard() {
                                 {notice.status}
                               </span>
                               <span className="text-[11px] text-slate-500 font-mono">
-                                Deadline: {notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days'}
+                                Deadline: {notice.deadline_date ? new Date(notice.deadline_date).toLocaleDateString() : (notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days')}
                               </span>
                             </div>
                           </div>
@@ -1648,7 +1649,14 @@ export default function InstituteDashboard() {
                             {notice.description}
                           </p>
 
-                          {Array.isArray(notice.findings) && notice.findings.length > 0 && (
+                          {notice.mandated_action && (
+                            <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                              <span className="font-bold block mb-1">State Mandated Action:</span>
+                              <p className="text-slate-600 dark:text-slate-400 whitespace-pre-line">{notice.mandated_action}</p>
+                            </div>
+                          )}
+
+                          {Array.isArray(notice.findings) && notice.findings.length > 0 && !notice.mandated_action && (
                             <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
                               <span className="font-bold block mb-1">State Audit Findings:</span>
                               <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400">
