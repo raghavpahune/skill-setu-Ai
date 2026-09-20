@@ -402,7 +402,7 @@ export default function GovernmentDashboard() {
       const scorecardData = res?.accreditation || res?.scorecard;
       if (scorecardData) {
         setAccreditedInstitutes((prev) =>
-          prev.map((item) => (item.id === instId || item.institute_id === instId ? { ...item, ...scorecardData } : item))
+          prev.map((item) => (item.institute_id === instId ? { ...item, ...scorecardData } : item))
         );
         const tierLabel = scorecardData.accreditation_tier || scorecardData.tier || 'Evaluated';
         setToastMessage({ type: 'success', text: `Accreditation score re-evaluated: ${tierLabel}` });
@@ -1666,11 +1666,11 @@ export default function GovernmentDashboard() {
                           </td>
                           <td className="p-3 text-right">
                             <button
-                              onClick={() => handleEvaluateInstitute(inst.id || inst.institute_id)}
-                              disabled={evaluatingInstId === (inst.id || inst.institute_id)}
+                              onClick={() => handleEvaluateInstitute(inst.institute_id)}
+                              disabled={evaluatingInstId === inst.institute_id}
                               className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
                             >
-                              {evaluatingInstId === (inst.id || inst.institute_id) ? 'Evaluating...' : 'Re-Evaluate'}
+                              {evaluatingInstId === inst.institute_id ? 'Evaluating...' : 'Re-Evaluate'}
                             </button>
                           </td>
                         </tr>

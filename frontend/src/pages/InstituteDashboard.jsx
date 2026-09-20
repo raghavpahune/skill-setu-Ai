@@ -1410,26 +1410,18 @@ export default function InstituteDashboard() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={async () => {
-                    const instId = user?.institute_id || user?.organization_id || 'inst_gp_pune';
-                    setScorecardLoading(true);
                     try {
-                      const res = await api.evaluateInstituteAccreditation(instId);
-                      const sc = res?.accreditation || res?.scorecard;
-                      if (sc) {
-                        setScorecard(sc);
-                        showToast('success', 'Accreditation re-evaluated successfully.');
-                      }
+                      await fetchScorecardData();
+                      showToast('success', 'Accreditation scorecard refreshed.');
                     } catch (err) {
-                      showToast('error', err?.message || 'Evaluation request failed.');
-                    } finally {
-                      setScorecardLoading(false);
+                      showToast('error', err?.message || 'Scorecard refresh failed.');
                     }
                   }}
                   disabled={scorecardLoading}
                   className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
                   <span>🔄</span>
-                  <span>{scorecardLoading ? 'Evaluating...' : 'Re-Evaluate Quality'}</span>
+                  <span>{scorecardLoading ? 'Refreshing...' : 'Refresh Scorecard'}</span>
                 </button>
               </div>
             </div>
@@ -1693,7 +1685,7 @@ export default function InstituteDashboard() {
               </div>
             ) : (
               <div className="py-8 text-center text-slate-400 text-xs">
-                No accreditation record found. Click &quot;Re-Evaluate Quality&quot; to compute scorecard.
+                No accreditation record found. Click &quot;Refresh Scorecard&quot; to compute scorecard.
               </div>
             )}
           </div>
@@ -1725,11 +1717,13 @@ export default function InstituteDashboard() {
                 e.preventDefault();
                 setSavingOutcome(true);
                 try {
+                  const isPlaced = ['PLACED', 'EMPLOYED'].includes(outcomeForm.status);
                   const payload = {
                     ...outcomeForm,
                     salary_annual_inr: ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(outcomeForm.status)
                       ? (Number(outcomeForm.salary_annual_inr) || null)
                       : null,
+                    retention_status: isPlaced ? (outcomeForm.retention_status || 'UNKNOWN') : 'UNKNOWN',
                   };
                   const res = await api.createPlacementOutcome(payload);
                   if (res?.placement_outcome) {
@@ -1829,7 +1823,15 @@ export default function InstituteDashboard() {
                   </label>
                   <select
                     value={outcomeForm.status}
-                    onChange={(e) => setOutcomeForm({ ...outcomeForm, status: e.target.value })}
+                    onChange={(e) => {
+                      const nextStatus = e.target.value;
+                      const isPlaced = ['PLACED', 'EMPLOYED'].includes(nextStatus);
+                      setOutcomeForm((prev) => ({
+                        ...prev,
+                        status: nextStatus,
+                        retention_status: isPlaced ? prev.retention_status : 'UNKNOWN',
+                      }));
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   >
                     <option value="TRAINING_COMPLETED">Training Completed</option>
@@ -1859,13 +1861,13 @@ export default function InstituteDashboard() {
                   Workforce Retention Status
                 </label>
                 <select
-                  value={outcomeForm.retention_status || 'UNKNOWN'}
+                  value={['PLACED', 'EMPLOYED'].includes(outcomeForm.status) ? (outcomeForm.retention_status || 'UNKNOWN') : 'UNKNOWN'}
                   onChange={(e) => setOutcomeForm({ ...outcomeForm, retention_status: e.target.value })}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                 >
                   <option value="UNKNOWN">UNKNOWN (Under Initial Tracking)</option>
-                  <option value="6_MONTH_RETAINED">6_MONTH_RETAINED (6 Months Retained)</option>
-                  <option value="12_MONTH_RETAINED">12_MONTH_RETAINED (12 Months Milestone Reached)</option>
+                  <option value="6_MONTH_RETAINED" disabled={!['PLACED', 'EMPLOYED'].includes(outcomeForm.status)}>6_MONTH_RETAINED (6 Months Retained)</option>
+                  <option value="12_MONTH_RETAINED" disabled={!['PLACED', 'EMPLOYED'].includes(outcomeForm.status)}>12_MONTH_RETAINED (12 Months Milestone Reached)</option>
                   <option value="ATTRITED">ATTRITED (Separated / Discontinued)</option>
                 </select>
               </div>
