@@ -183,14 +183,24 @@ export default function InstituteDashboard() {
         api.getInstituteScorecard(instituteId),
         api.getInstituteAuditNotices(instituteId),
       ]);
+      let scorecardSuccess = false;
       if (scRes.status === 'fulfilled' && (scRes.value?.scorecard || scRes.value?.accreditation)) {
         setScorecard(scRes.value.scorecard || scRes.value.accreditation);
+        scorecardSuccess = true;
       }
       if (noticesRes.status === 'fulfilled' && Array.isArray(noticesRes.value?.audit_notices)) {
         setInstituteNotices(noticesRes.value.audit_notices);
       }
+      if (!scorecardSuccess) {
+        const failureReason = scRes.status === 'rejected'
+          ? (scRes.reason?.message || 'Scorecard service unavailable.')
+          : 'Malformed scorecard data returned from server.';
+        return { success: false, error: failureReason };
+      }
+      return { success: true };
     } catch (err) {
       console.warn('Failed to load accreditation scorecard:', err);
+      return { success: false, error: err?.message || 'Failed to connect to scorecard service.' };
     } finally {
       setScorecardLoading(false);
     }
@@ -1410,11 +1420,11 @@ export default function InstituteDashboard() {
               <div className="flex items-center gap-3">
                 <button
                   onClick={async () => {
-                    try {
-                      await fetchScorecardData();
+                    const res = await fetchScorecardData();
+                    if (res?.success) {
                       showToast('success', 'Accreditation scorecard refreshed.');
-                    } catch (err) {
-                      showToast('error', err?.message || 'Scorecard refresh failed.');
+                    } else {
+                      showToast('error', res?.error || 'Scorecard refresh failed.');
                     }
                   }}
                   disabled={scorecardLoading}

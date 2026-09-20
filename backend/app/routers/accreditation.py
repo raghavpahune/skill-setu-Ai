@@ -58,42 +58,85 @@ async def list_accredited_institutes(
     if not _cache:
         init_db()
 
-    is_demo_mode = is_explicit_demo_mode(is_demo)
+    resolved_is_demo: bool = is_explicit_demo_mode(is_demo)
 
-    if is_demo_mode:
-        cached_acc = _cache.get("institution_accreditations", [])
-        accreditations = [
-            a for a in cached_acc
-            if (not district or district.lower() in (a.get("district") or "").lower())
-            and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
-        ]
+    if resolved_is_demo:
+        try:
+            accreditations = list_institution_accreditations(
+                district=district,
+                tier=tier,
+                is_demo=True,
+                limit=None,
+                offset=0,
+            ) or []
+            if not accreditations:
+                accreditations = [
+                    a for a in _cache.get("institution_accreditations", [])
+                    if (a.get("is_demo") is True or a.get("source") == "DEMO_SYNTHETIC" or a.get("is_demo") is None)
+                    and (not district or district.lower() in (a.get("district") or "").lower())
+                    and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
+                ]
+        except Exception as e:
+            logger.warning("[AccreditationRouter] Repo query fallback: %s", e)
+            accreditations = [
+                a for a in _cache.get("institution_accreditations", [])
+                if (a.get("is_demo") is True or a.get("source") == "DEMO_SYNTHETIC" or a.get("is_demo") is None)
+                and (not district or district.lower() in (a.get("district") or "").lower())
+                and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
+            ]
     else:
         try:
             accreditations = list_institution_accreditations(
                 district=district,
                 tier=tier,
-                is_demo=is_demo,
+                is_demo=False,
                 limit=None,
                 offset=0,
             ) or []
+            if not accreditations:
+                accreditations = [
+                    a for a in _cache.get("institution_accreditations", [])
+                    if a.get("is_demo") is False and a.get("source") != "DEMO_SYNTHETIC"
+                    and (not district or district.lower() in (a.get("district") or "").lower())
+                    and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
+                ]
         except Exception as e:
             logger.warning("[AccreditationRouter] Repo query fallback: %s", e)
             accreditations = [
                 a for a in _cache.get("institution_accreditations", [])
-                if (is_demo is None or a.get("is_demo") == is_demo)
+                if a.get("is_demo") is False and a.get("source") != "DEMO_SYNTHETIC"
                 and (not district or district.lower() in (a.get("district") or "").lower())
                 and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
             ]
 
     known_ids = {a.get("institute_id") for a in accreditations if a.get("institute_id")}
 
-    if is_demo_mode:
-        courses = _cache.get("courses", [])
+    if resolved_is_demo:
+        try:
+            courses = list_courses(is_demo=True) or []
+            if not courses:
+                courses = [
+                    c for c in _cache.get("courses", [])
+                    if c.get("is_demo") is True or c.get("source") == "DEMO_SYNTHETIC" or not c.get("source") or c.get("source") == "SEED_DATA"
+                ]
+        except Exception:
+            courses = [
+                c for c in _cache.get("courses", [])
+                if c.get("is_demo") is True or c.get("source") == "DEMO_SYNTHETIC" or not c.get("source") or c.get("source") == "SEED_DATA"
+            ]
     else:
         try:
-            courses = list_courses(is_demo=is_demo) or []
+            courses = list_courses(is_demo=False) or []
+            if not courses:
+                courses = [
+                    c for c in _cache.get("courses", [])
+                    if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
+                ]
         except Exception:
-            courses = [c for c in _cache.get("courses", []) if is_demo is None or c.get("is_demo") == is_demo]
+            courses = [
+                c for c in _cache.get("courses", [])
+                if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
+            ]
 
     seen_insts: dict[str, dict[str, str]] = {}
     for c in courses:
@@ -113,7 +156,7 @@ async def list_accredited_institutes(
             institute_id=inst_id,
             institute_name=meta["name"],
             district=meta["district"],
-            is_demo=is_demo,
+            is_demo=resolved_is_demo,
         )
         if tier and scorecard["accreditation_tier"] != tier.upper():
             continue
@@ -133,7 +176,7 @@ async def list_accredited_institutes(
             "placed_candidates": scorecard["dimension_breakdown"]["placement_employment_rate"]["placed_candidates"],
             "average_salary_inr": scorecard["dimension_breakdown"]["wage_premium"]["average_salary_inr"],
             "roi_multiplier": scorecard["roi_metrics"]["roi_multiplier"],
-            "is_demo": bool(is_demo),
+            "is_demo": resolved_is_demo,
             "data_provenance": "STATE_DETERMINISTIC_ACCREDITATION",
         })
 
@@ -231,32 +274,62 @@ async def list_institute_audit_notices_endpoint(
             detail="Forbidden: Unauthorized to inspect state audit directives.",
         )
 
-    is_demo_mode = is_explicit_demo_mode(is_demo)
+    user_demo = current_user.get("is_demo") if current_user else None
+    resolved_is_demo: bool = is_explicit_demo_mode(is_demo if is_demo is not None else user_demo)
 
-    if is_demo_mode:
-        all_cached = _cache.get("institution_audit_notices", [])
-        notices = [
-            n for n in all_cached
-            if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
-            and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
-            and (not severity or (n.get("severity") or "").upper() == severity.upper())
-        ]
-    else:
+    if resolved_is_demo:
         try:
             notices = list_institution_audit_notices(
                 institute_id=None if institute_id.lower() in ("all", "*") else institute_id,
                 status=status_filter,
                 severity=severity,
-                is_demo=is_demo,
+                is_demo=True,
                 limit=500,
             ) or []
+            if not notices:
+                all_cached = _cache.get("institution_audit_notices", [])
+                notices = [
+                    n for n in all_cached
+                    if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
+                    and (n.get("is_demo") is True or n.get("source") == "DEMO_SYNTHETIC" or n.get("is_demo") is None)
+                    and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
+                    and (not severity or (n.get("severity") or "").upper() == severity.upper())
+                ]
         except Exception as e:
             logger.warning("[AccreditationRouter] Notice list fallback: %s", e)
             all_cached = _cache.get("institution_audit_notices", [])
             notices = [
                 n for n in all_cached
                 if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
-                and (is_demo is None or n.get("is_demo") == is_demo)
+                and (n.get("is_demo") is True or n.get("source") == "DEMO_SYNTHETIC" or n.get("is_demo") is None)
+                and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
+                and (not severity or (n.get("severity") or "").upper() == severity.upper())
+            ]
+    else:
+        try:
+            notices = list_institution_audit_notices(
+                institute_id=None if institute_id.lower() in ("all", "*") else institute_id,
+                status=status_filter,
+                severity=severity,
+                is_demo=False,
+                limit=500,
+            ) or []
+            if not notices:
+                all_cached = _cache.get("institution_audit_notices", [])
+                notices = [
+                    n for n in all_cached
+                    if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
+                    and (n.get("is_demo") is False and n.get("source") != "DEMO_SYNTHETIC")
+                    and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
+                    and (not severity or (n.get("severity") or "").upper() == severity.upper())
+                ]
+        except Exception as e:
+            logger.warning("[AccreditationRouter] Notice list fallback: %s", e)
+            all_cached = _cache.get("institution_audit_notices", [])
+            notices = [
+                n for n in all_cached
+                if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
+                and (n.get("is_demo") is False and n.get("source") != "DEMO_SYNTHETIC")
                 and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
                 and (not severity or (n.get("severity") or "").upper() == severity.upper())
             ]
@@ -275,7 +348,8 @@ async def create_institute_audit_notice_endpoint(
     data: AuditNoticeCreate,
     current_user: dict = Depends(require_roles(["GOVERNMENT", "ADMIN"])),
 ):
-    scorecard = compute_institute_scorecard(institute_id=institute_id)
+    is_demo_mode = is_explicit_demo_mode(current_user.get("is_demo"))
+    scorecard = compute_institute_scorecard(institute_id=institute_id, is_demo=is_demo_mode)
     institute_name = scorecard.get("institute_name") or institute_id
     district = scorecard.get("district") or "Maharashtra"
 
@@ -296,7 +370,7 @@ async def create_institute_audit_notice_endpoint(
         "deadline_date": data.deadline_date,
         "status": "ISSUED",
         "issued_by": issued_by,
-        "is_demo": bool(current_user.get("is_demo")),
+        "is_demo": is_demo_mode,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
@@ -333,6 +407,11 @@ async def update_audit_notice_endpoint(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: You cannot modify audit notices issued to another institution.",
             )
+        if data.mandated_action is not None or data.deadline_date is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Institutions cannot modify government-mandated actions or deadlines.",
+            )
         if data.status and data.status.upper() not in ("IN_REMEDIATION", "ISSUED"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -347,12 +426,14 @@ async def update_audit_notice_endpoint(
     updates: dict[str, Any] = {}
     if data.status:
         updates["status"] = data.status.upper()
-    if data.mandated_action is not None:
-        updates["mandated_action"] = data.mandated_action.strip()
-    if data.deadline_date is not None:
-        updates["deadline_date"] = data.deadline_date
     if data.remediation_notes is not None:
         updates["remediation_notes"] = data.remediation_notes.strip()
+
+    if user_role in ("GOVERNMENT", "ADMIN"):
+        if data.mandated_action is not None:
+            updates["mandated_action"] = data.mandated_action.strip()
+        if data.deadline_date is not None:
+            updates["deadline_date"] = data.deadline_date
 
     try:
         updated = update_institution_audit_notice_record(notice_id, updates)

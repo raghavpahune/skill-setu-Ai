@@ -96,17 +96,33 @@ def compute_institute_scorecard(
         init_db()
 
     clean_id = institute_id.strip()
-    is_demo_mode = is_explicit_demo_mode(is_demo)
+    resolved_is_demo: bool = is_explicit_demo_mode(is_demo)
 
-    if is_demo_mode:
-        all_courses = _cache.get("courses", [])
-    else:
+    if resolved_is_demo:
         try:
-            all_courses = list_courses(is_demo=is_demo) or []
+            all_courses = list_courses(is_demo=True) or []
+            if not all_courses:
+                all_courses = [
+                    c for c in _cache.get("courses", [])
+                    if c.get("is_demo") is True or c.get("source") == "DEMO_SYNTHETIC" or not c.get("source") or c.get("source") == "SEED_DATA"
+                ]
         except Exception:
             all_courses = [
                 c for c in _cache.get("courses", [])
-                if is_demo is None or c.get("is_demo") == is_demo
+                if c.get("is_demo") is True or c.get("source") == "DEMO_SYNTHETIC" or not c.get("source") or c.get("source") == "SEED_DATA"
+            ]
+    else:
+        try:
+            all_courses = list_courses(is_demo=False) or []
+            if not all_courses:
+                all_courses = [
+                    c for c in _cache.get("courses", [])
+                    if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
+                ]
+        except Exception:
+            all_courses = [
+                c for c in _cache.get("courses", [])
+                if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
             ]
 
     matched_courses = [
@@ -130,23 +146,52 @@ def compute_institute_scorecard(
 
     course_ids = {c["id"] for c in matched_courses if c.get("id")}
 
-    if is_demo_mode:
-        all_outcomes = _cache.get("placement_outcomes", [])
-        outcomes = [
-            o for o in all_outcomes
-            if (o.get("institute_id") and o["institute_id"].lower() == clean_id.lower())
-            or (o.get("course_id") in course_ids)
-        ]
-    else:
+    if resolved_is_demo:
         try:
-            outcomes = list_placement_outcomes(institute_id=clean_id, is_demo=is_demo, limit=10000) or []
+            outcomes = list_placement_outcomes(institute_id=clean_id, is_demo=True, limit=10000) or []
             if not outcomes and course_ids:
-                all_outcomes = list_placement_outcomes(is_demo=is_demo, limit=10000) or []
+                all_outcomes = list_placement_outcomes(is_demo=True, limit=10000) or []
                 outcomes = [o for o in all_outcomes if o.get("course_id") in course_ids]
+            if not outcomes:
+                all_outcomes = [
+                    o for o in _cache.get("placement_outcomes", [])
+                    if o.get("is_demo") is True or o.get("source") == "DEMO_SYNTHETIC" or o.get("is_demo") is None
+                ]
+                outcomes = [
+                    o for o in all_outcomes
+                    if (o.get("institute_id") and o["institute_id"].lower() == clean_id.lower())
+                    or (o.get("course_id") in course_ids)
+                ]
         except Exception:
             all_outcomes = [
                 o for o in _cache.get("placement_outcomes", [])
-                if is_demo is None or o.get("is_demo") == is_demo
+                if o.get("is_demo") is True or o.get("source") == "DEMO_SYNTHETIC" or o.get("is_demo") is None
+            ]
+            outcomes = [
+                o for o in all_outcomes
+                if (o.get("institute_id") and o["institute_id"].lower() == clean_id.lower())
+                or (o.get("course_id") in course_ids)
+            ]
+    else:
+        try:
+            outcomes = list_placement_outcomes(institute_id=clean_id, is_demo=False, limit=10000) or []
+            if not outcomes and course_ids:
+                all_outcomes = list_placement_outcomes(is_demo=False, limit=10000) or []
+                outcomes = [o for o in all_outcomes if o.get("course_id") in course_ids]
+            if not outcomes:
+                all_outcomes = [
+                    o for o in _cache.get("placement_outcomes", [])
+                    if o.get("is_demo") is False and o.get("source") != "DEMO_SYNTHETIC"
+                ]
+                outcomes = [
+                    o for o in all_outcomes
+                    if (o.get("institute_id") and o["institute_id"].lower() == clean_id.lower())
+                    or (o.get("course_id") in course_ids)
+                ]
+        except Exception:
+            all_outcomes = [
+                o for o in _cache.get("placement_outcomes", [])
+                if o.get("is_demo") is False and o.get("source") != "DEMO_SYNTHETIC"
             ]
             outcomes = [
                 o for o in all_outcomes
@@ -158,8 +203,16 @@ def compute_institute_scorecard(
     placed_statuses = {"PLACED", "EMPLOYED", "EMPLOYER_FEEDBACK_PENDING", "FEEDBACK_RECEIVED"}
     employed_statuses = {"EMPLOYED", "FEEDBACK_RECEIVED"}
 
-    placed_outcomes = [o for o in outcomes if o.get("status") in placed_statuses]
-    employed_outcomes = [o for o in outcomes if o.get("status") in employed_statuses]
+    placed_outcomes = [
+        o for o in outcomes
+        if o.get("status") in placed_statuses
+        and (o.get("verification_status") or "").upper() == "VERIFIED"
+    ]
+    employed_outcomes = [
+        o for o in outcomes
+        if o.get("status") in employed_statuses
+        and (o.get("verification_status") or "").upper() == "VERIFIED"
+    ]
 
     placed_count = len(placed_outcomes)
     employed_count = len(employed_outcomes)
@@ -182,7 +235,7 @@ def compute_institute_scorecard(
         wage_subscore = 0.0
 
     try:
-        audited = audit_all_courses(is_demo=is_demo) or []
+        audited = audit_all_courses(is_demo=resolved_is_demo) or []
         inst_audited = [
             a for a in audited
             if a.get("course_id") in course_ids
@@ -201,18 +254,40 @@ def compute_institute_scorecard(
         total_equipment_grants = 0
 
     outcome_ids = {o["id"] for o in outcomes if o.get("id")}
-    if is_demo_mode:
-        all_feedback = _cache.get("placement_employer_feedback", [])
-        inst_feedback = [f for f in all_feedback if f.get("placement_outcome_id") in outcome_ids]
-    else:
+    if resolved_is_demo:
         try:
-            all_feedback = list_placement_employer_feedback(is_demo=is_demo, limit=10000) or []
+            all_feedback = list_placement_employer_feedback(is_demo=True, limit=10000) or []
             inst_feedback = [f for f in all_feedback if f.get("placement_outcome_id") in outcome_ids]
+            if not inst_feedback:
+                inst_feedback = [
+                    f for f in _cache.get("placement_employer_feedback", [])
+                    if f.get("placement_outcome_id") in outcome_ids and (f.get("is_demo") is True or f.get("source") == "DEMO_SYNTHETIC" or f.get("is_demo") is None)
+                ]
         except Exception:
             inst_feedback = [
                 f for f in _cache.get("placement_employer_feedback", [])
-                if f.get("placement_outcome_id") in outcome_ids and (is_demo is None or f.get("is_demo") == is_demo)
+                if f.get("placement_outcome_id") in outcome_ids and (f.get("is_demo") is True or f.get("source") == "DEMO_SYNTHETIC" or f.get("is_demo") is None)
             ]
+    else:
+        try:
+            all_feedback = list_placement_employer_feedback(is_demo=False, limit=10000) or []
+            inst_feedback = [f for f in all_feedback if f.get("placement_outcome_id") in outcome_ids]
+            if not inst_feedback:
+                inst_feedback = [
+                    f for f in _cache.get("placement_employer_feedback", [])
+                    if f.get("placement_outcome_id") in outcome_ids and f.get("is_demo") is False and f.get("source") != "DEMO_SYNTHETIC"
+                ]
+        except Exception:
+            inst_feedback = [
+                f for f in _cache.get("placement_employer_feedback", [])
+                if f.get("placement_outcome_id") in outcome_ids and f.get("is_demo") is False and f.get("source") != "DEMO_SYNTHETIC"
+            ]
+
+    inst_feedback = [
+        f for f in inst_feedback
+        if f.get("is_verified_employer") is True
+        or f.get("data_provenance") == "EMPLOYER_VERIFIED"
+    ]
 
     readiness_map = {"PRODUCTION_READY": 100.0, "NEEDS_SUPERVISION": 65.0, "UNPREPARED": 30.0}
     if inst_feedback:
@@ -246,10 +321,10 @@ def compute_institute_scorecard(
         capital_grants_inr=total_equipment_grants,
     )
 
-    retained_6m = sum(1 for o in outcomes if o.get("retention_status") in ("6_MONTH_RETAINED", "12_MONTH_RETAINED"))
-    retained_12m = sum(1 for o in outcomes if o.get("retention_status") == "12_MONTH_RETAINED")
-    attrited = sum(1 for o in outcomes if o.get("retention_status") == "ATTRITED")
-    retention_rate_6m = round((retained_6m / max(1, placed_count)) * 100, 1) if placed_count > 0 else 0.0
+    retained_6m = sum(1 for o in placed_outcomes if o.get("retention_status") in ("6_MONTH_RETAINED", "12_MONTH_RETAINED"))
+    retained_12m = sum(1 for o in placed_outcomes if o.get("retention_status") == "12_MONTH_RETAINED")
+    attrited = sum(1 for o in placed_outcomes if o.get("retention_status") == "ATTRITED")
+    retention_rate_6m = min(100.0, round((retained_6m / max(1, placed_count)) * 100, 1)) if placed_count > 0 else 0.0
 
     return {
         "institute_id": clean_id,
@@ -303,7 +378,8 @@ def evaluate_and_persist_institute_accreditation(
     evaluator_user_id: str | None = None,
     is_demo: bool | None = None,
 ) -> dict[str, Any]:
-    scorecard = compute_institute_scorecard(institute_id=institute_id, is_demo=is_demo)
+    resolved_is_demo: bool = is_explicit_demo_mode(is_demo)
+    scorecard = compute_institute_scorecard(institute_id=institute_id, is_demo=resolved_is_demo)
 
     now_iso = datetime.now(timezone.utc).isoformat()
     record_id = f"acc-{uuid.uuid4().hex[:12]}"
@@ -327,7 +403,7 @@ def evaluate_and_persist_institute_accreditation(
         "roi_multiplier": scorecard["roi_metrics"]["roi_multiplier"],
         "valid_until": valid_until,
         "evaluator_user_id": evaluator_user_id,
-        "is_demo": bool(is_demo),
+        "is_demo": resolved_is_demo,
         "data_provenance": "STATE_DETERMINISTIC_ACCREDITATION",
         "created_at": now_iso,
         "updated_at": now_iso,
@@ -349,30 +425,63 @@ def compute_district_roi_analytics(
     if not _cache:
         init_db()
 
-    is_demo_mode = is_explicit_demo_mode(is_demo)
+    resolved_is_demo: bool = is_explicit_demo_mode(is_demo)
 
-    if is_demo_mode:
-        outcomes = _cache.get("placement_outcomes", [])
-        courses = _cache.get("courses", [])
+    if resolved_is_demo:
+        try:
+            outcomes = list_placement_outcomes(is_demo=True, limit=10000) or []
+        except Exception:
+            outcomes = []
+        cached_outcomes = [
+            o for o in _cache.get("placement_outcomes", [])
+            if o.get("is_demo") is True or o.get("source") == "DEMO_SYNTHETIC" or o.get("is_demo") is None
+        ]
+        seen_outcome_ids = {o["id"] for o in outcomes if o.get("id")}
+        for co in cached_outcomes:
+            if co.get("id") not in seen_outcome_ids:
+                outcomes.append(co)
+
+        try:
+            courses = list_courses(is_demo=True) or []
+        except Exception:
+            courses = []
+        cached_courses = [
+            c for c in _cache.get("courses", [])
+            if c.get("is_demo") is True or c.get("source") == "DEMO_SYNTHETIC" or not c.get("source") or c.get("source") == "SEED_DATA"
+        ]
+        seen_course_ids = {c["id"] for c in courses if c.get("id")}
+        for cc in cached_courses:
+            if cc.get("id") not in seen_course_ids:
+                courses.append(cc)
     else:
         try:
-            outcomes = list_placement_outcomes(is_demo=is_demo, limit=10000) or []
+            outcomes = list_placement_outcomes(is_demo=False, limit=10000) or []
         except Exception:
-            outcomes = [
-                o for o in _cache.get("placement_outcomes", [])
-                if is_demo is None or o.get("is_demo") == is_demo
-            ]
+            outcomes = []
+        cached_outcomes = [
+            o for o in _cache.get("placement_outcomes", [])
+            if o.get("is_demo") is False and o.get("source") != "DEMO_SYNTHETIC"
+        ]
+        seen_outcome_ids = {o["id"] for o in outcomes if o.get("id")}
+        for co in cached_outcomes:
+            if co.get("id") not in seen_outcome_ids:
+                outcomes.append(co)
 
         try:
-            courses = list_courses(is_demo=is_demo) or []
+            courses = list_courses(is_demo=False) or []
         except Exception:
-            courses = [
-                c for c in _cache.get("courses", [])
-                if is_demo is None or c.get("is_demo") == is_demo
-            ]
+            courses = []
+        cached_courses = [
+            c for c in _cache.get("courses", [])
+            if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
+        ]
+        seen_course_ids = {c["id"] for c in courses if c.get("id")}
+        for cc in cached_courses:
+            if cc.get("id") not in seen_course_ids:
+                courses.append(cc)
 
     try:
-        audited = audit_all_courses(is_demo=is_demo) or []
+        audited = audit_all_courses(is_demo=resolved_is_demo) or []
     except Exception:
         audited = []
 
@@ -402,10 +511,16 @@ def compute_district_roi_analytics(
         if len(d_outcomes) > total_students:
             total_students = len(d_outcomes)
 
-        placed_candidates = sum(1 for o in d_outcomes if o.get("status") in placed_statuses)
+        placed_candidates = sum(
+            1 for o in d_outcomes
+            if o.get("status") in placed_statuses
+            and (o.get("verification_status") or "").upper() == "VERIFIED"
+        )
         salaries = [
             o.get("salary_annual_inr") for o in d_outcomes
-            if o.get("status") in placed_statuses and o.get("salary_annual_inr") and o.get("salary_annual_inr") > 0
+            if o.get("status") in placed_statuses
+            and (o.get("verification_status") or "").upper() == "VERIFIED"
+            and o.get("salary_annual_inr") and o.get("salary_annual_inr") > 0
         ]
         avg_salary = round(sum(salaries) / len(salaries)) if salaries else 360000
 

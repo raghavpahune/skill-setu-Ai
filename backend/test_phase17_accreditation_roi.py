@@ -285,3 +285,323 @@ def test_district_and_statewide_roi_endpoints(client):
     res_state = client.get("/api/analytics/roi/statewide?is_demo=true")
     assert res_state.status_code == 200
     assert "statewide_summary" in res_state.json()
+
+
+def test_real_demo_isolation_accreditation_and_roi():
+    from app.db import _cache
+    inst_id = "inst-isolation-test"
+    course_real = {
+        "id": "cr-iso-real",
+        "institute_id": inst_id,
+        "institute": "Isolation Test Institute Real",
+        "district": "Nashik",
+        "is_demo": False,
+        "source": "INSTITUTE_SUBMITTED",
+        "enrolment_count": 30,
+    }
+    course_demo = {
+        "id": "cr-iso-demo",
+        "institute_id": inst_id,
+        "institute": "Isolation Test Institute Demo",
+        "district": "Nashik",
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+        "enrolment_count": 50,
+    }
+    outcome_real = {
+        "id": "po-iso-real",
+        "course_id": "cr-iso-real",
+        "institute_id": inst_id,
+        "district": "Nashik",
+        "status": "PLACED",
+        "verification_status": "VERIFIED",
+        "salary_annual_inr": 400000,
+        "is_demo": False,
+        "source": "INSTITUTE_SUBMITTED",
+    }
+    outcome_demo = {
+        "id": "po-iso-demo",
+        "course_id": "cr-iso-demo",
+        "institute_id": inst_id,
+        "district": "Nashik",
+        "status": "PLACED",
+        "verification_status": "VERIFIED",
+        "salary_annual_inr": 900000,
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+    }
+
+    _cache.setdefault("courses", []).extend([course_real, course_demo])
+    _cache.setdefault("placement_outcomes", []).extend([outcome_real, outcome_demo])
+
+    try:
+        scorecard_real = compute_institute_scorecard(inst_id, is_demo=False)
+        scorecard_demo = compute_institute_scorecard(inst_id, is_demo=True)
+        scorecard_default = compute_institute_scorecard(inst_id, is_demo=None)
+
+        assert scorecard_real["dimension_breakdown"]["placement_employment_rate"]["placed_candidates"] == 1
+        assert scorecard_real["dimension_breakdown"]["wage_premium"]["average_salary_inr"] == 400000
+
+        assert scorecard_demo["dimension_breakdown"]["placement_employment_rate"]["placed_candidates"] == 1
+        assert scorecard_demo["dimension_breakdown"]["wage_premium"]["average_salary_inr"] == 900000
+
+        assert scorecard_default["dimension_breakdown"]["wage_premium"]["average_salary_inr"] == 400000
+
+        roi_real = compute_district_roi_analytics("Nashik", is_demo=False)
+        roi_demo = compute_district_roi_analytics("Nashik", is_demo=True)
+
+        nashik_real = next((d for d in roi_real["district_leaderboard"] if d["district"] == "Nashik"), None)
+        nashik_demo = next((d for d in roi_demo["district_leaderboard"] if d["district"] == "Nashik"), None)
+
+        assert nashik_real is not None
+        assert nashik_demo is not None
+        assert nashik_real["placed_candidates"] >= 1
+        assert nashik_demo["placed_candidates"] >= 1
+    finally:
+        _cache["courses"] = [c for c in _cache["courses"] if c.get("id") not in ("cr-iso-real", "cr-iso-demo")]
+        _cache["placement_outcomes"] = [o for o in _cache["placement_outcomes"] if o.get("id") not in ("po-iso-real", "po-iso-demo")]
+
+
+def test_unverified_placement_outcomes_excluded_from_accreditation():
+    from app.db import _cache
+    inst_id = "inst-verif-test"
+    course = {
+        "id": "cr-verif-test",
+        "institute_id": inst_id,
+        "institute": "Verification Test Institute",
+        "district": "Pune",
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+        "enrolment_count": 20,
+    }
+    po_verified = {
+        "id": "po-vt-verified",
+        "course_id": "cr-verif-test",
+        "institute_id": inst_id,
+        "district": "Pune",
+        "status": "PLACED",
+        "verification_status": "VERIFIED",
+        "salary_annual_inr": 500000,
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+    }
+    po_pending = {
+        "id": "po-vt-pending",
+        "course_id": "cr-verif-test",
+        "institute_id": inst_id,
+        "district": "Pune",
+        "status": "PLACED",
+        "verification_status": "PENDING",
+        "salary_annual_inr": 1000000,
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+    }
+    po_rejected = {
+        "id": "po-vt-rejected",
+        "course_id": "cr-verif-test",
+        "institute_id": inst_id,
+        "district": "Pune",
+        "status": "PLACED",
+        "verification_status": "REJECTED",
+        "salary_annual_inr": 1200000,
+        "is_demo": True,
+        "source": "DEMO_SYNTHETIC",
+    }
+    fb_verified_emp = {
+        "id": "fb-vt-ver-emp",
+        "placement_outcome_id": "po-vt-verified",
+        "skill_adequacy_score": 5,
+        "practical_readiness": "PRODUCTION_READY",
+        "is_verified_employer": True,
+        "data_provenance": "EMPLOYER_VERIFIED",
+        "is_demo": True,
+    }
+    fb_unverified_emp = {
+        "id": "fb-vt-unver-emp",
+        "placement_outcome_id": "po-vt-pending",
+        "skill_adequacy_score": 1,
+        "practical_readiness": "UNPREPARED",
+        "is_verified_employer": False,
+        "data_provenance": "UNVERIFIED_EMPLOYER",
+        "is_demo": True,
+    }
+
+    _cache.setdefault("courses", []).append(course)
+    _cache.setdefault("placement_outcomes", []).extend([po_verified, po_pending, po_rejected])
+    _cache.setdefault("placement_employer_feedback", []).extend([fb_verified_emp, fb_unverified_emp])
+
+    try:
+        scorecard = compute_institute_scorecard(inst_id, is_demo=True)
+        assert scorecard["dimension_breakdown"]["placement_employment_rate"]["placed_candidates"] == 1
+        assert scorecard["dimension_breakdown"]["placement_employment_rate"]["total_candidates_tracked"] == 3
+        assert scorecard["dimension_breakdown"]["wage_premium"]["average_salary_inr"] == 500000
+        assert scorecard["dimension_breakdown"]["employer_readiness_feedback"]["feedback_responses_count"] == 1
+        assert scorecard["dimension_breakdown"]["employer_readiness_feedback"]["score"] == 100.0
+    finally:
+        _cache["courses"] = [c for c in _cache["courses"] if c.get("id") != "cr-verif-test"]
+        _cache["placement_outcomes"] = [o for o in _cache["placement_outcomes"] if o.get("id") not in ("po-vt-verified", "po-vt-pending", "po-vt-rejected")]
+        _cache["placement_employer_feedback"] = [f for f in _cache["placement_employer_feedback"] if f.get("id") not in ("fb-vt-ver-emp", "fb-vt-unver-emp")]
+
+
+def test_institute_cannot_modify_government_audit_directives(client, gov_headers, coep_headers, vjti_headers):
+    create_payload = {
+        "notice_type": "COMPLIANCE_REVIEW",
+        "severity": "CRITICAL",
+        "title": "Safety and Curriculum Non-Compliance",
+        "description": "Lab safety protocol revision required immediately.",
+        "mandated_action": "Replace obsolete high-voltage trainers.",
+        "deadline_date": "2026-11-30",
+    }
+    create_res = client.post("/api/accreditation/institutes/inst-coep/notices", json=create_payload, headers=gov_headers)
+    assert create_res.status_code == 201
+    notice_id = create_res.json()["audit_notice"]["id"]
+
+    patch_action = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"mandated_action": "Unauthorized self-exemption."},
+        headers=coep_headers,
+    )
+    assert patch_action.status_code == 403
+
+    patch_deadline = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"deadline_date": "2030-01-01"},
+        headers=coep_headers,
+    )
+    assert patch_deadline.status_code == 403
+
+    patch_status_invalid = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"status": "RESOLVED"},
+        headers=coep_headers,
+    )
+    assert patch_status_invalid.status_code == 403
+
+    patch_idor = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"status": "IN_REMEDIATION", "remediation_notes": "Trying to modify other institute notice."},
+        headers=vjti_headers,
+    )
+    assert patch_idor.status_code == 403
+
+    patch_remediation_valid = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={"status": "IN_REMEDIATION", "remediation_notes": "Replaced high-voltage trainer benches and scheduled faculty safety drill."},
+        headers=coep_headers,
+    )
+    assert patch_remediation_valid.status_code == 200
+    assert patch_remediation_valid.json()["audit_notice"]["status"] == "IN_REMEDIATION"
+    assert patch_remediation_valid.json()["audit_notice"]["mandated_action"] == "Replace obsolete high-voltage trainers."
+    assert patch_remediation_valid.json()["audit_notice"]["deadline_date"] == "2026-11-30"
+
+    patch_gov_directive = client.patch(
+        f"/api/accreditation/notices/{notice_id}",
+        json={
+            "mandated_action": "Submit comprehensive equipment safety certification.",
+            "deadline_date": "2026-12-15",
+            "status": "RESOLVED",
+        },
+        headers=gov_headers,
+    )
+    assert patch_gov_directive.status_code == 200
+    assert patch_gov_directive.json()["audit_notice"]["status"] == "RESOLVED"
+    assert patch_gov_directive.json()["audit_notice"]["mandated_action"] == "Submit comprehensive equipment safety certification."
+    assert patch_gov_directive.json()["audit_notice"]["deadline_date"] == "2026-12-15"
+
+
+def test_retention_lifecycle_enforcement_rules(client, coep_headers):
+    res_tc = client.post(
+        "/api/placements/outcomes",
+        json={
+            "course_id": "cr-001",
+            "candidate_name": "Test Candidate TC",
+            "role_title": "Trainee",
+            "status": "TRAINING_COMPLETED",
+            "retention_status": "6_MONTH_RETAINED",
+        },
+        headers=coep_headers,
+    )
+    assert res_tc.status_code == 400
+
+    res_np = client.post(
+        "/api/placements/outcomes",
+        json={
+            "course_id": "cr-001",
+            "candidate_name": "Test Candidate NP",
+            "role_title": "Trainee",
+            "status": "NOT_PLACED",
+            "retention_status": "12_MONTH_RETAINED",
+        },
+        headers=coep_headers,
+    )
+    assert res_np.status_code == 400
+
+    res_withdrawn = client.post(
+        "/api/placements/outcomes",
+        json={
+            "course_id": "cr-001",
+            "candidate_name": "Test Candidate Withdrawn",
+            "role_title": "Trainee",
+            "status": "WITHDRAWN",
+            "retention_status": "ATTRITED",
+        },
+        headers=coep_headers,
+    )
+    assert res_withdrawn.status_code == 400
+
+    res_valid_create = client.post(
+        "/api/placements/outcomes",
+        json={
+            "course_id": "cr-001",
+            "candidate_name": "Test Candidate Placed",
+            "role_title": "CNC Specialist",
+            "status": "PLACED",
+            "retention_status": "6_MONTH_RETAINED",
+            "salary_annual_inr": 450000,
+        },
+        headers=coep_headers,
+    )
+    assert res_valid_create.status_code == 201
+    outcome_id = res_valid_create.json()["placement_outcome"]["id"]
+
+    res_regress = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"retention_status": "6_MONTH_RETAINED"},
+        headers=coep_headers,
+    )
+    assert res_regress.status_code == 200
+
+    res_12m = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"retention_status": "12_MONTH_RETAINED"},
+        headers=coep_headers,
+    )
+    assert res_12m.status_code == 200
+
+    res_regress_invalid = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"retention_status": "6_MONTH_RETAINED"},
+        headers=coep_headers,
+    )
+    assert res_regress_invalid.status_code == 400
+
+    res_attrited = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"retention_status": "ATTRITED"},
+        headers=coep_headers,
+    )
+    assert res_attrited.status_code == 200
+
+    res_attrited_revert = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"retention_status": "12_MONTH_RETAINED"},
+        headers=coep_headers,
+    )
+    assert res_attrited_revert.status_code == 400
+
+    res_incompatible_status = client.patch(
+        f"/api/placements/outcomes/{outcome_id}",
+        json={"status": "WITHDRAWN"},
+        headers=coep_headers,
+    )
+    assert res_incompatible_status.status_code == 400
