@@ -177,4 +177,3 @@ def test_list_faculty_nominations_route_resolves():
     headers_employer = _get_headers("EMPLOYER", user_id="usr-employer-001", email="employer@skillsetu.gov.in")
     resp_emp = client.get("/api/trainers?is_demo=true", headers=headers_employer)
     assert resp_emp.status_code == 403
-

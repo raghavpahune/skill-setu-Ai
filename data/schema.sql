@@ -1448,5 +1448,3 @@ BEGIN
         WITH CHECK (true);
     END IF;
 END $$;
-
-

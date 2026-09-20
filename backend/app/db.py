@@ -1950,6 +1950,3 @@ def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]
 
 
 from app.core.security import is_demo_student_id  # noqa: E402
-
-
-

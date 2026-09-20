@@ -3436,6 +3436,3 @@ def update_faculty_nomination(nomination_id: str, updates: dict[str, Any]) -> di
     except Exception as e:
         logger.error("[SupabaseRepo] Failed updating nomination '%s': %s", nomination_id, e)
         raise SupabaseRepositoryError(f"Database update failed for nomination '{nomination_id}': {e}") from e
-
-
-
