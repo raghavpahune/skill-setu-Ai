@@ -22,6 +22,15 @@ from app.repositories.supabase_repository import (
     list_institution_trainers,
 )
 from app.services.curriculum_engine import TRAINER_UPGRADE_CATALOG
+
+VALID_NOMINATION_TRANSITIONS = {
+    "NOMINATED": {"SANCTIONED", "REJECTED"},
+    "SANCTIONED": {"IN_PROGRESS", "COMPLETED", "REJECTED", "FAILED"},
+    "IN_PROGRESS": {"COMPLETED", "FAILED"},
+    "COMPLETED": set(),
+    "REJECTED": set(),
+    "FAILED": set(),
+}
 from app.services.trainer_service import (
     compute_institute_faculty_scorecard,
     compute_statewide_trainer_analytics,
@@ -114,27 +123,29 @@ async def get_statewide_trainer_analytics_endpoint(
 async def get_institute_faculty_scorecard_endpoint(
     institute_id: str,
     is_demo: Optional[bool] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["INSTITUTE", "GOVERNMENT", "ADMIN"])),
 ):
     user_role = (current_user.get("role") or "").upper()
     user_inst_id = _resolve_user_institute_id(current_user)
 
-    if user_role == "INSTITUTE" and user_inst_id.lower() != institute_id.lower():
+    target_institute_id = institute_id
+    if user_role == "INSTITUTE":
         known_aliases = {
-            "inst-coep": ["coep technological university", "coep"],
-            "inst-vjti": ["vjti mumbai", "vjti"],
-            "inst-gp-pune": ["government polytechnic pune", "gp pune"],
-            "inst-gp-nagpur": ["government polytechnic nagpur", "gp nagpur"],
+            "inst-coep": ["coep technological university", "coep", "inst-coep"],
+            "inst-vjti": ["vjti mumbai", "vjti", "inst-vjti"],
+            "inst-gp-pune": ["government polytechnic pune", "gp pune", "inst-gp-pune"],
+            "inst-gp-nagpur": ["government polytechnic nagpur", "gp nagpur", "inst-gp-nagpur"],
         }
-        allowed_aliases = known_aliases.get(user_inst_id.lower(), [])
+        allowed_aliases = known_aliases.get(user_inst_id.lower(), [user_inst_id.lower()])
         if institute_id.lower() not in [a.lower() for a in allowed_aliases]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Forbidden: You can only access faculty capacity analytics for your own institution.",
             )
+        target_institute_id = user_inst_id
 
     demo_flag = is_demo if is_demo is not None else current_user.get("is_demo")
-    scorecard = compute_institute_faculty_scorecard(institute_id=institute_id, is_demo=demo_flag)
+    scorecard = compute_institute_faculty_scorecard(institute_id=target_institute_id, is_demo=demo_flag)
     return scorecard
 
 
@@ -353,6 +364,7 @@ async def update_faculty_nomination_endpoint(
     if not updates:
         return nomination
 
+    curr_status = (nomination.get("status") or "NOMINATED").upper()
     new_status = (updates.get("status") or "").upper()
 
     if user_role == "INSTITUTE":
@@ -360,17 +372,20 @@ async def update_faculty_nomination_endpoint(
         if n_inst_id and n_inst_id != user_inst_id.lower():
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You cannot modify another institute's nomination record.")
 
-        if new_status in ("SANCTIONED", "REJECTED"):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Only Government administrators can sanction or reject FDP nominations.")
-
         allowed_keys = {"completion_date", "certification_earned", "feedback", "status"}
         for k in list(updates.keys()):
             if k not in allowed_keys:
                 del updates[k]
-        if new_status and new_status not in ("IN_PROGRESS", "COMPLETED", "FAILED"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status transition for institute: {new_status}")
 
-    elif user_role in ("GOVERNMENT", "ADMIN"):
+        if new_status in ("SANCTIONED", "REJECTED"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Only Government administrators can sanction or reject FDP nominations.")
+
+    if new_status:
+        allowed_transitions = VALID_NOMINATION_TRANSITIONS.get(curr_status, set())
+        if new_status not in allowed_transitions:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status transition from {curr_status} to {new_status}")
+
+    if user_role in ("GOVERNMENT", "ADMIN"):
         if new_status == "SANCTIONED":
             updates.setdefault("sanctioned_at", datetime.now(timezone.utc).isoformat())
             updates.setdefault("approved_by", current_user.get("id") or current_user.get("email") or "GOVERNMENT_AUTHORITY")
@@ -383,7 +398,10 @@ async def update_faculty_nomination_endpoint(
             updates["reviewed_by"] = updates["approved_by"]
             updates["review_notes"] = f"Sanctioned under ref {updates['sanction_reference']}"
 
-    updated = update_faculty_nomination_record(nomination_id, updates)
+    try:
+        updated = update_faculty_nomination_record(nomination_id, updates)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     if updated.get("status") == "COMPLETED" and updated.get("certification_earned"):
         trainer_id = updated.get("trainer_id")
@@ -446,5 +464,8 @@ async def update_trainer_endpoint(
     if "experience_years" in updates and "years_experience" not in updates:
         updates["years_experience"] = int(updates["experience_years"])
 
-    updated = update_institution_trainer_record(trainer_id, updates)
+    try:
+        updated = update_institution_trainer_record(trainer_id, updates)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     return updated

@@ -271,6 +271,8 @@ export default function GovernmentDashboard() {
     forecasts: false,
     recommendations: false,
     demand: false,
+    statewideTrainers: false,
+    facultyNominations: false,
   });
 
   const [platformMetrics, setPlatformMetrics] = useState(null);
@@ -491,6 +493,8 @@ export default function GovernmentDashboard() {
       forecasts: false,
       recommendations: false,
       demand: false,
+      statewideTrainers: false,
+      facultyNominations: false,
     });
 
     Promise.allSettled([
@@ -634,11 +638,15 @@ export default function GovernmentDashboard() {
 
       if (trainersAnalyticsRes && trainersAnalyticsRes.status === 'fulfilled') {
         setStatewideTrainers(trainersAnalyticsRes.value);
+      } else if (trainersAnalyticsRes && trainersAnalyticsRes.status === 'rejected') {
+        setErrors((prev) => ({ ...prev, statewideTrainers: true }));
       }
 
       if (facultyNomsRes && facultyNomsRes.status === 'fulfilled') {
         const noms = extractArray(facultyNomsRes.value, ['nominations', 'data', 'items']);
         setAllFacultyNominations(noms);
+      } else if (facultyNomsRes && facultyNomsRes.status === 'rejected') {
+        setErrors((prev) => ({ ...prev, facultyNominations: true }));
       }
 
       setLoading(false);
@@ -1938,7 +1946,11 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Norm Compliance Ratio</div>
               <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {statewideTrainers?.summary?.statewide_compliance_ratio_pct || 0}%
+                {errors.statewideTrainers ? (
+                  <span className="text-sm font-semibold text-rose-500">Unavailable</span>
+                ) : (
+                  `${statewideTrainers?.summary?.statewide_compliance_ratio_pct ?? 0}%`
+                )}
               </div>
               <div className="text-[10px] text-slate-400 font-medium">Districts Meeting 1:20 Norm</div>
             </div>
@@ -1946,7 +1958,11 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Active Faculty</div>
               <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
-                {statewideTrainers?.summary?.total_trainers || 0}
+                {errors.statewideTrainers ? (
+                  <span className="text-sm font-semibold text-rose-500">Unavailable</span>
+                ) : (
+                  statewideTrainers?.summary?.total_trainers ?? 0
+                )}
               </div>
               <div className="text-[10px] text-teal-600 font-medium">Across Maharashtra</div>
             </div>
@@ -1954,7 +1970,11 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Modernized Instructors</div>
               <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
-                {statewideTrainers?.summary?.certified_trainers_count || 0}
+                {errors.statewideTrainers ? (
+                  <span className="text-sm font-semibold text-rose-500">Unavailable</span>
+                ) : (
+                  statewideTrainers?.summary?.certified_trainers_count ?? 0
+                )}
               </div>
               <div className="text-[10px] text-indigo-500 font-medium">Industry 4.0 Certified</div>
             </div>
@@ -1962,9 +1982,15 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">FDP Grant Sponsorships</div>
               <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                {allFacultyNominations.filter((n) => n.status === 'NOMINATED').length} Pending
+                {errors.facultyNominations ? (
+                  <span className="text-sm font-semibold text-rose-500">Unavailable</span>
+                ) : (
+                  `${allFacultyNominations.filter((n) => n.status === 'NOMINATED').length} Pending`
+                )}
               </div>
-              <div className="text-[10px] text-amber-500 font-medium">{allFacultyNominations.filter((n) => n.status === 'SANCTIONED').length} Sanctioned Grants</div>
+              <div className="text-[10px] text-amber-500 font-medium">
+                {errors.facultyNominations ? 'Data error' : `${allFacultyNominations.filter((n) => n.status === 'SANCTIONED').length} Sanctioned Grants`}
+              </div>
             </div>
           </div>
 
@@ -1972,7 +1998,11 @@ export default function GovernmentDashboard() {
             <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3">
               District-level Trainer Adequacy & Capacity Gap Leaderboard
             </h4>
-            {statewideTrainers?.district_breakdown?.length > 0 ? (
+            {errors.statewideTrainers ? (
+              <div className="py-6 text-center text-rose-600 dark:text-rose-400 text-xs border border-dashed border-rose-200 dark:border-rose-900/50 rounded-xl bg-rose-50/50 dark:bg-rose-950/20">
+                District trainer analytics unavailable.
+              </div>
+            ) : statewideTrainers?.district_breakdown?.length > 0 ? (
               <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
@@ -2023,7 +2053,7 @@ export default function GovernmentDashboard() {
               </div>
             ) : (
               <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                District trainer analytics loading or unavailable.
+                {loading ? 'District trainer analytics loading...' : 'No district trainer records available.'}
               </div>
             )}
           </div>
@@ -2032,82 +2062,88 @@ export default function GovernmentDashboard() {
             <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3">
               State Faculty Development (FDP) Grant Sanction Console
             </h4>
-            <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
-                  <tr>
-                    <th className="py-2.5 px-3">Institution</th>
-                    <th className="py-2.5 px-3">Faculty Member</th>
-                    <th className="py-2.5 px-3">FDP Program</th>
-                    <th className="py-2.5 px-3">Agency</th>
-                    <th className="py-2.5 px-3">Grant Budget</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
-                  {allFacultyNominations.map((nom) => (
-                    <tr key={nom.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
-                      <td className="py-2.5 px-3">
-                        <div className="font-bold text-slate-900 dark:text-white">{nom.institute_name || nom.institute_id}</div>
-                        <div className="text-[10px] text-slate-400">{nom.district || 'Maharashtra'}</div>
-                      </td>
-                      <td className="py-2.5 px-3 font-medium">{nom.trainer_name}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="font-medium text-slate-900 dark:text-white">{nom.program_title || nom.program_name}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">{nom.program_code || nom.domain}</div>
-                      </td>
-                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{nom.partner_agency || nom.certifying_body}</td>
-                      <td className="py-2.5 px-3 font-mono font-bold">₹{(nom.budget_inr || nom.stipend_grant_inr || 25000).toLocaleString('en-IN')}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
-                          nom.status === 'SANCTIONED'
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                            : nom.status === 'COMPLETED'
-                            ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'
-                            : nom.status === 'REJECTED'
-                            ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
-                            : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
-                        }`}>
-                          {nom.status}
-                        </span>
-                        {nom.sanction_reference && (
-                          <div className="text-[9px] text-slate-400 font-mono mt-0.5">{nom.sanction_reference}</div>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {nom.status === 'NOMINATED' ? (
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => handleSanctionFacultyNomination(nom.id)}
-                              disabled={sanctioningNomId === nom.id}
-                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                              {sanctioningNomId === nom.id ? 'Sanctioning...' : 'Sanction Grant'}
-                            </button>
-                            <button
-                              onClick={() => handleRejectFacultyNomination(nom.id)}
-                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[10px] font-semibold transition-colors cursor-pointer"
-                            >
-                              Reject
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-slate-400 font-mono">Processed</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {allFacultyNominations.length === 0 && (
+            {errors.facultyNominations ? (
+              <div className="py-6 text-center text-rose-600 dark:text-rose-400 text-xs border border-dashed border-rose-200 dark:border-rose-900/50 rounded-xl bg-rose-50/50 dark:bg-rose-950/20">
+                Faculty nominations unavailable.
+              </div>
+            ) : (
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
                     <tr>
-                      <td colSpan={7} className="py-6 text-center text-slate-400 text-xs">
-                        No faculty nominations submitted.
-                      </td>
+                      <th className="py-2.5 px-3">Institution</th>
+                      <th className="py-2.5 px-3">Faculty Member</th>
+                      <th className="py-2.5 px-3">FDP Program</th>
+                      <th className="py-2.5 px-3">Agency</th>
+                      <th className="py-2.5 px-3">Grant Budget</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Action</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                    {allFacultyNominations.map((nom) => (
+                      <tr key={nom.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3">
+                          <div className="font-bold text-slate-900 dark:text-white">{nom.institute_name || nom.institute_id}</div>
+                          <div className="text-[10px] text-slate-400">{nom.district || 'Maharashtra'}</div>
+                        </td>
+                        <td className="py-2.5 px-3 font-medium">{nom.trainer_name}</td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-medium text-slate-900 dark:text-white">{nom.program_title || nom.program_name}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{nom.program_code || nom.domain}</div>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{nom.partner_agency || nom.certifying_body}</td>
+                        <td className="py-2.5 px-3 font-mono font-bold">₹{((nom.budget_inr ?? nom.stipend_grant_inr) ?? 25000).toLocaleString('en-IN')}</td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                            nom.status === 'SANCTIONED'
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : nom.status === 'COMPLETED'
+                              ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'
+                              : nom.status === 'REJECTED'
+                              ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                              : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                          }`}>
+                            {nom.status}
+                          </span>
+                          {nom.sanction_reference && (
+                            <div className="text-[9px] text-slate-400 font-mono mt-0.5">{nom.sanction_reference}</div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {nom.status === 'NOMINATED' ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                onClick={() => handleSanctionFacultyNomination(nom.id)}
+                                disabled={sanctioningNomId === nom.id}
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {sanctioningNomId === nom.id ? 'Sanctioning...' : 'Sanction Grant'}
+                              </button>
+                              <button
+                                onClick={() => handleRejectFacultyNomination(nom.id)}
+                                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[10px] font-semibold transition-colors cursor-pointer"
+                              >
+                                Reject
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-mono">Processed</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {allFacultyNominations.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="py-6 text-center text-slate-400 text-xs">
+                          {loading ? 'Loading nominations...' : 'No faculty nominations submitted.'}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       </SectionErrorBoundary>

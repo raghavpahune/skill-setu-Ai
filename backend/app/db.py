@@ -1880,9 +1880,11 @@ def update_institution_trainer_record(trainer_id: str, updates: dict[str, Any]) 
     if matched_idx is not None:
         merged = {**records[matched_idx], **updates, **saved}
         records[matched_idx] = merged
-    else:
+    elif saved:
         merged = {**updates, **saved}
         records.insert(0, merged)
+    else:
+        raise ValueError(f"Trainer '{trainer_id}' not found for update.")
     _flush_real_table("institution_trainers")
     return merged
 
@@ -1942,9 +1944,11 @@ def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]
     if matched_idx is not None:
         merged = {**records[matched_idx], **updates, **saved}
         records[matched_idx] = merged
-    else:
+    elif saved:
         merged = {**updates, **saved}
         records.insert(0, merged)
+    else:
+        raise ValueError(f"Faculty nomination '{nomination_id}' not found for update.")
     _flush_real_table("faculty_upskilling_nominations")
     return merged
 

@@ -344,7 +344,7 @@ export default function InstituteDashboard() {
         domain: nominationForm.domain.trim(),
         partner_agency: nominationForm.partner_agency.trim(),
         duration_weeks: Number(nominationForm.duration_weeks) || 2,
-        budget_inr: Number(nominationForm.budget_inr) || 25000,
+        budget_inr: nominationForm.budget_inr == null || nominationForm.budget_inr === '' ? 25000 : Number(nominationForm.budget_inr),
         rationale: nominationForm.rationale.trim() || null,
       };
       const res = await api.createFacultyNomination(payload);
@@ -2091,7 +2091,7 @@ export default function InstituteDashboard() {
                           <div className="text-[10px] text-slate-400 font-mono">{n.program_code || n.domain}</div>
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{n.partner_agency || n.certifying_body}</td>
-                        <td className="py-2.5 px-3 font-mono">₹{(n.budget_inr || n.stipend_grant_inr || 25000).toLocaleString('en-IN')}</td>
+                        <td className="py-2.5 px-3 font-mono">₹{((n.budget_inr ?? n.stipend_grant_inr) ?? 25000).toLocaleString('en-IN')}</td>
                         <td className="py-2.5 px-3">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
                             n.status === 'SANCTIONED'

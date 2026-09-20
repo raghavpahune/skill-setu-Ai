@@ -265,17 +265,44 @@ def compute_statewide_trainer_analytics(
     }
     total_stipend_sanctioned_inr = sum(n.get("stipend_grant_inr") or n.get("sanction_amount_inr") or n.get("budget_inr") or 0 for n in nominations if n.get("status") in ("SANCTIONED", "IN_PROGRESS", "COMPLETED"))
 
+    is_demo_mode = is_explicit_demo_mode(is_demo)
+    if is_demo_mode:
+        all_courses = _cache.get("courses", [])
+    else:
+        try:
+            from app.repositories.supabase_repository import list_courses
+            all_courses = list_courses(is_demo=is_demo) or []
+        except Exception:
+            all_courses = [c for c in _cache.get("courses", []) if is_demo is None or c.get("is_demo") == is_demo]
+
+    district_enrolment: dict[str, int] = {}
+    for c in all_courses:
+        cdist = (c.get("district") or "").strip()
+        if cdist:
+            if district_filter and district_filter.lower() not in cdist.lower():
+                continue
+            enrol = c.get("enrolment_capacity") or c.get("enrolment_count") or 0
+            matched_key = next((k for k in district_enrolment if k.lower() == cdist.lower()), cdist)
+            district_enrolment[matched_key] = district_enrolment.get(matched_key, 0) + int(enrol)
+
     district_groups: dict[str, list[dict[str, Any]]] = {}
     for t in trainers:
         d = t.get("district") or "Maharashtra"
         district_groups.setdefault(d, []).append(t)
 
+    all_districts = sorted(list(set(district_groups.keys()) | set(district_enrolment.keys())))
+
     district_leaderboard = []
-    for d, d_trainers in district_groups.items():
+    for d in all_districts:
+        d_trainers = district_groups.get(d, [])
         d_active = len([t for t in d_trainers if t.get("status") == "ACTIVE"])
         d_emerging = len([t for t in d_trainers if (t.get("primary_trade") or "").lower() in emerging_trades])
         d_noms = [n for n in nominations if (n.get("district") or "").lower() == d.lower()]
-        req_tr = max(1, math.ceil((len(d_trainers) * 20) / NSQF_STUDENT_TRAINER_RATIO_NORM))
+
+        matched_enrol_key = next((k for k in district_enrolment if k.lower() == d.lower()), None)
+        d_enrol = district_enrolment[matched_enrol_key] if matched_enrol_key else 0
+
+        req_tr = max(1, math.ceil(d_enrol / NSQF_STUDENT_TRAINER_RATIO_NORM))
         gap = max(0, req_tr - d_active)
         comp_status = "COMPLIANT" if d_active >= req_tr else "UNDERSTAFFED"
         district_leaderboard.append({
@@ -285,7 +312,7 @@ def compute_statewide_trainer_analytics(
             "active_faculty": d_active,
             "emerging_tech_certified": d_emerging,
             "certified_count": d_emerging,
-            "enrolment_capacity": len(d_trainers) * 20,
+            "enrolment_capacity": d_enrol,
             "required_trainers": req_tr,
             "trainer_gap": gap,
             "faculty_readiness_index": round(min(100.0, (d_active / max(1, req_tr))) * 100.0, 1),
