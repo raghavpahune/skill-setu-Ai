@@ -284,6 +284,9 @@ export default function GovernmentDashboard() {
   const [statewideRoi, setStatewideRoi] = useState(null);
   const [districtRoiList, setDistrictRoiList] = useState([]);
   const [auditNotices, setAuditNotices] = useState([]);
+  const [statewideTrainers, setStatewideTrainers] = useState(null);
+  const [allFacultyNominations, setAllFacultyNominations] = useState([]);
+  const [sanctioningNomId, setSanctioningNomId] = useState(null);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [submittingAudit, setSubmittingAudit] = useState(false);
   const [evaluatingInstId, setEvaluatingInstId] = useState(null);
@@ -444,6 +447,41 @@ export default function GovernmentDashboard() {
     }
   };
 
+  const handleSanctionFacultyNomination = async (nominationId) => {
+    setSanctioningNomId(nominationId);
+    try {
+      const res = await api.updateFacultyNomination(nominationId, {
+        status: 'SANCTIONED',
+      });
+      if (res?.id) {
+        setAllFacultyNominations((prev) =>
+          prev.map((n) => (n.id === nominationId ? res : n))
+        );
+        setToastMessage({ type: 'success', text: `FDP grant sanctioned: ${res.sanction_reference || 'Sanctioned'}` });
+      }
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to sanction FDP grant.' });
+    } finally {
+      setSanctioningNomId(null);
+    }
+  };
+
+  const handleRejectFacultyNomination = async (nominationId) => {
+    try {
+      const res = await api.updateFacultyNomination(nominationId, {
+        status: 'REJECTED',
+      });
+      if (res?.id) {
+        setAllFacultyNominations((prev) =>
+          prev.map((n) => (n.id === nominationId ? res : n))
+        );
+        setToastMessage({ type: 'info', text: 'Nomination marked as rejected.' });
+      }
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to update nomination.' });
+    }
+  };
+
   const fetchData = () => {
     setLoading(true);
     setErrors({
@@ -507,14 +545,15 @@ export default function GovernmentDashboard() {
         const sigArr = extractArray(sigRes.value, ['signals', 'data', 'items']);
         const normalizedSignals = sigArr.map((s, idx) => ({
           id: s.id || `sig-${idx}`,
-          title: s.title || 'Market Signal',
-          source: s.source || s.source_name || 'Market Signal Pipeline',
-          signal_date: s.signal_date || s.collected_at || s.published_at || 'Recent',
-          impact_level: (s.impact_level || 'medium').toLowerCase(),
-          summary: s.summary || s.description || '',
-          affected_skills: Array.isArray(s.affected_skills) ? s.affected_skills : (s.skills || []),
+          title: s.title || 'Market Transition Signal',
+          description: s.description || s.summary || '',
+          source: s.source || s.company || 'Industry Partner',
+          impact_type: (s.impact_type || 'growth').toLowerCase(),
+          confidence_score: typeof s.confidence_score === 'number' ? s.confidence_score : 0.85,
+          skills: Array.isArray(s.skills) ? s.skills : (s.skill_names || []),
+          created_at: s.created_at || new Date().toISOString(),
         }));
-        setSignals(normalizedSignals.slice(0, 4));
+        setSignals(normalizedSignals.slice(0, 3));
       } else if (sigRes.status === 'rejected') {
         setErrors((prev) => ({ ...prev, signals: true }));
       }
@@ -558,13 +597,13 @@ export default function GovernmentDashboard() {
           name: d.name || d.skill_name || d.skill || `Skill ${idx + 1}`,
           count: typeof d.count === 'number' ? d.count : (typeof d.vacancies === 'number' ? d.vacancies : 10),
         }));
-        setDemandStats(normalizedDemand.slice(0, 8));
+        setDemandStats(normalizedDemand.slice(0, 6));
       } else if (demRes.status === 'rejected') {
         setErrors((prev) => ({ ...prev, demand: true }));
       }
 
-      if (metRes.status === 'fulfilled' && metRes.value && (metRes.value.status === 'success' || metRes.value.placement_rate_pct !== undefined)) {
-        setPlatformMetrics(metRes.value);
+      if (metRes && metRes.status === 'fulfilled' && metRes.value) {
+        setPlatformMetrics(metRes.value?.metrics || metRes.value);
       }
 
       if (oppsRes && oppsRes.status === 'fulfilled') {
@@ -589,6 +628,15 @@ export default function GovernmentDashboard() {
       if (auditNoticesRes && auditNoticesRes.status === 'fulfilled') {
         const arr = extractArray(auditNoticesRes.value, ['audit_notices', 'data', 'items']);
         setAuditNotices(arr);
+      }
+
+      if (trainersAnalyticsRes && trainersAnalyticsRes.status === 'fulfilled') {
+        setStatewideTrainers(trainersAnalyticsRes.value);
+      }
+
+      if (facultyNomsRes && facultyNomsRes.status === 'fulfilled') {
+        const noms = extractArray(facultyNomsRes.value, ['nominations', 'data', 'items']);
+        setAllFacultyNominations(noms);
       }
 
       setLoading(false);
@@ -1871,6 +1919,194 @@ export default function GovernmentDashboard() {
               )}
             </div>
           )}
+        </div>
+      </SectionErrorBoundary>
+
+      <SectionErrorBoundary name="Vocational Faculty & Trainer Capacity Development Oversight">
+        <div className="bg-white dark:bg-slate-900 p-6 sm:p-7 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8">
+          <SectionHeader
+            title="Vocational Faculty & Trainer Capacity Development Oversight (NSQF 1:20 Norm)"
+            subtitle="Institutional student-to-trainer compliance ratios, district-level instructor deficits, and State Faculty Development Program (FDP) grant sanctions."
+            decisionNote="Statutory accreditation requires maximum 20 students per certified instructor. Sanction FDP grants to remediate district deficits."
+            badge="Phase 18 State Console"
+            badgeColor="teal"
+          />
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 mb-6">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Norm Compliance Ratio</div>
+              <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                {statewideTrainers?.summary?.statewide_compliance_ratio_pct || 0}%
+              </div>
+              <div className="text-[10px] text-slate-400 font-medium">Districts Meeting 1:20 Norm</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Active Faculty</div>
+              <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
+                {statewideTrainers?.summary?.total_trainers || 0}
+              </div>
+              <div className="text-[10px] text-teal-600 font-medium">Across Maharashtra</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Modernized Instructors</div>
+              <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
+                {statewideTrainers?.summary?.certified_trainers_count || 0}
+              </div>
+              <div className="text-[10px] text-indigo-500 font-medium">Industry 4.0 Certified</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">FDP Grant Sponsorships</div>
+              <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
+                {allFacultyNominations.filter((n) => n.status === 'NOMINATED').length} Pending
+              </div>
+              <div className="text-[10px] text-amber-500 font-medium">{allFacultyNominations.filter((n) => n.status === 'SANCTIONED').length} Sanctioned Grants</div>
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3">
+              District-level Trainer Adequacy & Capacity Gap Leaderboard
+            </h4>
+            {statewideTrainers?.district_breakdown?.length > 0 ? (
+              <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
+                    <tr>
+                      <th className="py-2.5 px-3">District</th>
+                      <th className="py-2.5 px-3">Active Faculty</th>
+                      <th className="py-2.5 px-3">Certified Modern</th>
+                      <th className="py-2.5 px-3">Enrolled Intake</th>
+                      <th className="py-2.5 px-3">Faculty Required</th>
+                      <th className="py-2.5 px-3">Deficit / Gap</th>
+                      <th className="py-2.5 px-3">Readiness Index</th>
+                      <th className="py-2.5 px-3">Norm Compliance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                    {statewideTrainers.district_breakdown.map((d) => (
+                      <tr key={d.district} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">
+                          {d.district}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-semibold">{d.trainer_count}</td>
+                        <td className="py-2.5 px-3 font-mono text-indigo-600 dark:text-indigo-400">{d.certified_count}</td>
+                        <td className="py-2.5 px-3 font-mono">{d.enrolment_capacity}</td>
+                        <td className="py-2.5 px-3 font-mono text-slate-500">{d.required_trainers}</td>
+                        <td className="py-2.5 px-3">
+                          {d.trainer_gap > 0 ? (
+                            <span className="font-mono text-rose-600 font-bold">-{d.trainer_gap} Trainers</span>
+                          ) : (
+                            <span className="font-mono text-emerald-600 font-bold">Adequate</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className="font-mono font-bold">{d.faculty_readiness_index}%</span>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                            d.compliance_status === 'COMPLIANT'
+                              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                          }`}>
+                            {d.compliance_status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-slate-400 text-xs border border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
+                District trainer analytics loading or unavailable.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-3">
+              State Faculty Development (FDP) Grant Sanction Console
+            </h4>
+            <div className="overflow-x-auto border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold uppercase text-[10px]">
+                  <tr>
+                    <th className="py-2.5 px-3">Institution</th>
+                    <th className="py-2.5 px-3">Faculty Member</th>
+                    <th className="py-2.5 px-3">FDP Program</th>
+                    <th className="py-2.5 px-3">Agency</th>
+                    <th className="py-2.5 px-3">Grant Budget</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-800 dark:text-slate-200">
+                  {allFacultyNominations.map((nom) => (
+                    <tr key={nom.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-900 dark:text-white">{nom.institute_name || nom.institute_id}</div>
+                        <div className="text-[10px] text-slate-400">{nom.district || 'Maharashtra'}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-medium">{nom.trainer_name}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="font-medium text-slate-900 dark:text-white">{nom.program_title}</div>
+                        <div className="text-[10px] text-slate-400 font-mono">{nom.program_code}</div>
+                      </td>
+                      <td className="py-2.5 px-3 text-slate-600 dark:text-slate-400">{nom.partner_agency}</td>
+                      <td className="py-2.5 px-3 font-mono font-bold">₹{(nom.budget_inr || 25000).toLocaleString('en-IN')}</td>
+                      <td className="py-2.5 px-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                          nom.status === 'SANCTIONED'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                            : nom.status === 'COMPLETED'
+                            ? 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300'
+                            : nom.status === 'REJECTED'
+                            ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                            : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                        }`}>
+                          {nom.status}
+                        </span>
+                        {nom.sanction_reference && (
+                          <div className="text-[9px] text-slate-400 font-mono mt-0.5">{nom.sanction_reference}</div>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {nom.status === 'NOMINATED' ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleSanctionFacultyNomination(nom.id)}
+                              disabled={sanctioningNomId === nom.id}
+                              className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {sanctioningNomId === nom.id ? 'Sanctioning...' : 'Sanction Grant'}
+                            </button>
+                            <button
+                              onClick={() => handleRejectFacultyNomination(nom.id)}
+                              className="px-2 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-[10px] font-semibold transition-colors cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-400 font-mono">Processed</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {allFacultyNominations.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-slate-400 text-xs">
+                        No faculty nominations submitted.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </SectionErrorBoundary>
 

@@ -229,7 +229,9 @@ def init_db():
             "skill_forecasts", "student_profiles", "schemes", "sync_logs",
             "employer_demands", "difficult_skills", "student_assessments",
             "gov_opportunities", "users", "employer_verifications", "curriculum_proposals",
-            "placement_outcomes", "placement_employer_feedback"
+            "placement_outcomes", "placement_employer_feedback",
+            "institution_accreditations", "institution_audit_notices",
+            "institution_trainers", "faculty_upskilling_nominations"
         ]
         for tbl in tables:
             try:
@@ -1822,6 +1824,124 @@ def update_institution_audit_notice_record(notice_id: str, updates: dict[str, An
     return merged
 
 
+def get_institution_trainer_by_id(trainer_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_institution_trainer
+        repo_t = get_institution_trainer(trainer_id)
+        if repo_t:
+            return repo_t
+    except Exception:
+        pass
+    records = _cache.get("institution_trainers", [])
+    return next((t for t in records if t.get("id") == trainer_id), None)
+
+
+def save_institution_trainer_record(trainer_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    trainer_data.setdefault("created_at", now_iso)
+    trainer_data.setdefault("updated_at", now_iso)
+    trainer_data.setdefault("data_provenance", "INSTITUTE_AUTHORITATIVE")
+    trainer_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_institution_trainer
+    saved = create_institution_trainer(trainer_data)
+    merged = {**trainer_data, **saved}
+
+    records = _cache.setdefault("institution_trainers", [])
+    tid = merged.get("id")
+    matched_idx = next((i for i, t in enumerate(records) if t.get("id") == tid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("institution_trainers")
+    return merged
+
+
+def update_institution_trainer_record(trainer_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    saved = {}
+    try:
+        from app.repositories.supabase_repository import update_institution_trainer
+        saved = update_institution_trainer(trainer_id, updates)
+    except Exception:
+        pass
+    records = _cache.setdefault("institution_trainers", [])
+    matched_idx = next((i for i, t in enumerate(records) if t.get("id") == trainer_id), None)
+    if matched_idx is not None:
+        merged = {**records[matched_idx], **updates, **saved}
+        records[matched_idx] = merged
+    else:
+        merged = {**updates, **saved}
+        records.insert(0, merged)
+    _flush_real_table("institution_trainers")
+    return merged
+
+
+def get_faculty_nomination_by_id(nomination_id: str) -> dict[str, Any] | None:
+    try:
+        from app.repositories.supabase_repository import get_faculty_nomination
+        repo_n = get_faculty_nomination(nomination_id)
+        if repo_n:
+            return repo_n
+    except Exception:
+        pass
+    records = _cache.get("faculty_upskilling_nominations", [])
+    return next((n for n in records if n.get("id") == nomination_id), None)
+
+
+def save_faculty_nomination_record(nomination_data: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    nomination_data.setdefault("created_at", now_iso)
+    nomination_data.setdefault("updated_at", now_iso)
+    nomination_data.setdefault("is_demo", False)
+
+    from app.repositories.supabase_repository import create_faculty_nomination
+    saved = create_faculty_nomination(nomination_data)
+    merged = {**nomination_data, **saved}
+
+    records = _cache.setdefault("faculty_upskilling_nominations", [])
+    nid = merged.get("id")
+    matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nid), None)
+    if matched_idx is not None:
+        records[matched_idx] = merged
+    else:
+        records.insert(0, merged)
+
+    _flush_real_table("faculty_upskilling_nominations")
+    return merged
+
+
+def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    if not _cache:
+        init_db()
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    saved = {}
+    try:
+        from app.repositories.supabase_repository import update_faculty_nomination
+        saved = update_faculty_nomination(nomination_id, updates)
+    except Exception:
+        pass
+    records = _cache.setdefault("faculty_upskilling_nominations", [])
+    matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nomination_id), None)
+    if matched_idx is not None:
+        merged = {**records[matched_idx], **updates, **saved}
+        records[matched_idx] = merged
+    else:
+        merged = {**updates, **saved}
+        records.insert(0, merged)
+    _flush_real_table("faculty_upskilling_nominations")
+    return merged
+
+
 from app.core.security import is_demo_student_id  # noqa: E402
+
 
 

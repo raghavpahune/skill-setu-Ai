@@ -3185,3 +3185,236 @@ def update_institution_audit_notice(notice_id: str, updates: dict[str, Any]) -> 
         raise SupabaseRepositoryError(f"Database update failed for audit notice '{notice_id}': {e}") from e
 
 
+VALID_INSTITUTION_TRAINER_COLUMNS = {
+    "id",
+    "institute_id",
+    "institute_name",
+    "district",
+    "name",
+    "email",
+    "phone",
+    "designation",
+    "primary_trade",
+    "assigned_course_ids",
+    "certified_skills",
+    "years_experience",
+    "nsqf_certified_level",
+    "status",
+    "is_demo",
+    "data_provenance",
+    "created_at",
+    "updated_at",
+}
+
+VALID_FACULTY_NOMINATION_COLUMNS = {
+    "id",
+    "trainer_id",
+    "trainer_name",
+    "institute_id",
+    "institute_name",
+    "district",
+    "target_course_id",
+    "target_course_name",
+    "program_name",
+    "certifying_body",
+    "duration_weeks",
+    "target_skills",
+    "stipend_grant_inr",
+    "status",
+    "justification",
+    "reviewed_by",
+    "review_notes",
+    "completion_certificate_id",
+    "completed_at",
+    "is_demo",
+    "data_provenance",
+    "created_at",
+    "updated_at",
+}
+
+
+def _enrich_trainer_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    if "assigned_course_ids" in enriched and not isinstance(enriched["assigned_course_ids"], list):
+        enriched["assigned_course_ids"] = []
+    if "certified_skills" in enriched and not isinstance(enriched["certified_skills"], list):
+        enriched["certified_skills"] = []
+    return enriched
+
+
+def _enrich_nomination_record(record: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(record)
+    if "target_skills" in enriched and not isinstance(enriched["target_skills"], list):
+        enriched["target_skills"] = []
+    return enriched
+
+
+def create_institution_trainer(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in data.items() if k in VALID_INSTITUTION_TRAINER_COLUMNS}
+        res = client.table("institution_trainers").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating institution_trainers record in Supabase.")
+        return _enrich_trainer_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating trainer: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for trainer: {e}") from e
+
+
+def get_institution_trainer(trainer_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("institution_trainers").select("*").eq("id", trainer_id).limit(1).execute()
+        data = getattr(res, "data", []) or []
+        if data:
+            return _enrich_trainer_record(data[0])
+        return None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching trainer '%s': %s", trainer_id, e)
+        raise SupabaseRepositoryError(f"Database query failed fetching trainer '{trainer_id}': {e}") from e
+
+
+def list_institution_trainers(
+    institute_id: str | None = None,
+    district: str | None = None,
+    trade: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("institution_trainers").select("*")
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if district:
+            query = query.ilike("district", f"%{district.strip()}%")
+        if trade:
+            query = query.ilike("primary_trade", f"%{trade.strip()}%")
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_trainer_record(r) for r in (getattr(res, "data", []) or [])]
+
+        all_trainers = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_trainers)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_trainers.extend([_enrich_trainer_record(r) for r in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_trainers) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_trainers
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing trainers: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing trainers: {e}") from e
+
+
+def update_institution_trainer(trainer_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in updates.items() if k in VALID_INSTITUTION_TRAINER_COLUMNS}
+        res = client.table("institution_trainers").update(row).eq("id", trainer_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError(f"Failed updating trainer '{trainer_id}'.")
+        return _enrich_trainer_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating trainer '%s': %s", trainer_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for trainer '{trainer_id}': {e}") from e
+
+
+def create_faculty_nomination(data: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in data.items() if k in VALID_FACULTY_NOMINATION_COLUMNS}
+        res = client.table("faculty_upskilling_nominations").insert(row).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError("Failed creating faculty_upskilling_nominations record in Supabase.")
+        return _enrich_nomination_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed creating faculty nomination: %s", e)
+        raise SupabaseRepositoryError(f"Database insert failed for nomination: {e}") from e
+
+
+def get_faculty_nomination(nomination_id: str) -> dict[str, Any] | None:
+    try:
+        client = get_client()
+        res = client.table("faculty_upskilling_nominations").select("*").eq("id", nomination_id).limit(1).execute()
+        data = getattr(res, "data", []) or []
+        if data:
+            return _enrich_nomination_record(data[0])
+        return None
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed fetching nomination '%s': %s", nomination_id, e)
+        raise SupabaseRepositoryError(f"Database query failed fetching nomination '{nomination_id}': {e}") from e
+
+
+def list_faculty_nominations(
+    institute_id: str | None = None,
+    district: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+    limit: int | None = 100,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    try:
+        client = get_client()
+        query = client.table("faculty_upskilling_nominations").select("*")
+        if institute_id:
+            query = query.eq("institute_id", institute_id)
+        if district:
+            query = query.ilike("district", f"%{district.strip()}%")
+        if status:
+            query = query.eq("status", status.strip().upper())
+        if is_demo is not None:
+            query = query.eq("is_demo", is_demo)
+
+        if limit is not None and limit <= 1000:
+            res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+            return [_enrich_nomination_record(r) for r in (getattr(res, "data", []) or [])]
+
+        all_noms = []
+        page_size = 1000
+        curr_offset = offset
+        while True:
+            fetch_size = min(page_size, limit - len(all_noms)) if limit is not None else page_size
+            res = query.order("created_at", desc=True).range(curr_offset, curr_offset + fetch_size - 1).execute()
+            batch = getattr(res, "data", []) or []
+            all_noms.extend([_enrich_nomination_record(r) for r in batch])
+            if len(batch) < fetch_size or (limit is not None and len(all_noms) >= limit):
+                break
+            curr_offset += fetch_size
+        return all_noms
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed listing faculty nominations: %s", e)
+        raise SupabaseRepositoryError(f"Database query failed listing nominations: {e}") from e
+
+
+def update_faculty_nomination(nomination_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+    try:
+        client = get_client()
+        row = {k: v for k, v in updates.items() if k in VALID_FACULTY_NOMINATION_COLUMNS}
+        res = client.table("faculty_upskilling_nominations").update(row).eq("id", nomination_id).execute()
+        if not res.data or len(res.data) == 0:
+            raise SupabaseRepositoryError(f"Failed updating faculty nomination '{nomination_id}'.")
+        return _enrich_nomination_record(res.data[0])
+    except SupabaseRepositoryError:
+        raise
+    except Exception as e:
+        logger.error("[SupabaseRepo] Failed updating nomination '%s': %s", nomination_id, e)
+        raise SupabaseRepositoryError(f"Database update failed for nomination '{nomination_id}': {e}") from e
+
+
+
