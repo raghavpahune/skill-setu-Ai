@@ -41,6 +41,7 @@ class PlacementOutcomeCreate(BaseModel):
     employer_id: Optional[str] = Field(None, max_length=100)
     employer_name: Optional[str] = Field(None, max_length=150)
     status: Optional[str] = Field(default="TRAINING_COMPLETED")
+    retention_status: Optional[str] = Field(None, pattern="^(6_MONTH_RETAINED|12_MONTH_RETAINED|ATTRITED|UNKNOWN)$")
     placement_date: Optional[str] = None
     salary_annual_inr: Optional[int] = Field(None, ge=0)
     skills_utilized: Optional[list[str]] = None
@@ -51,6 +52,7 @@ class PlacementOutcomeUpdate(BaseModel):
     employer_name: Optional[str] = Field(None, max_length=150)
     role_title: Optional[str] = Field(None, max_length=150)
     status: Optional[str] = None
+    retention_status: Optional[str] = Field(None, pattern="^(6_MONTH_RETAINED|12_MONTH_RETAINED|ATTRITED|UNKNOWN)$")
     placement_date: Optional[str] = None
     salary_annual_inr: Optional[int] = Field(None, ge=0)
     skills_utilized: Optional[list[str]] = None
@@ -114,6 +116,13 @@ async def create_placement_outcome_endpoint(
             detail=f"Invalid initial placement outcome status: '{init_status}'",
         )
 
+    if data.retention_status in ("6_MONTH_RETAINED", "12_MONTH_RETAINED", "ATTRITED"):
+        if init_status not in {"PLACED", "EMPLOYED", "EMPLOYER_FEEDBACK_PENDING", "FEEDBACK_RECEIVED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Retention milestone '{data.retention_status}' cannot be recorded for non-placed status '{init_status}'.",
+            )
+
     now_iso = datetime.now(timezone.utc).isoformat()
     outcome_id = f"po-{uuid.uuid4().hex[:12]}"
     is_demo = bool(course.get("is_demo") or current_user.get("is_demo"))
@@ -132,6 +141,7 @@ async def create_placement_outcome_endpoint(
         "district": district,
         "industry": industry,
         "status": init_status,
+        "retention_status": data.retention_status,
         "placement_date": data.placement_date,
         "salary_annual_inr": data.salary_annual_inr,
         "skills_utilized": data.skills_utilized or [],
@@ -261,15 +271,39 @@ async def update_placement_outcome_endpoint(
             )
 
     updates: dict[str, Any] = {}
+    current_status = outcome.get("status", "TRAINING_COMPLETED")
+    target_status = data.status.strip().upper() if data.status else current_status
     if data.status:
-        target_status = data.status.strip().upper()
-        current_status = outcome.get("status", "TRAINING_COMPLETED")
         if not validate_placement_lifecycle_transition(current_status, target_status):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid lifecycle transition from '{current_status}' to '{target_status}'.",
             )
         updates["status"] = target_status
+
+    current_retention = outcome.get("retention_status")
+    target_retention = data.retention_status
+    effective_retention = target_retention if target_retention is not None else current_retention
+
+    if effective_retention in ("6_MONTH_RETAINED", "12_MONTH_RETAINED", "ATTRITED"):
+        if target_status not in {"PLACED", "EMPLOYED", "EMPLOYER_FEEDBACK_PENDING", "FEEDBACK_RECEIVED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Retention milestone '{effective_retention}' is incompatible with non-placed status '{target_status}'.",
+            )
+
+    if target_retention is not None and target_retention != current_retention:
+        if current_retention == "ATTRITED" and target_retention in ("6_MONTH_RETAINED", "12_MONTH_RETAINED"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot transition an attrited outcome back to retained.",
+            )
+        if current_retention == "12_MONTH_RETAINED" and target_retention == "6_MONTH_RETAINED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot regress retention milestone from 12_MONTH_RETAINED to 6_MONTH_RETAINED.",
+            )
+        updates["retention_status"] = target_retention
 
     if data.employer_id is not None:
         updates["employer_id"] = data.employer_id
@@ -388,11 +422,15 @@ async def submit_placement_employer_feedback_endpoint(
     saved_feedback = None
     try:
         saved_feedback = save_placement_employer_feedback_record(feedback_record)
-        update_placement_outcome_record(outcome_id, {
+        outcome_updates: dict[str, Any] = {
             "status": "FEEDBACK_RECEIVED",
             "employer_id": employer_id,
             "employer_name": employer_name,
-        })
+        }
+        if is_verified_employer:
+            outcome_updates["verification_status"] = "VERIFIED"
+            outcome_updates["data_provenance"] = "EMPLOYER_VERIFIED"
+        update_placement_outcome_record(outcome_id, outcome_updates)
     except Exception as e:
         if saved_feedback:
             try:

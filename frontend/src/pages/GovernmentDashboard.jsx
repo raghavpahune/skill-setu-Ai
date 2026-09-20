@@ -278,6 +278,30 @@ export default function GovernmentDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+  const [accreditationTab, setAccreditationTab] = useState('benchmarking');
+  const [accreditedInstitutes, setAccreditedInstitutes] = useState([]);
+  const [selectedAccreditationTier, setSelectedAccreditationTier] = useState('ALL');
+  const [statewideRoi, setStatewideRoi] = useState(null);
+  const [districtRoiList, setDistrictRoiList] = useState([]);
+  const [auditNotices, setAuditNotices] = useState([]);
+  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [submittingAudit, setSubmittingAudit] = useState(false);
+  const [evaluatingInstId, setEvaluatingInstId] = useState(null);
+  const [auditForm, setAuditForm] = useState({
+    institute_id: '',
+    notice_type: 'PERFORMANCE_WARNING',
+    severity: 'HIGH',
+    title: '',
+    description: '',
+    findings: '',
+    remediation_deadline_days: 30,
+  });
+  const [districtRoiOverride, setDistrictRoiOverride] = useState({
+    districtId: 'pune',
+    costPerSeat: 35000,
+  });
+  const [singleDistrictRoiResult, setSingleDistrictRoiResult] = useState(null);
+  const [simulatingRoi, setSimulatingRoi] = useState(false);
   const [govForm, setGovForm] = useState({
     name: '',
     department: 'Skill Development, Employment & Entrepreneurship Dept',
@@ -331,6 +355,95 @@ export default function GovernmentDashboard() {
     }
   };
 
+  const handleCreateAuditNotice = async (e) => {
+    e.preventDefault();
+    if (!auditForm.institute_id || !auditForm.title.trim()) {
+      setToastMessage({ type: 'error', text: 'Please select an institution and enter a notice title.' });
+      return;
+    }
+    setSubmittingAudit(true);
+    try {
+      const findingsText = auditForm.findings?.trim() || '';
+      const deadlineDays = Number(auditForm.remediation_deadline_days) || 30;
+      const deadlineDate = new Date(Date.now() + deadlineDays * 86400000).toISOString().split('T')[0];
+      const res = await api.createInstituteAuditNotice(auditForm.institute_id, {
+        notice_type: auditForm.notice_type || 'PERFORMANCE_WARNING',
+        severity: auditForm.severity || 'HIGH',
+        title: auditForm.title.trim(),
+        description: auditForm.description.trim() || `State institutional audit notice issued on ${new Date().toLocaleDateString()}.`,
+        mandated_action: findingsText || null,
+        deadline_date: deadlineDate,
+      });
+      if (res?.audit_notice) {
+        setAuditNotices((prev) => [res.audit_notice, ...prev]);
+        setToastMessage({ type: 'success', text: `Audit notice issued to ${res.audit_notice.institute_name || res.audit_notice.institute_id}` });
+        setIsAuditModalOpen(false);
+        setAuditForm({
+          institute_id: '',
+          notice_type: 'PERFORMANCE_WARNING',
+          severity: 'HIGH',
+          title: '',
+          description: '',
+          findings: '',
+          remediation_deadline_days: 30,
+        });
+      }
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to issue audit notice.' });
+    } finally {
+      setSubmittingAudit(false);
+    }
+  };
+
+  const handleEvaluateInstitute = async (instId) => {
+    setEvaluatingInstId(instId);
+    try {
+      const res = await api.evaluateInstituteAccreditation(instId);
+      const scorecardData = res?.accreditation || res?.scorecard;
+      if (scorecardData) {
+        setAccreditedInstitutes((prev) =>
+          prev.map((item) => (item.institute_id === instId ? { ...item, ...scorecardData } : item))
+        );
+        const tierLabel = scorecardData.accreditation_tier || scorecardData.tier || 'Evaluated';
+        setToastMessage({ type: 'success', text: `Accreditation score re-evaluated: ${tierLabel}` });
+      }
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to evaluate accreditation.' });
+    } finally {
+      setEvaluatingInstId(null);
+    }
+  };
+
+  const handleUpdateNoticeStatus = async (noticeId, newStatus) => {
+    try {
+      const res = await api.updateInstituteAuditNotice(noticeId, { status: newStatus });
+      if (res?.audit_notice) {
+        setAuditNotices((prev) =>
+          prev.map((n) => (n.id === noticeId ? res.audit_notice : n))
+        );
+        setToastMessage({ type: 'success', text: `Notice status updated to ${newStatus}` });
+      }
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to update audit notice.' });
+    }
+  };
+
+  const handleSimulateDistrictRoi = async () => {
+    setSimulatingRoi(true);
+    try {
+      const res = await api.getSingleDistrictRoi(districtRoiOverride.districtId, {
+        override_cost_per_seat: districtRoiOverride.costPerSeat,
+      });
+      const resultData = res?.district_roi || res;
+      setSingleDistrictRoiResult(resultData);
+      setToastMessage({ type: 'success', text: `Simulated ROI for ${resultData?.district || districtRoiOverride.districtId}` });
+    } catch (err) {
+      setToastMessage({ type: 'error', text: err?.message || 'Failed to calculate district ROI.' });
+    } finally {
+      setSimulatingRoi(false);
+    }
+  };
+
   const fetchData = () => {
     setLoading(true);
     setErrors({
@@ -351,7 +464,11 @@ export default function GovernmentDashboard() {
       api.getJobDemand('skill'),
       api.getPlatformMetrics(),
       api.getGovOpportunities(),
-    ]).then(([jobsRes, gapsRes, sigRes, fcRes, recRes, demRes, metRes, oppsRes]) => {
+      api.getInstituteAccreditations(),
+      api.getStatewideRoiAnalytics(),
+      api.getDistrictRoiAnalytics(),
+      api.getInstituteAuditNotices(),
+    ]).then(([jobsRes, gapsRes, sigRes, fcRes, recRes, demRes, metRes, oppsRes, accredRes, stateRoiRes, distRoiRes, auditNoticesRes]) => {
       if (jobsRes.status === 'fulfilled') {
         const jobsArr = extractArray(jobsRes.value, ['jobs', 'data']);
         if (jobsArr.length > 0) {
@@ -453,6 +570,25 @@ export default function GovernmentDashboard() {
       if (oppsRes && oppsRes.status === 'fulfilled') {
         const oppsArr = extractArray(oppsRes.value, ['opportunities', 'data', 'items']);
         setGovOpportunities(oppsArr);
+      }
+
+      if (accredRes && accredRes.status === 'fulfilled') {
+        const arr = extractArray(accredRes.value, ['accreditations', 'data', 'items']);
+        setAccreditedInstitutes(arr);
+      }
+
+      if (stateRoiRes && stateRoiRes.status === 'fulfilled' && stateRoiRes.value) {
+        setStatewideRoi(stateRoiRes.value?.statewide_summary || stateRoiRes.value);
+      }
+
+      if (distRoiRes && distRoiRes.status === 'fulfilled') {
+        const arr = distRoiRes.value?.roi_analytics?.district_leaderboard || extractArray(distRoiRes.value, ['districts', 'data', 'items']);
+        setDistrictRoiList(arr);
+      }
+
+      if (auditNoticesRes && auditNoticesRes.status === 'fulfilled') {
+        const arr = extractArray(auditNoticesRes.value, ['audit_notices', 'data', 'items']);
+        setAuditNotices(arr);
       }
 
       setLoading(false);
@@ -1339,6 +1475,405 @@ export default function GovernmentDashboard() {
         </div>
       </SectionErrorBoundary>
 
+      <SectionErrorBoundary name="Institutional Accreditation & District ROI Intelligence">
+        <div className="bg-white dark:bg-slate-900 p-6 sm:p-7 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8">
+          <SectionHeader
+            title="Institutional Accreditation & District Training-to-Employment ROI Intelligence"
+            subtitle="Statewide deterministic accreditation benchmarks across 4 quality pillars with statistical safeguards, plus district-level public training investment return telemetry."
+            decisionNote="Authoritative state intelligence enabling performance-based funding, accreditation enforcement, and verified economic return tracking."
+            badge="Phase 17 State Console"
+            badgeColor="teal"
+          />
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-4 mb-6">
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Institutions</div>
+              <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
+                {accreditedInstitutes.length}
+              </div>
+              <div className="text-[10px] text-teal-600 dark:text-teal-400 font-medium">State benchmarked</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Tier 1 Excellence</div>
+              <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                {accreditedInstitutes.filter((i) => (i.accreditation_tier || i.tier) === 'TIER_1_EXCELLENCE').length}
+              </div>
+              <div className="text-[10px] text-emerald-600 font-medium">≥85 Score & Quorum</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">ROI Multiplier</div>
+              <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
+                {statewideRoi?.statewide_roi_multiplier ? `${statewideRoi.statewide_roi_multiplier.toFixed(1)}x` : '—'}
+              </div>
+              <div className="text-[10px] text-indigo-500 font-medium">Statewide Return</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Economic Output</div>
+              <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                {statewideRoi?.total_annual_economic_output_inr
+                  ? `₹${(statewideRoi.total_annual_economic_output_inr / 10000000).toFixed(1)}Cr`
+                  : '—'}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium">Annual placed wages</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Public Investment</div>
+              <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
+                {statewideRoi?.total_public_training_investment_inr
+                  ? `₹${(statewideRoi.total_public_training_investment_inr / 10000000).toFixed(1)}Cr`
+                  : '—'}
+              </div>
+              <div className="text-[10px] text-slate-500 font-medium">Seats + grants</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Audit Notices</div>
+              <div className="text-xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                {auditNotices.filter((n) => n.status !== 'RESOLVED').length}
+              </div>
+              <div className="text-[10px] text-rose-500 font-medium">Pending remediation</div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3 mb-5 flex-wrap">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAccreditationTab('benchmarking')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  accreditationTab === 'benchmarking'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                Institutional Benchmarking ({accreditedInstitutes.length})
+              </button>
+              <button
+                onClick={() => setAccreditationTab('roi')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  accreditationTab === 'roi'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                District ROI Analytics ({districtRoiList.length} Districts)
+              </button>
+              <button
+                onClick={() => setAccreditationTab('audits')}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  accreditationTab === 'audits'
+                    ? 'bg-teal-600 text-white shadow-xs'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                <span>State Audit Notices</span>
+                <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[10px] font-mono">
+                  {auditNotices.length}
+                </span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setIsAuditModalOpen(true)}
+              className="px-3 py-1.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white rounded-lg text-xs font-bold shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+            >
+              <span>⚖️</span>
+              <span>Issue State Audit Notice</span>
+            </button>
+          </div>
+
+          {accreditationTab === 'benchmarking' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-slate-500">Filter by Tier:</span>
+                {['ALL', 'TIER_1_EXCELLENCE', 'TIER_2_ACCREDITED', 'TIER_3_PROVISIONAL', 'TIER_4_PERFORMANCE_WATCH'].map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setSelectedAccreditationTier(t)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold transition-all cursor-pointer ${
+                      selectedAccreditationTier === t
+                        ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                    }`}
+                  >
+                    {t.replace(/_/g, ' ')}
+                  </button>
+                ))}
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold uppercase text-[10px]">
+                      <th className="p-3">Institution</th>
+                      <th className="p-3">District</th>
+                      <th className="p-3">Tier</th>
+                      <th className="p-3">Score</th>
+                      <th className="p-3">Placement (35%)</th>
+                      <th className="p-3">Modernity (25%)</th>
+                      <th className="p-3">Readiness (20%)</th>
+                      <th className="p-3">Wage (20%)</th>
+                      <th className="p-3">Sample Quorum</th>
+                      <th className="p-3 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                    {accreditedInstitutes
+                      .filter((inst) => selectedAccreditationTier === 'ALL' || (inst.accreditation_tier || inst.tier) === selectedAccreditationTier)
+                      .map((inst) => (
+                        <tr key={inst.id || inst.institute_id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                          <td className="p-3 font-bold text-slate-900 dark:text-white">
+                            <div>{inst.institute_name || inst.name || inst.institute_id}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{inst.institute_id || inst.id}</div>
+                          </td>
+                          <td className="p-3 font-semibold text-slate-600 dark:text-slate-300">
+                            {inst.district}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              (inst.accreditation_tier || inst.tier) === 'TIER_1_EXCELLENCE' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300' :
+                              (inst.accreditation_tier || inst.tier) === 'TIER_2_ACCREDITED' ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300' :
+                              (inst.accreditation_tier || inst.tier) === 'TIER_3_PROVISIONAL' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300' :
+                              'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300'
+                            }`}>
+                              {(inst.accreditation_tier || inst.tier)?.replace(/_/g, ' ') || 'PROVISIONAL'}
+                            </span>
+                          </td>
+                          <td className="p-3 font-black text-slate-900 dark:text-white text-sm">
+                            {inst.composite_score?.toFixed(1) || '0.0'}
+                          </td>
+                          <td className="p-3 font-mono">
+                            {inst.dimensions?.placement_rate?.score?.toFixed(1) || (inst.placement_score != null ? inst.placement_score.toFixed(1) : '—')}
+                          </td>
+                          <td className="p-3 font-mono">
+                            {inst.dimensions?.curriculum_modernity?.score?.toFixed(1) || (inst.curriculum_score != null ? inst.curriculum_score.toFixed(1) : '—')}
+                          </td>
+                          <td className="p-3 font-mono">
+                            {inst.dimensions?.employer_readiness?.score?.toFixed(1) || (inst.employer_feedback_score != null ? inst.employer_feedback_score.toFixed(1) : '—')}
+                          </td>
+                          <td className="p-3 font-mono">
+                            {inst.dimensions?.wage_premium?.score?.toFixed(1) || (inst.wage_premium_score != null ? inst.wage_premium_score.toFixed(1) : '—')}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                              inst.sample_quorum_satisfied ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                            }`}>
+                              {inst.sample_size_outcomes != null ? `${inst.sample_size_outcomes} outcomes` : 'Quorum checked'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-right">
+                            <button
+                              onClick={() => handleEvaluateInstitute(inst.institute_id)}
+                              disabled={evaluatingInstId === inst.institute_id}
+                              className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded text-[11px] font-semibold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              {evaluatingInstId === inst.institute_id ? 'Evaluating...' : 'Re-Evaluate'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {accreditationTab === 'roi' && (
+            <div className="space-y-6">
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                      <span>District Public Investment ROI Simulation Model</span>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300">
+                        Audited Model: Output / Investment
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                      Assumptions clearly distinguished from observed data. Cost per seat defaults to state baseline or course overrides.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select
+                      value={districtRoiOverride.districtId}
+                      onChange={(e) => setDistrictRoiOverride({ ...districtRoiOverride, districtId: e.target.value })}
+                      className="px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold"
+                    >
+                      <option value="pune">Pune District</option>
+                      <option value="mumbai">Mumbai District</option>
+                      <option value="nagpur">Nagpur District</option>
+                      <option value="chhatrapati_sambhajinagar">Chhatrapati Sambhajinagar</option>
+                      <option value="nashik">Nashik District</option>
+                    </select>
+
+                    <div className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 text-xs">
+                      <span className="text-slate-400 text-[11px]">Cost/Seat INR:</span>
+                      <input
+                        type="number"
+                        min={10000}
+                        step={5000}
+                        value={districtRoiOverride.costPerSeat}
+                        onChange={(e) => setDistrictRoiOverride({ ...districtRoiOverride, costPerSeat: Number(e.target.value) || 35000 })}
+                        className="w-20 bg-transparent font-mono font-bold text-slate-800 dark:text-slate-200 outline-none"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleSimulateDistrictRoi}
+                      disabled={simulatingRoi}
+                      className="px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {simulatingRoi ? 'Computing...' : 'Simulate District ROI'}
+                    </button>
+                  </div>
+                </div>
+
+                {singleDistrictRoiResult && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Placed Graduates</div>
+                      <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
+                        {singleDistrictRoiResult.placed_graduates}
+                      </div>
+                    </div>
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Economic Output</div>
+                      <div className="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-0.5">
+                        ₹{(singleDistrictRoiResult.annual_economic_output_inr / 10000000).toFixed(2)} Cr
+                      </div>
+                    </div>
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Public Investment</div>
+                      <div className="text-lg font-black text-slate-900 dark:text-white mt-0.5">
+                        ₹{(singleDistrictRoiResult.public_training_investment_inr / 10000000).toFixed(2)} Cr
+                      </div>
+                    </div>
+                    <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">ROI Multiplier & Payback</div>
+                      <div className="text-lg font-black text-indigo-600 dark:text-indigo-400 mt-0.5">
+                        {singleDistrictRoiResult.roi_multiplier?.toFixed(1)}x • {singleDistrictRoiResult.payback_period_months?.toFixed(1)} mo
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold uppercase text-[10px]">
+                      <th className="p-3">District</th>
+                      <th className="p-3">Placed Graduates</th>
+                      <th className="p-3">Avg Salary</th>
+                      <th className="p-3">Annual Economic Output</th>
+                      <th className="p-3">Public Investment</th>
+                      <th className="p-3">ROI Multiplier</th>
+                      <th className="p-3">Payback Period</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
+                    {districtRoiList.map((d) => (
+                      <tr key={d.district_id || d.district} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                        <td className="p-3 font-bold text-slate-900 dark:text-white">
+                          <div>{d.district}</div>
+                          <div className="text-[10px] text-slate-400 font-mono">{d.district_id}</div>
+                        </td>
+                        <td className="p-3 font-semibold">
+                          {d.placed_graduates} / {d.total_enrolled} enrolled
+                        </td>
+                        <td className="p-3 font-mono">
+                          ₹{((d.average_salary_inr || 0) / 100000).toFixed(1)}L
+                        </td>
+                        <td className="p-3 font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                          ₹{((d.annual_economic_output_inr || 0) / 10000000).toFixed(2)} Cr
+                        </td>
+                        <td className="p-3 font-mono text-slate-700 dark:text-slate-300">
+                          ₹{((d.public_training_investment_inr || 0) / 10000000).toFixed(2)} Cr
+                        </td>
+                        <td className="p-3">
+                          <span className="px-2 py-0.5 rounded font-black text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-800">
+                            {d.roi_multiplier?.toFixed(1) || '0.0'}x
+                          </span>
+                        </td>
+                        <td className="p-3 font-mono text-slate-600 dark:text-slate-400">
+                          {d.payback_period_months != null ? `${d.payback_period_months.toFixed(1)} Months` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {accreditationTab === 'audits' && (
+            <div className="space-y-4">
+              {auditNotices.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-xs">
+                  No state audit notices issued. All accredited institutions are currently in active compliance.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+                  {auditNotices.map((notice) => (
+                    <div key={notice.id} className="p-4 bg-white dark:bg-slate-900 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            notice.severity === 'CRITICAL' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300' :
+                            notice.severity === 'MAJOR' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300' :
+                            'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300'
+                          }`}>
+                            {notice.severity}
+                          </span>
+                          <span className="font-bold text-slate-900 dark:text-white text-xs">
+                            {notice.institute_name || notice.institute_id}
+                          </span>
+                          <span className="text-slate-400 text-xs">•</span>
+                          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            {notice.title}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={notice.status}
+                            onChange={(e) => handleUpdateNoticeStatus(notice.id, e.target.value)}
+                            className="px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded text-xs font-bold"
+                          >
+                            <option value="ISSUED">ISSUED</option>
+                            <option value="IN_REMEDIATION">IN_REMEDIATION</option>
+                            <option value="RESOLVED">RESOLVED</option>
+                            <option value="ESCALATED">ESCALATED</option>
+                          </select>
+                          <span className="text-[11px] text-slate-500 font-mono">
+                            Deadline: {notice.deadline_date ? new Date(notice.deadline_date).toLocaleDateString() : (notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days')}
+                          </span>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-600 dark:text-slate-400 mt-2">
+                        {notice.description}
+                      </p>
+
+                      {notice.remediation_notes && (
+                        <div className="mt-2.5 p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-lg text-[11px] border border-slate-200 dark:border-slate-700 text-teal-800 dark:text-teal-300">
+                          <span className="font-bold">Institute Action Plan Response: </span>
+                          {notice.remediation_notes}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </SectionErrorBoundary>
+
       <SectionErrorBoundary sectionName="Published Government Opportunities & Schemes">
         <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs mb-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
@@ -1597,6 +2132,157 @@ export default function GovernmentDashboard() {
                   className="px-5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg font-bold shadow-xs transition-colors flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
                   {submitting ? 'Publishing...' : 'Publish to State Registry 🏛️'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isAuditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>⚖️ Issue State Institutional Audit Notice</span>
+                </h3>
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-0.5">
+                  Formal regulatory notice tracking compliance deficits, low placement rates, or curriculum obsolescence.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAuditModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 text-base font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateAuditNotice} className="space-y-3.5">
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Target Vocational Institute *
+                </label>
+                <select
+                  required
+                  value={auditForm.institute_id}
+                  onChange={(e) => setAuditForm({ ...auditForm, institute_id: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="">Select an accredited institution...</option>
+                  {accreditedInstitutes.map((inst) => (
+                    <option key={inst.id || inst.institute_id} value={inst.institute_id || inst.id}>
+                      {inst.institute_name || inst.name || inst.institute_id} ({inst.district})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Notice Type *
+                </label>
+                <select
+                  value={auditForm.notice_type}
+                  onChange={(e) => setAuditForm({ ...auditForm, notice_type: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="PERFORMANCE_WARNING">PERFORMANCE WARNING (Underplacement Risk)</option>
+                  <option value="CURRICULUM_DEFICIT">CURRICULUM DEFICIT (Modernization Gap)</option>
+                  <option value="COMPLIANCE_REVIEW">COMPLIANCE REVIEW (Statutory Audit)</option>
+                  <option value="EXCELLENCE_COMMENDATION">EXCELLENCE COMMENDATION (Excellence Standard)</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Deficit Severity *
+                  </label>
+                  <select
+                    value={auditForm.severity}
+                    onChange={(e) => setAuditForm({ ...auditForm, severity: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value="CRITICAL">CRITICAL (Immediate Action)</option>
+                    <option value="HIGH">HIGH (Regulatory Action Risk)</option>
+                    <option value="MEDIUM">MEDIUM (Curriculum / Facility Gap)</option>
+                    <option value="INFO">INFO (Advisory / Observation)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                    Remediation Window (Days) *
+                  </label>
+                  <select
+                    value={auditForm.remediation_deadline_days}
+                    onChange={(e) => setAuditForm({ ...auditForm, remediation_deadline_days: Number(e.target.value) || 30 })}
+                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                  >
+                    <option value={15}>15 Days (Urgent Rectification)</option>
+                    <option value={30}>30 Days (Standard Notice)</option>
+                    <option value={45}>45 Days (Curriculum Overhaul)</option>
+                    <option value={60}>60 Days (Infrastructure Upgrade)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Notice Subject / Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Sub-45% Placement Rate Audit and Equipment Modernization Mandate"
+                  value={auditForm.title}
+                  onChange={(e) => setAuditForm({ ...auditForm, title: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Description & Regulatory Context
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Explain the statutory non-compliance or quality divergence observed during state audits..."
+                  value={auditForm.description}
+                  onChange={(e) => setAuditForm({ ...auditForm, description: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Specific Audit Findings (One per line)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="Placement below 45% threshold across last two quarters&#10;Trainer shortage in CNC operations laboratory&#10;Unaddressed employer readiness feedback rating <2.5"
+                  value={auditForm.findings}
+                  onChange={(e) => setAuditForm({ ...auditForm, findings: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500 font-mono text-[11px]"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsAuditModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 rounded-lg font-semibold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingAudit}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <span>⚖️</span>
+                  <span>{submittingAudit ? 'Issuing...' : 'Issue Audit Notice'}</span>
                 </button>
               </div>
             </form>

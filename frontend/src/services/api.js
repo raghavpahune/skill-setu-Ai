@@ -650,6 +650,48 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return fetchJSON(`/placements/analytics/statewide${query ? `?${query}` : ''}`);
   },
+  getInstituteAccreditations: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes${query ? `?${query}` : ''}`);
+  },
+  getInstituteScorecard: (instituteId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}${query ? `?${query}` : ''}`);
+  },
+  evaluateInstituteAccreditation: (instituteId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/evaluate${query ? `?${query}` : ''}`, {
+      method: 'POST',
+    });
+  },
+  getInstituteAuditNotices: (instituteId = 'all', params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/notices${query ? `?${query}` : ''}`);
+  },
+  createInstituteAuditNotice: (instituteId, data) => {
+    return fetchJSON(`/accreditation/institutes/${encodeURIComponent(instituteId)}/notices`, {
+      method: 'POST',
+      body: data,
+    });
+  },
+  updateInstituteAuditNotice: (noticeId, data) => {
+    return fetchJSON(`/accreditation/notices/${encodeURIComponent(noticeId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  getDistrictRoiAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/analytics/roi/districts${query ? `?${query}` : ''}`);
+  },
+  getSingleDistrictRoi: (districtId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/analytics/roi/districts/${encodeURIComponent(districtId)}${query ? `?${query}` : ''}`);
+  },
+  getStatewideRoiAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/analytics/roi/statewide${query ? `?${query}` : ''}`);
+  },
 };
 
 

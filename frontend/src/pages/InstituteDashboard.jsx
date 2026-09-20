@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ResponsiveContainer,
@@ -61,6 +61,11 @@ export default function InstituteDashboard() {
   const [activeTab, setActiveTab] = useState('courses');
   const [isOutcomeModalOpen, setIsOutcomeModalOpen] = useState(false);
   const [savingOutcome, setSavingOutcome] = useState(false);
+  const [scorecard, setScorecard] = useState(null);
+  const [scorecardLoading, setScorecardLoading] = useState(false);
+  const [instituteNotices, setInstituteNotices] = useState([]);
+  const [remediationNotesMap, setRemediationNotesMap] = useState({});
+  const [submittingNoticeId, setSubmittingNoticeId] = useState(null);
   const [outcomeForm, setOutcomeForm] = useState({
     course_id: '',
     candidate_name: '',
@@ -69,6 +74,7 @@ export default function InstituteDashboard() {
     district: user?.district || 'Pune',
     industry: 'IT/ITES',
     status: 'TRAINING_COMPLETED',
+    retention_status: 'UNKNOWN',
     salary_annual_inr: 0,
   });
 
@@ -169,9 +175,66 @@ export default function InstituteDashboard() {
     }
   };
 
+  const fetchScorecardData = useCallback(async () => {
+    setScorecardLoading(true);
+    const instituteId = user?.institute_id || user?.organization_id || 'inst_gp_pune';
+    try {
+      const [scRes, noticesRes] = await Promise.allSettled([
+        api.getInstituteScorecard(instituteId),
+        api.getInstituteAuditNotices(instituteId),
+      ]);
+      let scorecardSuccess = false;
+      if (scRes.status === 'fulfilled' && (scRes.value?.scorecard || scRes.value?.accreditation)) {
+        setScorecard(scRes.value.scorecard || scRes.value.accreditation);
+        scorecardSuccess = true;
+      }
+      if (noticesRes.status === 'fulfilled' && Array.isArray(noticesRes.value?.audit_notices)) {
+        setInstituteNotices(noticesRes.value.audit_notices);
+      }
+      if (!scorecardSuccess) {
+        const failureReason = scRes.status === 'rejected'
+          ? (scRes.reason?.message || 'Scorecard service unavailable.')
+          : 'Malformed scorecard data returned from server.';
+        return { success: false, error: failureReason };
+      }
+      return { success: true };
+    } catch (err) {
+      console.warn('Failed to load accreditation scorecard:', err);
+      return { success: false, error: err?.message || 'Failed to connect to scorecard service.' };
+    } finally {
+      setScorecardLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     fetchCourses();
-  }, []);
+    fetchScorecardData();
+  }, [fetchScorecardData]);
+
+  const handleUpdateNoticeRemediation = async (noticeId) => {
+    const notes = remediationNotesMap[noticeId];
+    if (!notes || !notes.trim()) {
+      showToast('error', 'Please enter remediation action notes.');
+      return;
+    }
+    setSubmittingNoticeId(noticeId);
+    try {
+      const res = await api.updateInstituteAuditNotice(noticeId, {
+        status: 'IN_REMEDIATION',
+        remediation_notes: notes.trim(),
+      });
+      if (res?.audit_notice) {
+        setInstituteNotices((prev) =>
+          prev.map((n) => (n.id === noticeId ? res.audit_notice : n))
+        );
+        showToast('success', 'Remediation plan submitted to state oversight console.');
+      }
+    } catch (err) {
+      showToast('error', err?.message || 'Failed to submit remediation response.');
+    } finally {
+      setSubmittingNoticeId(null);
+    }
+  };
 
   const handleCreateCourse = async (e) => {
     e.preventDefault();
@@ -564,6 +627,21 @@ export default function InstituteDashboard() {
             {placementOutcomes.length}
           </span>
         </button>
+        <button
+          onClick={() => setActiveTab('accreditation')}
+          className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            activeTab === 'accreditation'
+              ? 'bg-teal-600 text-white shadow-xs'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <span>Accreditation & Quality Scorecard</span>
+          {scorecard?.tier && (
+            <span className="px-1.5 py-0.5 bg-teal-800/60 text-teal-100 rounded text-[10px] font-mono">
+              {scorecard.tier.replace('TIER_', 'T').replace('_', ' ')}
+            </span>
+          )}
+        </button>
       </div>
 
       {activeTab === 'placements' && (
@@ -640,6 +718,7 @@ export default function InstituteDashboard() {
                   <th className="p-3">Hiring Employer</th>
                   <th className="p-3">Role</th>
                   <th className="p-3">Status</th>
+                  <th className="p-3">Retention</th>
                   <th className="p-3">Salary INR</th>
                   <th className="p-3">Provenance</th>
                 </tr>
@@ -647,7 +726,7 @@ export default function InstituteDashboard() {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium text-slate-800 dark:text-slate-200">
                 {placementOutcomes.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-400">
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
                       No placement outcomes recorded yet. Click &quot;Record Placement Outcome&quot; to begin tracking graduates.
                     </td>
                   </tr>
@@ -678,6 +757,16 @@ export default function InstituteDashboard() {
                           'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                         }`}>
                           {po.status}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          po.retention_status === '12_MONTH_RETAINED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300' :
+                          po.retention_status === '6_MONTH_RETAINED' ? 'bg-teal-100 dark:bg-teal-950 text-teal-800 dark:text-teal-300 border border-teal-300' :
+                          po.retention_status === 'ATTRITED' ? 'bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300' :
+                          'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                        }`}>
+                          {po.retention_status || 'UNKNOWN'}
                         </span>
                       </td>
                       <td className="p-3 font-mono font-bold text-slate-800 dark:text-slate-200">
@@ -1300,6 +1389,319 @@ export default function InstituteDashboard() {
         </div>
       )}
 
+      {activeTab === 'accreditation' && (
+        <div className="space-y-6 mb-8">
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap mb-1">
+                  <h2 className="text-xl font-black text-slate-900 dark:text-white">
+                    Institutional Accreditation & Quality Scorecard
+                  </h2>
+                  {(scorecard?.accreditation_tier || scorecard?.tier) && (
+                    <span className={`px-2.5 py-0.5 rounded-full text-xs font-black uppercase tracking-wider border ${
+                      (scorecard.accreditation_tier || scorecard.tier) === 'TIER_1_EXCELLENCE'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
+                        : (scorecard.accreditation_tier || scorecard.tier) === 'TIER_2_ACCREDITED'
+                        ? 'bg-teal-50 dark:bg-teal-950/80 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-800'
+                        : (scorecard.accreditation_tier || scorecard.tier) === 'TIER_3_PROVISIONAL'
+                        ? 'bg-amber-50 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-800'
+                        : 'bg-rose-50 dark:bg-rose-950/80 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800'
+                    }`}>
+                      {(scorecard.accreditation_tier || scorecard.tier).replace(/_/g, ' ')}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {scorecard?.institute_name || user?.organization_id || 'State Vocational Institute'} • {scorecard?.district || user?.district || 'Maharashtra'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={async () => {
+                    const res = await fetchScorecardData();
+                    if (res?.success) {
+                      showToast('success', 'Accreditation scorecard refreshed.');
+                    } else {
+                      showToast('error', res?.error || 'Scorecard refresh failed.');
+                    }
+                  }}
+                  disabled={scorecardLoading}
+                  className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <span>🔄</span>
+                  <span>{scorecardLoading ? 'Refreshing...' : 'Refresh Scorecard'}</span>
+                </button>
+              </div>
+            </div>
+
+            {scorecardLoading && !scorecard ? (
+              <div className="py-12 text-center text-slate-500 text-xs">
+                Computing deterministic accreditation metrics...
+              </div>
+            ) : scorecard ? (
+              <div className="pt-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-5 rounded-xl bg-gradient-to-br from-slate-50 to-teal-50/30 dark:from-slate-800/80 dark:to-teal-950/20 border border-teal-200 dark:border-teal-900/60">
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Composite Quality Score
+                    </div>
+                    <div className="flex items-baseline gap-2 mt-2">
+                      <span className="text-4xl font-black text-slate-900 dark:text-white">
+                        {scorecard.composite_score?.toFixed(1) || '0.0'}
+                      </span>
+                      <span className="text-sm font-bold text-slate-400">/ 100</span>
+                    </div>
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full mt-3 overflow-hidden">
+                      <div
+                        className="bg-teal-600 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, Math.max(0, scorecard.composite_score || 0))}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Evidence Confidence & Sample
+                    </div>
+                    <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                      {scorecard.evidence_confidence || scorecard.evidence_confidence_tier || 'PROVISIONAL'}
+                    </div>
+                    <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                      {scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))} verified placement outcomes
+                    </div>
+                    <div className="mt-2 text-[10px] font-mono px-2 py-0.5 rounded inline-block bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                      {(scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))) >= 10 ? 'Quorum Met (>= 10)' : 'Sample Under Quorum (< 10)'}
+                    </div>
+                  </div>
+
+                  <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                    <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Authoritative Provenance
+                    </div>
+                    <div className="text-sm font-mono font-bold text-teal-700 dark:text-teal-400 mt-2 break-all">
+                      {scorecard.data_provenance || 'STATE_DETERMINISTIC_ACCREDITATION'}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                      Evaluated: {scorecard.evaluated_at ? new Date(scorecard.evaluated_at).toLocaleDateString() : 'Verified Active'}
+                    </div>
+                    <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-2 font-semibold">
+                      Zero AI halluncination • Rule-based state audit
+                    </div>
+                  </div>
+                </div>
+
+                {((scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))) < 10) && (
+                  <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-2.5">
+                    <span className="text-base">⚠️</span>
+                    <div>
+                      <span className="font-bold">Statistical Sample Safeguard Active: </span>
+                      Institution currently has {scorecard.total_candidates_evaluated ?? (scorecard.dimension_breakdown?.placement_employment_rate?.total_candidates_tracked ?? (scorecard.sample_size_outcomes ?? 0))} recorded placement outcomes (minimum 10 required for Tier 1 or Tier 2 eligibility). Tier assignment is capped at Tier 3 Provisional until additional verified placement records are submitted.
+                    </div>
+                  </div>
+                )}
+
+                {((scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 100)) < 45) && (
+                  <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-xs flex items-start gap-2.5">
+                    <span className="text-base">🚨</span>
+                    <div>
+                      <span className="font-bold">Critical Placement Threshold Rule Active: </span>
+                      Placement rate ({scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 0)}%) is below the state regulatory 45% minimum. Institution placed on Tier 4 Performance Watch.
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider mb-3">
+                    Four-Dimension Deterministic Scoring Breakdown
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">1. Placement Rate</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">35% Weight</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                        {(scorecard.dimension_breakdown?.placement_employment_rate?.score ?? (scorecard.dimensions?.placement_rate?.score ?? 0)).toFixed(1)}
+                        <span className="text-xs text-slate-400 font-normal"> / 35</span>
+                      </div>
+                      <div className="text-xs text-teal-600 dark:text-teal-400 font-bold mt-1">
+                        {scorecard.dimension_breakdown?.placement_employment_rate?.placement_rate_pct ?? (scorecard.dimensions?.placement_rate?.raw_metric_pct ?? 0)}% Verified Placement
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="bg-teal-600 h-full rounded-full"
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.placement_employment_rate?.score ?? (scorecard.dimensions?.placement_rate?.score ?? 0))) / 35) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">2. Curriculum Modernity</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">25% Weight</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                        {(scorecard.dimension_breakdown?.curriculum_modernity?.score ?? (scorecard.dimensions?.curriculum_modernity?.score ?? 0)).toFixed(1)}
+                        <span className="text-xs text-slate-400 font-normal"> / 25</span>
+                      </div>
+                      <div className="text-xs text-indigo-600 dark:text-indigo-400 font-bold mt-1">
+                        {scorecard.dimension_breakdown?.curriculum_modernity?.score != null ? Math.round(((scorecard.dimension_breakdown.curriculum_modernity.score) / 25) * 100) : (scorecard.dimensions?.curriculum_modernity?.raw_metric_pct || 0)}% Modernity Index
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="bg-indigo-600 h-full rounded-full"
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.curriculum_modernity?.score ?? (scorecard.dimensions?.curriculum_modernity?.score ?? 0))) / 25) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">3. Employer Feedback</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">20% Weight</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                        {(scorecard.dimension_breakdown?.employer_readiness_feedback?.score ?? (scorecard.dimensions?.employer_readiness?.score ?? 0)).toFixed(1)}
+                        <span className="text-xs text-slate-400 font-normal"> / 20</span>
+                      </div>
+                      <div className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-1">
+                        {scorecard.dimension_breakdown?.employer_readiness_feedback?.feedback_responses_count != null ? `${scorecard.dimension_breakdown.employer_readiness_feedback.feedback_responses_count} Verified Responses` : `${((scorecard.dimensions?.employer_readiness?.raw_rating_avg || 0)).toFixed(1)} / 5.0 Star Rating`}
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="bg-emerald-600 h-full rounded-full"
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.employer_readiness_feedback?.score ?? (scorecard.dimensions?.employer_readiness?.score ?? 0))) / 20) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">4. Wage Premium</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-bold">20% Weight</span>
+                      </div>
+                      <div className="text-2xl font-black text-slate-900 dark:text-white mt-2">
+                        {(scorecard.dimension_breakdown?.wage_premium?.score ?? (scorecard.dimensions?.wage_premium?.score ?? 0)).toFixed(1)}
+                        <span className="text-xs text-slate-400 font-normal"> / 20</span>
+                      </div>
+                      <div className="text-xs text-blue-600 dark:text-blue-400 font-bold mt-1">
+                        ₹{(((scorecard.dimension_breakdown?.wage_premium?.average_salary_inr ?? (scorecard.dimensions?.wage_premium?.raw_salary_avg ?? 0))) / 100000).toFixed(1)}L Avg Salary
+                      </div>
+                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-2 overflow-hidden">
+                        <div
+                          className="bg-blue-600 h-full rounded-full"
+                          style={{ width: `${Math.min(100, (((scorecard.dimension_breakdown?.wage_premium?.score ?? (scorecard.dimensions?.wage_premium?.score ?? 0))) / 20) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                      State Audit Notices & Remediation Action Tracking
+                    </h3>
+                    <span className="text-xs font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {instituteNotices.length} Notices
+                    </span>
+                  </div>
+
+                  {instituteNotices.length === 0 ? (
+                    <div className="p-6 text-center rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 text-emerald-900 dark:text-emerald-200 text-xs">
+                      ✓ No active audit notices or regulatory warnings on file. Institute is in full compliance with state vocational standards.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {instituteNotices.map((notice) => (
+                        <div
+                          key={notice.id}
+                          className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 space-y-3"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                notice.severity === 'CRITICAL' ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300' :
+                                notice.severity === 'MAJOR' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300' :
+                                'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-300'
+                              }`}>
+                                {notice.severity}
+                              </span>
+                              <h4 className="text-xs font-bold text-slate-900 dark:text-white">
+                                {notice.title}
+                              </h4>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold ${
+                                notice.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' :
+                                notice.status === 'IN_REMEDIATION' ? 'bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300' :
+                                'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                              }`}>
+                                {notice.status}
+                              </span>
+                              <span className="text-[11px] text-slate-500 font-mono">
+                                Deadline: {notice.deadline_date ? new Date(notice.deadline_date).toLocaleDateString() : (notice.remediation_deadline ? new Date(notice.remediation_deadline).toLocaleDateString() : '30 Days')}
+                              </span>
+                            </div>
+                          </div>
+
+                          <p className="text-xs text-slate-600 dark:text-slate-300">
+                            {notice.description}
+                          </p>
+
+                          {notice.mandated_action && (
+                            <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                              <span className="font-bold block mb-1">State Mandated Action:</span>
+                              <p className="text-slate-600 dark:text-slate-400 whitespace-pre-line">{notice.mandated_action}</p>
+                            </div>
+                          )}
+
+                          {Array.isArray(notice.findings) && notice.findings.length > 0 && !notice.mandated_action && (
+                            <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-900 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                              <span className="font-bold block mb-1">State Audit Findings:</span>
+                              <ul className="list-disc list-inside space-y-0.5 text-slate-600 dark:text-slate-400">
+                                {notice.findings.map((f, i) => (
+                                  <li key={i}>{typeof f === 'string' ? f : JSON.stringify(f)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          {notice.status !== 'RESOLVED' && (
+                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row items-center gap-2">
+                              <input
+                                type="text"
+                                placeholder="Enter remediation action plan or MSBTE compliance evidence notes..."
+                                value={remediationNotesMap[notice.id] || notice.remediation_notes || ''}
+                                onChange={(e) => setRemediationNotesMap({ ...remediationNotesMap, [notice.id]: e.target.value })}
+                                className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-teal-500"
+                              />
+                              <button
+                                onClick={() => handleUpdateNoticeRemediation(notice.id)}
+                                disabled={submittingNoticeId === notice.id}
+                                className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap disabled:opacity-50"
+                              >
+                                {submittingNoticeId === notice.id ? 'Submitting...' : 'Submit Action Plan'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-slate-400 text-xs">
+                No accreditation record found. Click &quot;Refresh Scorecard&quot; to compute scorecard.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {isOutcomeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 text-xs animate-scaleUp">
@@ -1325,11 +1727,13 @@ export default function InstituteDashboard() {
                 e.preventDefault();
                 setSavingOutcome(true);
                 try {
+                  const isPlaced = ['PLACED', 'EMPLOYED'].includes(outcomeForm.status);
                   const payload = {
                     ...outcomeForm,
                     salary_annual_inr: ['PLACED', 'EMPLOYED', 'EMPLOYER_FEEDBACK_PENDING', 'FEEDBACK_RECEIVED'].includes(outcomeForm.status)
                       ? (Number(outcomeForm.salary_annual_inr) || null)
                       : null,
+                    retention_status: isPlaced ? (outcomeForm.retention_status || 'UNKNOWN') : 'UNKNOWN',
                   };
                   const res = await api.createPlacementOutcome(payload);
                   if (res?.placement_outcome) {
@@ -1429,7 +1833,15 @@ export default function InstituteDashboard() {
                   </label>
                   <select
                     value={outcomeForm.status}
-                    onChange={(e) => setOutcomeForm({ ...outcomeForm, status: e.target.value })}
+                    onChange={(e) => {
+                      const nextStatus = e.target.value;
+                      const isPlaced = ['PLACED', 'EMPLOYED'].includes(nextStatus);
+                      setOutcomeForm((prev) => ({
+                        ...prev,
+                        status: nextStatus,
+                        retention_status: isPlaced ? prev.retention_status : 'UNKNOWN',
+                      }));
+                    }}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
                   >
                     <option value="TRAINING_COMPLETED">Training Completed</option>
@@ -1452,6 +1864,22 @@ export default function InstituteDashboard() {
                     ))}
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-800 dark:text-slate-200 block mb-1">
+                  Workforce Retention Status
+                </label>
+                <select
+                  value={['PLACED', 'EMPLOYED'].includes(outcomeForm.status) ? (outcomeForm.retention_status || 'UNKNOWN') : 'UNKNOWN'}
+                  onChange={(e) => setOutcomeForm({ ...outcomeForm, retention_status: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-white font-medium outline-none focus:ring-1 focus:ring-teal-500"
+                >
+                  <option value="UNKNOWN">UNKNOWN (Under Initial Tracking)</option>
+                  <option value="6_MONTH_RETAINED" disabled={!['PLACED', 'EMPLOYED'].includes(outcomeForm.status)}>6_MONTH_RETAINED (6 Months Retained)</option>
+                  <option value="12_MONTH_RETAINED" disabled={!['PLACED', 'EMPLOYED'].includes(outcomeForm.status)}>12_MONTH_RETAINED (12 Months Milestone Reached)</option>
+                  <option value="ATTRITED">ATTRITED (Separated / Discontinued)</option>
+                </select>
               </div>
 
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2.5">
