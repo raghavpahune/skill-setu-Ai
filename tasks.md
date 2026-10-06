@@ -2,15 +2,16 @@
 
 ## Current Status Overview
 - **Active Phase:** PHASE 18 — Vocational Faculty Competency & State Trainer Development Pipeline
-- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated across 4 cycles:
+- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated across 5 cycles:
   - Cycle 1 (Commit `051446c`): DB nomination updates conflict surfacing, pre-pagination status filtering.
   - Cycle 2 (Commits `cf35b04`, `8f4135e`): Dashboard active faculty metrics binding, ADR-01/06 outage policy harmonization, schema and allowlist synchronization.
   - Cycle 3 (Commits `a01f3a4`, `c8e384b`): Propagate configured DB failures across trainer/nomination helpers, statewide analytics authorization enforcement (`GOVERNMENT`, `ADMIN`), unlimited analytics queries (`limit=None`), and InstituteDashboard catalog normalization.
-  - Cycle 4:
-    - Finding 1 (`backend/app/services/trainer_service.py`): Propagated configured database failures (`SupabaseRepositoryError`) in `list_institution_trainers_service` and `list_faculty_nominations_service`, restricting cache fallback to `ImportError` and `SupabaseConnectionError`.
-    - Finding 2 (`frontend/src/pages/GovernmentDashboard.jsx`): Bound Pending and Sanctioned Grants KPI calculations to authoritative `statewideTrainers.nomination_summary` counts with fallback to list-derived counts only when analytics is unavailable.
-  - Validation: 29 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (55 total backend tests); Ruff clean; Oxlint 0 errors; Vite build succeeded.
-- **Next Step:** Commit and push validated Cycle 4 remediation changes.
+  - Cycle 4 (Commit `4681d4a`): Propagate configured DB failures in trainer/nomination list services, and bind GovernmentDashboard FDP grant KPIs to authoritative analytics.
+  - Cycle 5:
+    - Finding 1 (`frontend/src/pages/GovernmentDashboard.jsx`): Display active loading state (`loading && !statewideTrainers`) on initial load for statewide trainer KPI cards, display `Unavailable` on error, and retain previously loaded values during background refresh.
+    - Regression Tests (`frontend/test_government_trainer_kpis.test.js`): Added 4 focused node tests verifying initial load, error state, refresh retention, and zero-count validity.
+  - Validation: 55 backend tests passed; 4 focused frontend tests passed; Ruff clean; Oxlint 0 errors; Vite build succeeded.
+- **Next Step:** Commit and push validated Cycle 5 remediation changes.
 
 ---
 
@@ -35,11 +36,14 @@
   - Finding 5 (`memory.md`): Documented trainer-service cache invariants in ADR-06.
   - Finding 6 (`frontend/src/pages/InstituteDashboard.jsx`): Normalized catalog category-to-program mapping in `InstituteDashboard.jsx` to flat array with required modal fields.
   - Regression Tests (`backend/test_phase18_trainer_capacity.py`): Added focused tests for analytics role enforcement and configured DB error propagation.
-- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 4:**
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 4 (`4681d4a`):**
   - Finding 1 (`backend/app/services/trainer_service.py`): Re-raise `SupabaseRepositoryError` in `list_institution_trainers_service` and `list_faculty_nominations_service`, allowing cache fallback only for `ImportError` and `SupabaseConnectionError`.
   - Finding 2 (`frontend/src/pages/GovernmentDashboard.jsx`): Prefer authoritative `statewideTrainers.nomination_summary` counts for Pending and Sanctioned Grants KPIs with fallback to list-derived counts when analytics is unavailable.
   - Regression Tests (`backend/test_phase18_trainer_capacity.py`): Added 3 focused tests for list service DB error propagation, SupabaseConnectionError fallback, and ImportError fallback.
-  - Validation: 29 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (55 total); Ruff clean; Oxlint 0 errors; Vite build succeeded.
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 5:**
+  - Finding 1 (`frontend/src/pages/GovernmentDashboard.jsx`): Display active loading state (`loading && !statewideTrainers`) on initial load for statewide trainer KPI cards, display `Unavailable` on error, and retain previously loaded values during background refresh.
+  - Regression Tests (`frontend/test_government_trainer_kpis.test.js`): Added 4 focused node tests verifying initial load, error state, refresh retention, and zero-count validity.
+  - Validation: 55 backend tests passed; 4 focused frontend tests passed; Ruff clean; Oxlint 0 errors; Vite build succeeded.
 
 ---
 

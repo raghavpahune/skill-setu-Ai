@@ -1961,7 +1961,9 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Norm Compliance Ratio</div>
               <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {errors.statewideTrainers ? (
+                {loading && !statewideTrainers ? (
+                  <span className="text-sm font-medium text-slate-400 animate-pulse">Loading...</span>
+                ) : errors.statewideTrainers ? (
                   <span className="text-sm font-semibold text-rose-500">Unavailable</span>
                 ) : (
                   `${statewideTrainers?.summary?.statewide_compliance_ratio_pct ?? 0}%`
@@ -1973,7 +1975,9 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Total Active Faculty</div>
               <div className="text-xl font-black text-slate-900 dark:text-white mt-1">
-                {errors.statewideTrainers ? (
+                {loading && !statewideTrainers ? (
+                  <span className="text-sm font-medium text-slate-400 animate-pulse">Loading...</span>
+                ) : errors.statewideTrainers ? (
                   <span className="text-sm font-semibold text-rose-500">Unavailable</span>
                 ) : (
                   statewideTrainers?.summary?.active_trainers ?? 0
@@ -1985,7 +1989,9 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Modernized Instructors</div>
               <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
-                {errors.statewideTrainers ? (
+                {loading && !statewideTrainers ? (
+                  <span className="text-sm font-medium text-slate-400 animate-pulse">Loading...</span>
+                ) : errors.statewideTrainers ? (
                   <span className="text-sm font-semibold text-rose-500">Unavailable</span>
                 ) : (
                   statewideTrainers?.summary?.certified_trainers_count ?? 0

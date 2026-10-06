@@ -38,6 +38,7 @@ This document records durable architectural decisions, security choices, data pr
   - Statewide analytics loaders (`_get_trainers`, `_get_nominations`) pass `limit=None` to guarantee complete state/district record aggregation.
   - Statewide analytics endpoint `/api/trainers/analytics/statewide` is role-restricted to `GOVERNMENT` and `ADMIN` personas.
   - GovernmentDashboard FDP Grant Sponsorships KPI calculations prefer authoritative `statewideTrainers.nomination_summary` counts with fallback to list-derived counts only when analytics is unavailable.
+  - GovernmentDashboard statewide trainer KPI cards display a loading state on initial load (`loading && !statewideTrainers`), show `Unavailable` on error, and retain previously loaded metrics during background refresh.
   - Institute dashboard upgrade catalog handles both raw category-to-program mappings and pre-flattened catalog arrays.
 - **Pagination Semantics:** Status filtering must always occur at the query/repository level prior to range-based pagination (`range(offset, offset + limit - 1)`). Post-pagination filtering is prohibited.
 
