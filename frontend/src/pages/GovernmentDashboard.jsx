@@ -1964,7 +1964,7 @@ export default function GovernmentDashboard() {
                 {errors.statewideTrainers ? (
                   <span className="text-sm font-semibold text-rose-500">Unavailable</span>
                 ) : (
-                  statewideTrainers?.summary?.total_trainers ?? 0
+                  statewideTrainers?.summary?.active_trainers ?? 0
                 )}
               </div>
               <div className="text-[10px] text-teal-600 font-medium">Across Maharashtra</div>
@@ -2026,7 +2026,7 @@ export default function GovernmentDashboard() {
                         <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">
                           {d.district}
                         </td>
-                        <td className="py-2.5 px-3 font-mono font-semibold">{d.trainer_count}</td>
+                        <td className="py-2.5 px-3 font-mono font-semibold">{d.active_faculty ?? 0}</td>
                         <td className="py-2.5 px-3 font-mono text-indigo-600 dark:text-indigo-400">{d.certified_count}</td>
                         <td className="py-2.5 px-3 font-mono">{d.enrolment_capacity}</td>
                         <td className="py-2.5 px-3 font-mono text-slate-500">{d.required_trainers}</td>

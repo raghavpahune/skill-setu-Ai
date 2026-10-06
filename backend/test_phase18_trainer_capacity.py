@@ -585,3 +585,70 @@ def test_supabase_repo_list_trainers_status_filter_applied():
         res = list_institution_trainers(status="active", limit=10, offset=0)
         mock_query.eq.assert_any_call("status", "ACTIVE")
         assert len(res) == 1
+
+
+def test_supabase_repo_trainer_and_nomination_allowlists_reject_unknown_columns():
+    from unittest.mock import MagicMock, patch
+    from app.repositories.supabase_repository import (
+        VALID_FACULTY_NOMINATION_COLUMNS,
+        VALID_INSTITUTION_TRAINER_COLUMNS,
+        create_faculty_nomination,
+        create_institution_trainer,
+    )
+
+    mock_table_trainer = MagicMock()
+    mock_table_trainer.insert.return_value.execute.return_value = MagicMock(data=[{"id": "tr-test-1", "name": "Trainer Test"}])
+
+    mock_table_nom = MagicMock()
+    mock_table_nom.insert.return_value.execute.return_value = MagicMock(data=[{"id": "nom-test-1", "trainer_id": "tr-test-1"}])
+
+    def mock_table_side_effect(table_name):
+        if table_name == "institution_trainers":
+            return mock_table_trainer
+        if table_name == "faculty_upskilling_nominations":
+            return mock_table_nom
+        return MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.table.side_effect = mock_table_side_effect
+
+    with patch("app.repositories.supabase_repository.get_client", return_value=mock_client):
+        trainer_payload = {
+            "id": "tr-test-1",
+            "name": "Trainer Test",
+            "institute_id": "inst-coep",
+            "institute_name": "COEP",
+            "district": "Pune",
+            "primary_trade": "Robotics",
+            "employee_id": "EMP-001",
+            "certifications": ["Cert A"],
+            "unknown_malicious_column": "should_be_stripped",
+            "non_schema_key": 999,
+        }
+        create_institution_trainer(trainer_payload)
+        trainer_insert_row = mock_table_trainer.insert.call_args[0][0]
+        assert "unknown_malicious_column" not in trainer_insert_row
+        assert "non_schema_key" not in trainer_insert_row
+        assert trainer_insert_row["employee_id"] == "EMP-001"
+        assert trainer_insert_row["certifications"] == ["Cert A"]
+        assert all(k in VALID_INSTITUTION_TRAINER_COLUMNS for k in trainer_insert_row.keys())
+
+        nom_payload = {
+            "id": "nom-test-1",
+            "trainer_id": "tr-test-1",
+            "trainer_name": "Trainer Test",
+            "institute_id": "inst-coep",
+            "institute_name": "COEP",
+            "district": "Pune",
+            "program_name": "FDP Test",
+            "certifying_body": "MSDE",
+            "sanction_reference": "REF-999",
+            "sanction_amount_inr": 25000,
+            "arbitrary_unallowlisted_field": "disallowed",
+        }
+        create_faculty_nomination(nom_payload)
+        nom_insert_row = mock_table_nom.insert.call_args[0][0]
+        assert "arbitrary_unallowlisted_field" not in nom_insert_row
+        assert nom_insert_row["sanction_reference"] == "REF-999"
+        assert nom_insert_row["sanction_amount_inr"] == 25000
+        assert all(k in VALID_FACULTY_NOMINATION_COLUMNS for k in nom_insert_row.keys())
