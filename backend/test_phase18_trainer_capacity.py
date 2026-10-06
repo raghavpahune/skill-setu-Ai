@@ -443,3 +443,145 @@ def test_faculty_nomination_stale_update_conflict():
     with pytest.raises(ValueError) as exc:
         update_faculty_nomination_record(nom_id, {"status": "REJECTED"}, expected_status="NOMINATED")
     assert "stale" in str(exc.value).lower()
+
+
+def test_faculty_nomination_db_authoritative_and_stale_cache_not_overriding():
+    from unittest.mock import patch
+    from app.db import _cache, update_faculty_nomination_record
+
+    records = _cache.setdefault("faculty_upskilling_nominations", [])
+    test_id = "nom-auth-test-1"
+    records[:] = [r for r in records if r.get("id") != test_id]
+    records.append({"id": test_id, "status": "OLD_STALE_STATUS"})
+
+    db_updated = {"id": test_id, "status": "SANCTIONED", "sanction_reference": "MSDE/2026/001"}
+    with patch("app.db.is_supabase_connected", return_value=True), \
+         patch("app.repositories.supabase_repository.update_faculty_nomination", return_value=db_updated) as mock_update:
+        res = update_faculty_nomination_record(test_id, {"status": "SANCTIONED"}, expected_status="NOMINATED")
+        assert res["status"] == "SANCTIONED"
+        assert res["sanction_reference"] == "MSDE/2026/001"
+        assert mock_update.call_args[0][0] == test_id
+        assert mock_update.call_args[0][1]["status"] == "SANCTIONED"
+        assert mock_update.call_args[1]["expected_status"] == "NOMINATED"
+
+    cached_item = next(r for r in _cache.get("faculty_upskilling_nominations", []) if r.get("id") == test_id)
+    assert cached_item["status"] == "SANCTIONED"
+
+
+def test_faculty_nomination_db_rejection_surfaces_conflict():
+    from unittest.mock import patch
+    from app.db import _cache, update_faculty_nomination_record
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+
+    records = _cache.setdefault("faculty_upskilling_nominations", [])
+    test_id = "nom-reject-test-1"
+    records[:] = [r for r in records if r.get("id") != test_id]
+    records.append({"id": test_id, "status": "NOMINATED"})
+
+    with patch("app.db.is_supabase_connected", return_value=True), \
+         patch("app.repositories.supabase_repository.update_faculty_nomination", side_effect=SupabaseRepositoryError("Database rejection")):
+        with pytest.raises(ValueError) as exc:
+            update_faculty_nomination_record(test_id, {"status": "SANCTIONED"}, expected_status="NOMINATED")
+        assert "database rejection" in str(exc.value).lower()
+
+    cached_item = next(r for r in _cache.get("faculty_upskilling_nominations", []) if r.get("id") == test_id)
+    assert cached_item["status"] == "NOMINATED"
+
+
+def test_faculty_nomination_db_stale_status_surfaces_conflict_via_api():
+    from unittest.mock import patch
+
+    headers_gov = _get_headers("GOVERNMENT", user_id="usr-gov-001", email="government@skillsetu.gov.in", org_id="gov-msis")
+    with patch("app.routers.trainers.get_faculty_nomination", return_value={"id": "nom-api-stale", "status": "NOMINATED", "institute_id": "inst-coep"}), \
+         patch("app.routers.trainers.get_faculty_nomination_by_id", return_value={"id": "nom-api-stale", "status": "NOMINATED", "institute_id": "inst-coep"}), \
+         patch("app.db.is_supabase_connected", return_value=True), \
+         patch("app.repositories.supabase_repository.update_faculty_nomination", side_effect=ValueError("Stale nomination status: expected NOMINATED, found COMPLETED")):
+        resp = client.patch(
+            "/api/trainers/nominations/nom-api-stale",
+            headers=headers_gov,
+            json={"status": "SANCTIONED"},
+        )
+        assert resp.status_code == 409
+        assert "stale" in resp.json()["detail"].lower()
+
+
+def test_trainer_listing_passes_normalized_status_to_repo_before_pagination():
+    from unittest.mock import MagicMock, patch
+    from app.services.trainer_service import list_institution_trainers_service
+
+    mock_repo_list = MagicMock(return_value=[{"id": "tr-1", "status": "ACTIVE"}])
+    with patch("app.repositories.supabase_repository.list_institution_trainers", mock_repo_list):
+        res = list_institution_trainers_service(
+            institute_id="inst-coep",
+            status="  active  ",
+            is_demo=False,
+            limit=10,
+            offset=5,
+        )
+        mock_repo_list.assert_called_once_with(
+            institute_id="inst-coep",
+            district=None,
+            trade=None,
+            status="ACTIVE",
+            is_demo=False,
+            limit=10,
+            offset=5,
+        )
+        assert len(res) == 1
+        assert res[0]["status"] == "ACTIVE"
+
+
+def test_trainer_listing_cache_fallback_pagination_with_status_filter():
+    from app.db import _cache
+    from app.services.trainer_service import list_institution_trainers_service
+
+    test_trainers = []
+    for i in range(10):
+        st = "ACTIVE" if i % 2 == 0 else "INACTIVE"
+        test_trainers.append({
+            "id": f"tr-page-test-{i}",
+            "institute_id": "inst-page-test",
+            "name": f"Trainer {i}",
+            "status": st,
+            "is_demo": True,
+        })
+    records = _cache.setdefault("institution_trainers", [])
+    records[:] = [t for t in records if t.get("institute_id") != "inst-page-test"]
+    records.extend(test_trainers)
+
+    page1 = list_institution_trainers_service(institute_id="inst-page-test", status="active", is_demo=True, limit=3, offset=0)
+    assert len(page1) == 3
+    assert all(t["status"] == "ACTIVE" for t in page1)
+    assert [t["id"] for t in page1] == ["tr-page-test-0", "tr-page-test-2", "tr-page-test-4"]
+
+    page2 = list_institution_trainers_service(institute_id="inst-page-test", status="ACTIVE", is_demo=True, limit=3, offset=3)
+    assert len(page2) == 2
+    assert all(t["status"] == "ACTIVE" for t in page2)
+    assert [t["id"] for t in page2] == ["tr-page-test-6", "tr-page-test-8"]
+
+    all_page = list_institution_trainers_service(institute_id="inst-page-test", is_demo=True, limit=4, offset=0)
+    assert len(all_page) == 4
+    assert [t["id"] for t in all_page] == ["tr-page-test-0", "tr-page-test-1", "tr-page-test-2", "tr-page-test-3"]
+
+
+def test_supabase_repo_list_trainers_status_filter_applied():
+    from unittest.mock import MagicMock, patch
+    from app.repositories.supabase_repository import list_institution_trainers
+
+    mock_query = MagicMock()
+    mock_query.eq.return_value = mock_query
+    mock_query.ilike.return_value = mock_query
+    mock_query.order.return_value = mock_query
+    mock_query.range.return_value = mock_query
+    mock_query.execute.return_value = MagicMock(data=[{"id": "tr-db-1", "status": "ACTIVE", "created_at": "2026-09-20T10:00:00Z"}])
+
+    mock_table = MagicMock()
+    mock_table.select.return_value = mock_query
+
+    mock_client = MagicMock()
+    mock_client.table.return_value = mock_table
+
+    with patch("app.repositories.supabase_repository.get_client", return_value=mock_client):
+        res = list_institution_trainers(status="active", limit=10, offset=0)
+        mock_query.eq.assert_any_call("status", "ACTIVE")
+        assert len(res) == 1

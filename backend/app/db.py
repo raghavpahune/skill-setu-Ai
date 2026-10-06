@@ -1933,12 +1933,25 @@ def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]
     if not _cache:
         init_db()
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-    saved = {}
-    try:
-        from app.repositories.supabase_repository import update_faculty_nomination
-        saved = update_faculty_nomination(nomination_id, updates, expected_status=expected_status)
-    except Exception:
-        pass
+    if is_supabase_connected():
+        from app.repositories.supabase_repository import SupabaseConnectionError, update_faculty_nomination
+        try:
+            saved = update_faculty_nomination(nomination_id, updates, expected_status=expected_status)
+            records = _cache.setdefault("faculty_upskilling_nominations", [])
+            matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nomination_id), None)
+            if matched_idx is not None:
+                records[matched_idx] = {**records[matched_idx], **saved}
+            else:
+                records.insert(0, saved)
+            _flush_real_table("faculty_upskilling_nominations")
+            return saved
+        except SupabaseConnectionError:
+            pass
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Database rejection: {e}") from e
+
     records = _cache.setdefault("faculty_upskilling_nominations", [])
     matched_idx = next((i for i, n in enumerate(records) if n.get("id") == nomination_id), None)
     if matched_idx is not None:
@@ -1946,11 +1959,8 @@ def update_faculty_nomination_record(nomination_id: str, updates: dict[str, Any]
             current_status = (records[matched_idx].get("status") or "").upper()
             if current_status != expected_status.upper():
                 raise ValueError(f"Stale nomination status: expected {expected_status}, found {current_status}")
-        merged = {**records[matched_idx], **updates, **saved}
+        merged = {**records[matched_idx], **updates}
         records[matched_idx] = merged
-    elif saved:
-        merged = {**updates, **saved}
-        records.insert(0, merged)
     else:
         raise ValueError(f"Faculty nomination '{nomination_id}' not found for update.")
     _flush_real_table("faculty_upskilling_nominations")

@@ -402,7 +402,7 @@ async def update_faculty_nomination_endpoint(
         updated = update_faculty_nomination_record(nomination_id, updates, expected_status=curr_status)
     except ValueError as e:
         err_str = str(e)
-        if "stale" in err_str.lower():
+        if "stale" in err_str.lower() or "rejection" in err_str.lower() or "conflict" in err_str.lower():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=err_str)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err_str)
 

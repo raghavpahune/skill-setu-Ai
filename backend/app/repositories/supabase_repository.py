@@ -3302,6 +3302,7 @@ def list_institution_trainers(
     institute_id: str | None = None,
     district: str | None = None,
     trade: str | None = None,
+    status: str | None = None,
     is_demo: bool | None = None,
     limit: int | None = 100,
     offset: int = 0,
@@ -3315,6 +3316,8 @@ def list_institution_trainers(
             query = query.ilike("district", f"%{district.strip()}%")
         if trade:
             query = query.ilike("primary_trade", f"%{trade.strip()}%")
+        if status:
+            query = query.eq("status", status.strip().upper())
         if is_demo is not None:
             query = query.eq("is_demo", is_demo)
 
@@ -3432,9 +3435,16 @@ def update_faculty_nomination(nomination_id: str, updates: dict[str, Any], expec
             query = query.eq("status", expected_status.upper())
         res = query.execute()
         if not res.data or len(res.data) == 0:
-            raise SupabaseRepositoryError(f"Failed updating faculty nomination '{nomination_id}'.")
+            if expected_status:
+                check = client.table("faculty_upskilling_nominations").select("status").eq("id", nomination_id).execute()
+                if check.data and len(check.data) > 0:
+                    current_status = (check.data[0].get("status") or "").upper()
+                    if current_status != expected_status.upper():
+                        raise ValueError(f"Stale nomination status: expected {expected_status}, found {current_status}")
+                    raise SupabaseRepositoryError(f"Database rejection: update rejected for nomination '{nomination_id}'.")
+            raise ValueError(f"Faculty nomination '{nomination_id}' not found for update.")
         return _enrich_nomination_record(res.data[0])
-    except SupabaseRepositoryError:
+    except (SupabaseRepositoryError, ValueError):
         raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed updating nomination '%s': %s", nomination_id, e)

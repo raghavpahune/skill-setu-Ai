@@ -10,16 +10,30 @@ logger = logging.getLogger(__name__)
 NSQF_STUDENT_TRAINER_RATIO_NORM = 20
 
 
-def _get_trainers(institute_id: str | None = None, district: str | None = None, trade: str | None = None, is_demo: bool | None = None) -> list[dict[str, Any]]:
+def _get_trainers(
+    institute_id: str | None = None,
+    district: str | None = None,
+    trade: str | None = None,
+    status: str | None = None,
+    is_demo: bool | None = None,
+) -> list[dict[str, Any]]:
     if not _cache:
         init_db()
+    norm_status = status.strip().upper() if status and status.strip() else None
     is_demo_mode = is_explicit_demo_mode(is_demo)
     if is_demo_mode:
         trainers = _cache.get("institution_trainers", [])
     else:
         try:
             from app.repositories.supabase_repository import list_institution_trainers
-            trainers = list_institution_trainers(institute_id=institute_id, district=district, trade=trade, is_demo=is_demo, limit=1000) or []
+            trainers = list_institution_trainers(
+                institute_id=institute_id,
+                district=district,
+                trade=trade,
+                status=norm_status,
+                is_demo=is_demo,
+                limit=1000,
+            ) or []
         except Exception:
             trainers = [t for t in _cache.get("institution_trainers", []) if is_demo is None or t.get("is_demo") == is_demo]
 
@@ -30,6 +44,8 @@ def _get_trainers(institute_id: str | None = None, district: str | None = None, 
         filtered = [t for t in filtered if district.strip().lower() in (t.get("district") or "").lower()]
     if trade:
         filtered = [t for t in filtered if trade.strip().lower() in (t.get("primary_trade") or "").lower()]
+    if norm_status:
+        filtered = [t for t in filtered if (t.get("status") or "").upper() == norm_status]
     if is_demo is not None:
         filtered = [t for t in filtered if t.get("is_demo") == is_demo]
     return filtered
@@ -71,6 +87,7 @@ def list_institution_trainers_service(
 ) -> list[dict[str, Any]]:
     if not _cache:
         init_db()
+    norm_status = status.strip().upper() if status and status.strip() else None
     is_demo_mode = is_explicit_demo_mode(is_demo)
     trainers = None
     if not is_demo_mode:
@@ -80,6 +97,7 @@ def list_institution_trainers_service(
                 institute_id=institute_id,
                 district=district,
                 trade=trade,
+                status=norm_status,
                 is_demo=is_demo,
                 limit=limit,
                 offset=offset,
@@ -98,11 +116,9 @@ def list_institution_trainers_service(
             filtered = [t for t in filtered if trade.strip().lower() in (t.get("primary_trade") or "").lower()]
         if is_demo is not None:
             filtered = [t for t in filtered if t.get("is_demo") == is_demo]
-        if status:
-            filtered = [t for t in filtered if (t.get("status") or "").upper() == status.strip().upper()]
+        if norm_status:
+            filtered = [t for t in filtered if (t.get("status") or "").upper() == norm_status]
         trainers = filtered[offset: offset + limit]
-    elif status:
-        trainers = [t for t in trainers if (t.get("status") or "").upper() == status.strip().upper()]
 
     return trainers
 
