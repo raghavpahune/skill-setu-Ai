@@ -1830,8 +1830,14 @@ def get_institution_trainer_by_id(trainer_id: str) -> dict[str, Any] | None:
         repo_t = get_institution_trainer(trainer_id)
         if repo_t:
             return repo_t
-    except Exception:
+    except ImportError:
         pass
+    except Exception as e:
+        from app.repositories.supabase_repository import SupabaseConnectionError
+        if isinstance(e, SupabaseConnectionError):
+            pass
+        else:
+            raise
     records = _cache.get("institution_trainers", [])
     return next((t for t in records if t.get("id") == trainer_id), None)
 
@@ -1849,8 +1855,14 @@ def save_institution_trainer_record(trainer_data: dict[str, Any]) -> dict[str, A
     try:
         from app.repositories.supabase_repository import create_institution_trainer
         saved = create_institution_trainer(trainer_data)
-    except Exception:
+    except ImportError:
         pass
+    except Exception as e:
+        from app.repositories.supabase_repository import SupabaseConnectionError
+        if isinstance(e, SupabaseConnectionError):
+            pass
+        else:
+            raise
     merged = {**trainer_data, **saved}
 
     records = _cache.setdefault("institution_trainers", [])
@@ -1873,8 +1885,14 @@ def update_institution_trainer_record(trainer_id: str, updates: dict[str, Any]) 
     try:
         from app.repositories.supabase_repository import update_institution_trainer
         saved = update_institution_trainer(trainer_id, updates)
-    except Exception:
+    except ImportError:
         pass
+    except Exception as e:
+        from app.repositories.supabase_repository import SupabaseConnectionError
+        if isinstance(e, SupabaseConnectionError):
+            pass
+        else:
+            raise
     records = _cache.setdefault("institution_trainers", [])
     matched_idx = next((i for i, t in enumerate(records) if t.get("id") == trainer_id), None)
     if matched_idx is not None:
@@ -1895,8 +1913,14 @@ def get_faculty_nomination_by_id(nomination_id: str) -> dict[str, Any] | None:
         repo_n = get_faculty_nomination(nomination_id)
         if repo_n:
             return repo_n
-    except Exception:
+    except ImportError:
         pass
+    except Exception as e:
+        from app.repositories.supabase_repository import SupabaseConnectionError
+        if isinstance(e, SupabaseConnectionError):
+            pass
+        else:
+            raise
     records = _cache.get("faculty_upskilling_nominations", [])
     return next((n for n in records if n.get("id") == nomination_id), None)
 
@@ -1913,8 +1937,14 @@ def save_faculty_nomination_record(nomination_data: dict[str, Any]) -> dict[str,
     try:
         from app.repositories.supabase_repository import create_faculty_nomination
         saved = create_faculty_nomination(nomination_data)
-    except Exception:
+    except ImportError:
         pass
+    except Exception as e:
+        from app.repositories.supabase_repository import SupabaseConnectionError
+        if isinstance(e, SupabaseConnectionError):
+            pass
+        else:
+            raise
     merged = {**nomination_data, **saved}
 
     records = _cache.setdefault("faculty_upskilling_nominations", [])

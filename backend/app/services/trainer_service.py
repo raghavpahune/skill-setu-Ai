@@ -32,10 +32,16 @@ def _get_trainers(
                 trade=trade,
                 status=norm_status,
                 is_demo=is_demo,
-                limit=1000,
+                limit=None,
             ) or []
-        except Exception:
+        except ImportError:
             trainers = [t for t in _cache.get("institution_trainers", []) if is_demo is None or t.get("is_demo") == is_demo]
+        except Exception as e:
+            from app.repositories.supabase_repository import SupabaseConnectionError
+            if isinstance(e, SupabaseConnectionError):
+                trainers = [t for t in _cache.get("institution_trainers", []) if is_demo is None or t.get("is_demo") == is_demo]
+            else:
+                raise
 
     filtered = trainers
     if institute_id:
@@ -60,9 +66,15 @@ def _get_nominations(institute_id: str | None = None, district: str | None = Non
     else:
         try:
             from app.repositories.supabase_repository import list_faculty_nominations
-            noms = list_faculty_nominations(institute_id=institute_id, district=district, status=status, is_demo=is_demo, limit=1000) or []
-        except Exception:
+            noms = list_faculty_nominations(institute_id=institute_id, district=district, status=status, is_demo=is_demo, limit=None) or []
+        except ImportError:
             noms = [n for n in _cache.get("faculty_upskilling_nominations", []) if is_demo is None or n.get("is_demo") == is_demo]
+        except Exception as e:
+            from app.repositories.supabase_repository import SupabaseConnectionError
+            if isinstance(e, SupabaseConnectionError):
+                noms = [n for n in _cache.get("faculty_upskilling_nominations", []) if is_demo is None or n.get("is_demo") == is_demo]
+            else:
+                raise
 
     filtered = noms
     if institute_id:

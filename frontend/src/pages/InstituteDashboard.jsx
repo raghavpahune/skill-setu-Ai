@@ -232,8 +232,28 @@ export default function InstituteDashboard() {
       if (nomsRes.status === 'fulfilled' && Array.isArray(nomsRes.value?.nominations)) {
         setFacultyNominations(nomsRes.value.nominations);
       }
-      if (catalogRes.status === 'fulfilled' && Array.isArray(catalogRes.value?.catalog)) {
-        setUpgradeCatalog(catalogRes.value.catalog);
+      if (catalogRes.status === 'fulfilled' && catalogRes.value?.catalog) {
+        const rawCatalog = catalogRes.value.catalog;
+        if (Array.isArray(rawCatalog)) {
+          setUpgradeCatalog(rawCatalog);
+        } else if (typeof rawCatalog === 'object') {
+          const flat = Object.entries(rawCatalog).flatMap(([domain, progs]) => {
+            if (!Array.isArray(progs)) return [];
+            return progs.map((p, idx) => {
+              const code = domain.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+              const durationWeeks = parseInt(String(p.duration || '2').replace(/[^0-9]/g, ''), 10) || 2;
+              return {
+                program_code: p.program_code || `FDP-${code}-${String(idx + 1).padStart(2, '0')}`,
+                title: p.title || p.program || '',
+                partner_agency: p.partner_agency || p.certifying_body || '',
+                duration_weeks: p.duration_weeks ?? durationWeeks,
+                budget_per_trainer_inr: p.budget_per_trainer_inr ?? ((p.target_trainers || 1) * 25000),
+                domain: p.domain || domain,
+              };
+            });
+          });
+          setUpgradeCatalog(flat);
+        }
       }
       if (!scorecardSuccess) {
         const failureReason = scRes.status === 'rejected'

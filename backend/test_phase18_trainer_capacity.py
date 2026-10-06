@@ -652,3 +652,60 @@ def test_supabase_repo_trainer_and_nomination_allowlists_reject_unknown_columns(
         assert nom_insert_row["sanction_reference"] == "REF-999"
         assert nom_insert_row["sanction_amount_inr"] == 25000
         assert all(k in VALID_FACULTY_NOMINATION_COLUMNS for k in nom_insert_row.keys())
+
+
+def test_statewide_trainer_analytics_authorization_enforced():
+    headers_student = _get_headers("STUDENT", user_id="usr-student-001", email="student@skillsetu.gov.in")
+    assert client.get("/api/trainers/analytics/statewide?is_demo=true", headers=headers_student).status_code == 403
+
+    headers_institute = _get_headers("INSTITUTE", user_id="usr-institute-001", email="institute@skillsetu.gov.in", org_id="inst-coep")
+    assert client.get("/api/trainers/analytics/statewide?is_demo=true", headers=headers_institute).status_code == 403
+
+    headers_employer = _get_headers("EMPLOYER", user_id="usr-employer-001", email="employer@skillsetu.gov.in")
+    assert client.get("/api/trainers/analytics/statewide?is_demo=true", headers=headers_employer).status_code == 403
+
+    headers_gov = _get_headers("GOVERNMENT", user_id="usr-gov-001", email="government@skillsetu.gov.in", org_id="state-gov")
+    resp_gov = client.get("/api/trainers/analytics/statewide?is_demo=true", headers=headers_gov)
+    assert resp_gov.status_code == 200
+    assert "summary" in resp_gov.json()
+
+    headers_admin = _get_headers("ADMIN", user_id="usr-admin-001", email="admin@skillsetu.gov.in", org_id="admin-org")
+    resp_admin = client.get("/api/trainers/analytics/statewide?is_demo=true", headers=headers_admin)
+    assert resp_admin.status_code == 200
+    assert "summary" in resp_admin.json()
+
+
+def test_trainer_service_configured_db_failures_raise():
+    from unittest.mock import patch
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+    from app.services.trainer_service import _get_trainers, _get_nominations
+
+    with patch("app.repositories.supabase_repository.list_institution_trainers", side_effect=SupabaseRepositoryError("Database query failed")):
+        with pytest.raises(SupabaseRepositoryError):
+            _get_trainers(is_demo=False)
+
+    with patch("app.repositories.supabase_repository.list_faculty_nominations", side_effect=SupabaseRepositoryError("Database query failed")):
+        with pytest.raises(SupabaseRepositoryError):
+            _get_nominations(is_demo=False)
+
+
+def test_trainer_db_helpers_configured_failures_raise():
+    from unittest.mock import patch
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+    from app.db import (
+        save_institution_trainer_record,
+        update_institution_trainer_record,
+        save_faculty_nomination_record,
+    )
+
+    with patch("app.repositories.supabase_repository.create_institution_trainer", side_effect=SupabaseRepositoryError("Insert failed")):
+        with pytest.raises(SupabaseRepositoryError):
+            save_institution_trainer_record({"name": "Failing Trainer", "primary_trade": "AI"})
+
+    with patch("app.repositories.supabase_repository.update_institution_trainer", side_effect=SupabaseRepositoryError("Update failed")):
+        with pytest.raises(SupabaseRepositoryError):
+            update_institution_trainer_record("trn-demo-001", {"name": "New Name"})
+
+    with patch("app.repositories.supabase_repository.create_faculty_nomination", side_effect=SupabaseRepositoryError("Insert nomination failed")):
+        with pytest.raises(SupabaseRepositoryError):
+            save_faculty_nomination_record({"trainer_id": "trn-demo-001", "program_code": "FDP-TEST"})

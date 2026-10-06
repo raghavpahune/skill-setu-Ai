@@ -3260,6 +3260,8 @@ def _enrich_trainer_record(record: dict[str, Any]) -> dict[str, Any]:
         enriched["assigned_course_ids"] = []
     if "certified_skills" in enriched and not isinstance(enriched["certified_skills"], list):
         enriched["certified_skills"] = []
+    if "certifications" not in enriched or not isinstance(enriched.get("certifications"), list):
+        enriched["certifications"] = list(enriched.get("certifications") or [])
     return enriched
 
 
@@ -3293,6 +3295,8 @@ def get_institution_trainer(trainer_id: str) -> dict[str, Any] | None:
         if data:
             return _enrich_trainer_record(data[0])
         return None
+    except SupabaseRepositoryError:
+        raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed fetching trainer '%s': %s", trainer_id, e)
         raise SupabaseRepositoryError(f"Database query failed fetching trainer '{trainer_id}': {e}") from e
@@ -3337,6 +3341,8 @@ def list_institution_trainers(
                 break
             curr_offset += fetch_size
         return all_trainers
+    except SupabaseRepositoryError:
+        raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed listing trainers: %s", e)
         raise SupabaseRepositoryError(f"Database query failed listing trainers: {e}") from e
@@ -3348,9 +3354,9 @@ def update_institution_trainer(trainer_id: str, updates: dict[str, Any]) -> dict
         row = {k: v for k, v in updates.items() if k in VALID_INSTITUTION_TRAINER_COLUMNS}
         res = client.table("institution_trainers").update(row).eq("id", trainer_id).execute()
         if not res.data or len(res.data) == 0:
-            raise SupabaseRepositoryError(f"Failed updating trainer '{trainer_id}'.")
+            raise ValueError(f"Trainer '{trainer_id}' not found for update.")
         return _enrich_trainer_record(res.data[0])
-    except SupabaseRepositoryError:
+    except (SupabaseRepositoryError, ValueError):
         raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed updating trainer '%s': %s", trainer_id, e)
@@ -3380,6 +3386,8 @@ def get_faculty_nomination(nomination_id: str) -> dict[str, Any] | None:
         if data:
             return _enrich_nomination_record(data[0])
         return None
+    except SupabaseRepositoryError:
+        raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed fetching nomination '%s': %s", nomination_id, e)
         raise SupabaseRepositoryError(f"Database query failed fetching nomination '{nomination_id}': {e}") from e
@@ -3421,6 +3429,8 @@ def list_faculty_nominations(
                 break
             curr_offset += fetch_size
         return all_noms
+    except SupabaseRepositoryError:
+        raise
     except Exception as e:
         logger.error("[SupabaseRepo] Failed listing faculty nominations: %s", e)
         raise SupabaseRepositoryError(f"Database query failed listing nominations: {e}") from e

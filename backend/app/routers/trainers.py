@@ -111,7 +111,7 @@ async def get_trainer_upgrade_catalog_endpoint(
 @router.get("/trainers/analytics/statewide")
 async def get_statewide_trainer_analytics_endpoint(
     is_demo: Optional[bool] = Query(None),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["GOVERNMENT", "ADMIN"])),
 ):
     demo_flag = is_demo if is_demo is not None else current_user.get("is_demo")
     analytics = compute_statewide_trainer_analytics(is_demo=demo_flag)

@@ -232,6 +232,8 @@ class MockSupabaseClient:
         placement_employer_feedback_rows=None,
         users_rows=None,
         difficult_skills_rows=None,
+        institution_trainers_rows=None,
+        faculty_nominations_rows=None,
     ):
         self.tables = {
             "employer_feedback": MockSupabaseTable(feedback_rows),
@@ -258,6 +260,8 @@ class MockSupabaseClient:
             "placement_employer_feedback": MockSupabaseTable(placement_employer_feedback_rows),
             "users": MockSupabaseTable(users_rows),
             "difficult_skills": MockSupabaseTable(difficult_skills_rows),
+            "institution_trainers": MockSupabaseTable(institution_trainers_rows),
+            "faculty_upskilling_nominations": MockSupabaseTable(faculty_nominations_rows),
         }
 
     def table(self, table_name: str) -> MockSupabaseTable:
@@ -737,6 +741,8 @@ def mock_supabase_for_tests():
     _cache["curriculum_proposals"] = deepcopy(_PRISTINE_CACHE.get("curriculum_proposals", []))
     _cache["placement_outcomes"] = deepcopy(_PRISTINE_CACHE.get("placement_outcomes", []))
     _cache["placement_employer_feedback"] = deepcopy(_PRISTINE_CACHE.get("placement_employer_feedback", []))
+    _cache["institution_trainers"] = deepcopy(_PRISTINE_CACHE.get("institution_trainers", []))
+    _cache["faculty_upskilling_nominations"] = deepcopy(_PRISTINE_CACHE.get("faculty_upskilling_nominations", []))
 
     mock_client = MockSupabaseClient(
         feedback_rows=deepcopy(_PRISTINE_FEEDBACK),
@@ -763,6 +769,8 @@ def mock_supabase_for_tests():
         placement_employer_feedback_rows=deepcopy(_cache.get("placement_employer_feedback", [])),
         users_rows=[deepcopy(u) for u in _cache.get("users", []) if not u.get("is_demo")],
         difficult_skills_rows=deepcopy(_cache.get("difficult_skills", [])),
+        institution_trainers_rows=deepcopy(_cache.get("institution_trainers", [])),
+        faculty_nominations_rows=deepcopy(_cache.get("faculty_upskilling_nominations", [])),
     )
     set_supabase_client(mock_client)
     yield mock_client
