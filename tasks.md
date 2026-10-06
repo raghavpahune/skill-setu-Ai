@@ -2,14 +2,18 @@
 
 ## Current Status Overview
 - **Active Phase:** PHASE 18 — Vocational Faculty Competency & State Trainer Development Pipeline
-- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated.
+- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated across 3 cycles:
   - Cycle 1 (Commit `051446c`): DB nomination updates conflict surfacing, pre-pagination status filtering.
-  - Cycle 2:
-    - Finding 1: GovernmentDashboard.jsx bound to active faculty metrics (`active_trainers`, `active_faculty`).
-    - Finding 2: ADR-01 & ADR-06 harmonized on production outage policy and `_cache` fallback boundaries.
-    - Finding 3: Database schema, migration, and repository allowlists synchronized across all trainer/nomination fields; mock allowlist regression test added.
-  - Validation: 23 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed; Ruff clean; frontend build & lint clean.
-- **Next Step:** CodeRabbit re-review & final validation workflow prior to PR merge and phase closure.
+  - Cycle 2 (Commits `cf35b04`, `8f4135e`): Dashboard active faculty metrics binding, ADR-01/06 outage policy harmonization, schema and allowlist synchronization.
+  - Cycle 3:
+    - Finding 1 (`backend/app/db.py`, `backend/app/repositories/supabase_repository.py`): Propagated configured database failures (`SupabaseRepositoryError`) and ValueError on missing trainer updates, preserving cache fallback strictly for unconfigured offline dev (`SupabaseConnectionError`) and explicit demo mode.
+    - Finding 2 (`backend/app/routers/trainers.py`): Enforced `require_roles(["GOVERNMENT", "ADMIN"])` on `/api/trainers/analytics/statewide`, rejecting unauthorized institute/student/employer access.
+    - Finding 3 (`backend/app/services/trainer_service.py`): Passed `limit=None` in statewide analytics loaders for full aggregation across all records.
+    - Finding 4 (`backend/app/services/trainer_service.py`): Configured database failures propagate from analytics loaders rather than swallowing into stale cache.
+    - Finding 5 (`memory.md`): Documented trainer-service cache invariants in ADR-06.
+    - Finding 6 (`frontend/src/pages/InstituteDashboard.jsx`): Normalized upgrade catalog to flatten category-to-program mappings and match modal fields while supporting flat arrays.
+  - Validation: 26 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (52 total backend tests); Ruff clean; Oxlint 0 errors; Vite build succeeded.
+- **Next Step:** Commit validated Cycle 3 remediation changes.
 
 ---
 
@@ -22,11 +26,19 @@
 - [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 1 (`051446c`):**
   - Finding 1 (`backend/app/db.py`): Authoritative database updates remain authoritative, update cache, and do not evaluate stale cache status. Genuine stale-status and database rejection errors surface as HTTP 409 Conflict rather than swallowed into cache fallback.
   - Finding 2 (`backend/app/services/trainer_service.py`, `backend/app/repositories/supabase_repository.py`): `list_institution_trainers` accepts optional status; status is normalized (`strip().upper()`) and applied before range pagination; post-pagination status filter removed; cache fallback retains consistent pagination semantics.
-- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 2:**
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 2 (`cf35b04`, `8f4135e`):**
   - Finding 1 (`frontend/src/pages/GovernmentDashboard.jsx`): Replaced total trainer count with `active_trainers` for statewide active faculty KPI, and replaced `trainer_count` with `active_faculty` in district table cell.
   - Finding 2 (`memory.md`): Harmonized ADR-01 and ADR-06 to explicitly define production outage policy: production requests when Supabase is configured never silently fall back to `_cache` on database errors/outages (surfacing HTTP 503/409); `_cache` fallback is strictly restricted to unconfigured offline dev (`SupabaseConnectionError`) and explicit demo mode.
   - Finding 3 (`data/schema.sql`, `data/migrations/20260923_phase18_trainer_capacity.sql`, `backend/test_phase18_trainer_capacity.py`): Harmonized schema and migration definitions with repository allowlists (`VALID_INSTITUTION_TRAINER_COLUMNS`, `VALID_FACULTY_NOMINATION_COLUMNS`) and router write payloads; added mock client regression test confirming unallowlisted keys are stripped before reaching Supabase.
-  - Validation: 23 Phase 18 tests passed, 7 Phase 18 E2E tests passed, 19 Phase 17 regression tests passed, Ruff clean, frontend build/oxlint clean.
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 3:**
+  - Finding 1 (`backend/app/db.py`, `backend/app/repositories/supabase_repository.py`): Re-raise `SupabaseRepositoryError` in trainer/nomination db helpers, raise `ValueError` for missing trainer updates, and ensure `_enrich_trainer_record` normalizes `certifications` as a list.
+  - Finding 2 (`backend/app/routers/trainers.py`): Role-restricted `/api/trainers/analytics/statewide` to `GOVERNMENT` and `ADMIN` personas.
+  - Finding 3 (`backend/app/services/trainer_service.py`): Set `limit=None` in statewide analytics loaders for full aggregation.
+  - Finding 4 (`backend/app/services/trainer_service.py`): Propagate configured DB failures from analytics loaders.
+  - Finding 5 (`memory.md`): Documented trainer-service cache invariants in ADR-06.
+  - Finding 6 (`frontend/src/pages/InstituteDashboard.jsx`): Normalized catalog category-to-program mapping in `InstituteDashboard.jsx` to flat array with required modal fields.
+  - Regression Tests (`backend/test_phase18_trainer_capacity.py`): Added focused tests for analytics role enforcement and configured DB error propagation.
+  - Validation: 26 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (52 total); Ruff clean; Oxlint 0 errors; Vite build succeeded.
 
 ---
 

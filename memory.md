@@ -31,7 +31,12 @@ This document records durable architectural decisions, security choices, data pr
 ### ADR-06: Database Authoritativeness and Pre-Pagination Query Filtering
 - **Decision:** Authoritative database updates must immediately remain authoritative and update cache without being blocked or invalidated by stale in-memory cache status.
 - **Error Surfacing:** Authoritative database rejections and stale-status mismatches must never be swallowed into silent fallback. They must surface as explicit conflicts (HTTP 409).
-- **Cache Fallback Boundary:** Local cache fallback is strictly restricted to unconfigured development environments (`SupabaseConnectionError`) and explicit demo mode. In configured production environments, database errors and rejections must never fall back to `_cache`.
+- **Cache Fallback Boundary:** Local cache fallback is strictly restricted to unconfigured development environments (`SupabaseConnectionError`) and explicit demo mode. In configured production environments, database errors and rejections (`SupabaseRepositoryError`) must never fall back to `_cache`.
+- **Trainer Capacity Invariants:**
+  - `save_institution_trainer_record`, `update_institution_trainer_record`, `save_faculty_nomination_record`, `update_faculty_nomination_record`, and get helpers propagate configured database failures (`SupabaseRepositoryError`) rather than falling back to `_cache`.
+  - Statewide analytics loaders (`_get_trainers`, `_get_nominations`) pass `limit=None` to guarantee complete state/district record aggregation.
+  - Statewide analytics endpoint `/api/trainers/analytics/statewide` is role-restricted to `GOVERNMENT` and `ADMIN` personas.
+  - Institute dashboard upgrade catalog handles both raw category-to-program mappings and pre-flattened catalog arrays.
 - **Pagination Semantics:** Status filtering must always occur at the query/repository level prior to range-based pagination (`range(offset, offset + limit - 1)`). Post-pagination filtering is prohibited.
 
 ---
@@ -47,7 +52,7 @@ This document records durable architectural decisions, security choices, data pr
 | **Phase 16** | Placement Outcomes & Feedback | End-to-end placement lifecycle tracking, post-hire employer feedback (skill adequacy, practical readiness), evidence confidence tiers. |
 | **Phase 17** | Institutional Accreditation & ROI | 4-tier state institutional accreditation engine, district training-to-employment ROI calculator, government audit notice issuance workflow. |
 | **Phase 18** | Faculty & Trainer Capacity | Vocational faculty competency scorecard, NSQF student-to-trainer capacity modeling, state FDP nomination lifecycle, statewide demand analytics. |
-| **Phase 18 Remediation** | CodeRabbit Consistency Hardening | Verified and resolved 5 CodeRabbit findings across 2 cycles: (Cycle 1: `051446c`) DB authoritativeness & rejection surfacing in `update_faculty_nomination_record`; pre-pagination status filtering in `list_institution_trainers` and service. (Cycle 2) Dashboard active faculty metrics binding; ADR-01/06 outage policy harmonization; PostgreSQL schema, migration, and allowlist synchronization with allowlist rejection regression test. |
+| **Phase 18 Remediation** | CodeRabbit Consistency Hardening | Verified and resolved CodeRabbit findings across 3 cycles: (Cycle 1: `051446c`) DB authoritativeness & rejection surfacing in `update_faculty_nomination_record`; pre-pagination status filtering in `list_institution_trainers` and service. (Cycle 2: `cf35b04`, `8f4135e`) Dashboard active faculty metrics binding; ADR-01/06 outage policy harmonization; PostgreSQL schema, migration, and allowlist synchronization with allowlist rejection regression test. (Cycle 3) Propagate configured DB failures across trainer/nomination helpers, statewide analytics authorization enforcement (`GOVERNMENT`, `ADMIN`), unlimited analytics queries (`limit=None`), and InstituteDashboard catalog normalization. |
 
 ---
 
