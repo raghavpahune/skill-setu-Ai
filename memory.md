@@ -42,13 +42,13 @@ This document records durable architectural decisions, security choices, data pr
 | **Restart Audit** | Comprehensive Project Audit | Verified 13/13 production warmup, 10/10 targeted tests, clean Ruff linting, frontend build success, cataloged 894 tests. |
 | **Phase 1** | Git Reconnection & Documentation | Safe reconnection to GitHub `origin/main` (`ba106b2`), created `feature/project-documentation-restart`, established canonical docs. |
 | **Phase 2 (P0)** | P0 Accreditation Cache Fallback Fix | Removed non-demo in-memory `_cache` fallback in `backend/app/routers/accreditation.py`. Enforced truthful empty list and explicit logging. Verified 20/20 tests. |
+| **Phase 2 (P1)** | P1 Profile Validation & Ruff Exclusions | Aligned certification filtering requiring both name and issuer (25/25 frontend tests pass). Added explicit virtual-environment exclusions to `ruff.toml`. |
 
 ---
 
 ## 3. Current Known Technical Risks
 
-1. **Profile Validator Field Discrepancy:** `frontend/src/utils/profileValidator.js` has minor validation discrepancies against backend schema requirements causing 1 test failure (24/25 passed). Scheduled for remediation in P1.
-2. **Unchecked Employer Candidate Feedback Submission:** Error handling during feedback submission in `EmployerDashboard.jsx` fails silently without notifying the user if the backend returns an error. Scheduled for P2.
+1. **Unchecked Employer Candidate Feedback Submission:** Error handling during feedback submission in `EmployerDashboard.jsx` fails silently without notifying the user if the backend returns an error. Scheduled for P2.
 
 ---
 

@@ -3,6 +3,10 @@ line-length = 120
 
 exclude = [
     ".git",
+    ".venv",
+    "backend/.venv",
+    "venv",
+    "__pycache__",
     ".pytest_cache",
     ".ruff_cache",
     "node_modules",

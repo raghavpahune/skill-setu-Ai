@@ -2,8 +2,8 @@
 
 ## Current Status Overview
 - **Active Phase:** PHASE 2 — Backlog Remediation
-- **Current Milestone:** P0 Remediation Complete (Removed non-demo accreditation in-memory cache fallbacks in `backend/app/routers/accreditation.py`; verified 20/20 tests passing).
-- **Next Task:** P1 — Fix Profile Validation Discrepancy in `frontend/src/utils/profileValidator.js`.
+- **Current Milestone:** P0 and P1 Remediation Complete (Accreditation cache fallback removed; profile validation aligned with 25/25 tests passing; ruff virtual-environment exclusions corrected).
+- **Next Task:** P2 — EmployerDashboard Silent Feedback Failure Handling & frontend test script integration.
 
 ---
 
@@ -28,12 +28,8 @@
 ---
 
 ### P1 — High Priority / Contract Alignment
-- [ ] **Fix Profile Validation Discrepancy (`frontend/src/utils/profileValidator.js`):**
-  - *Issue:* Field validation rules in `profileValidator.js` diverge slightly from backend model requirements, causing 1 frontend test failure (24/25 passed).
-  - *Requirement:* Align frontend validation rules with backend schemas and resolve the failing test in `frontend/test_profile_validation.test.js`.
-- [ ] **Ruff Exclusion Configuration Correction (`ruff.toml`):**
-  - *Issue:* `ruff.toml` excludes directories that should be linted or monitored in standard CI.
-  - *Requirement:* Clean up `ruff.toml` configuration to ensure consistent static analysis coverage.
+- [x] **Fix Profile Validation Discrepancy (`frontend/src/utils/profileValidator.js`):** Aligned certification sanitization requiring both name and issuer; filters incomplete entries cleanly; 25/25 frontend tests passing.
+- [x] **Ruff Exclusion Configuration Correction (`ruff.toml`):** Added explicit exclusions for `.venv`, `backend/.venv`, `venv`, and `__pycache__` ensuring clean, deterministic static analysis.
 
 ---
 
