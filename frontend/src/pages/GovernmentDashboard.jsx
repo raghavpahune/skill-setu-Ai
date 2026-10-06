@@ -692,6 +692,18 @@ export default function GovernmentDashboard() {
   const userRole = (role || user?.role || '').toUpperCase();
   const canPublish = userRole === 'GOVERNMENT' || userRole === 'ADMIN';
 
+  const pendingNominationsCount = typeof statewideTrainers?.nomination_summary?.NOMINATED === 'number'
+    ? statewideTrainers.nomination_summary.NOMINATED
+    : (!errors.facultyNominations && Array.isArray(allFacultyNominations)
+      ? allFacultyNominations.filter((n) => n.status === 'NOMINATED').length
+      : null);
+
+  const sanctionedNominationsCount = typeof statewideTrainers?.nomination_summary?.SANCTIONED === 'number'
+    ? statewideTrainers.nomination_summary.SANCTIONED
+    : (!errors.facultyNominations && Array.isArray(allFacultyNominations)
+      ? allFacultyNominations.filter((n) => n.status === 'SANCTIONED').length
+      : null);
+
   return (
     <Layout>
       {/* Header */}
@@ -1985,14 +1997,14 @@ export default function GovernmentDashboard() {
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
               <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">FDP Grant Sponsorships</div>
               <div className="text-xl font-black text-amber-600 dark:text-amber-400 mt-1">
-                {errors.facultyNominations ? (
+                {pendingNominationsCount === null ? (
                   <span className="text-sm font-semibold text-rose-500">Unavailable</span>
                 ) : (
-                  `${allFacultyNominations.filter((n) => n.status === 'NOMINATED').length} Pending`
+                  `${pendingNominationsCount} Pending`
                 )}
               </div>
               <div className="text-[10px] text-amber-500 font-medium">
-                {errors.facultyNominations ? 'Data error' : `${allFacultyNominations.filter((n) => n.status === 'SANCTIONED').length} Sanctioned Grants`}
+                {sanctionedNominationsCount === null ? 'Data error' : `${sanctionedNominationsCount} Sanctioned Grants`}
               </div>
             </div>
           </div>

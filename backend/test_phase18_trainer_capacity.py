@@ -709,3 +709,61 @@ def test_trainer_db_helpers_configured_failures_raise():
     with patch("app.repositories.supabase_repository.create_faculty_nomination", side_effect=SupabaseRepositoryError("Insert nomination failed")):
         with pytest.raises(SupabaseRepositoryError):
             save_faculty_nomination_record({"trainer_id": "trn-demo-001", "program_code": "FDP-TEST"})
+
+
+def test_list_services_configured_db_failures_raise():
+    from unittest.mock import patch
+    from app.repositories.supabase_repository import SupabaseRepositoryError
+    from app.services.trainer_service import (
+        list_institution_trainers_service,
+        list_faculty_nominations_service,
+    )
+
+    with patch("app.repositories.supabase_repository.list_institution_trainers", side_effect=SupabaseRepositoryError("Database error")):
+        with pytest.raises(SupabaseRepositoryError):
+            list_institution_trainers_service(is_demo=False)
+
+    with patch("app.repositories.supabase_repository.list_faculty_nominations", side_effect=SupabaseRepositoryError("Database error")):
+        with pytest.raises(SupabaseRepositoryError):
+            list_faculty_nominations_service(is_demo=False)
+
+
+def test_list_services_connection_error_cache_fallback():
+    from unittest.mock import patch
+    from app.repositories.supabase_repository import SupabaseConnectionError
+    from app.services.trainer_service import (
+        list_institution_trainers_service,
+        list_faculty_nominations_service,
+    )
+
+    with patch("app.repositories.supabase_repository.list_institution_trainers", side_effect=SupabaseConnectionError("Offline")):
+        trainers = list_institution_trainers_service(is_demo=False)
+        assert isinstance(trainers, list)
+
+    with patch("app.repositories.supabase_repository.list_faculty_nominations", side_effect=SupabaseConnectionError("Offline")):
+        noms = list_faculty_nominations_service(is_demo=False)
+        assert isinstance(noms, list)
+
+
+def test_list_services_import_error_cache_fallback():
+    from unittest.mock import patch
+    import builtins
+    from app.services.trainer_service import (
+        list_institution_trainers_service,
+        list_faculty_nominations_service,
+    )
+
+    orig_import = builtins.__import__
+
+    def mock_import(name, *args, **kwargs):
+        if "supabase_repository" in name:
+            raise ImportError("Module not available")
+        return orig_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=mock_import):
+        trainers = list_institution_trainers_service(is_demo=False)
+        assert isinstance(trainers, list)
+        noms = list_faculty_nominations_service(is_demo=False)
+        assert isinstance(noms, list)
+
+

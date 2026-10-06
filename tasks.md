@@ -2,18 +2,15 @@
 
 ## Current Status Overview
 - **Active Phase:** PHASE 18 — Vocational Faculty Competency & State Trainer Development Pipeline
-- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated across 3 cycles:
+- **Current Milestone:** Phase 18 CodeRabbit Remediation Completed & Validated across 4 cycles:
   - Cycle 1 (Commit `051446c`): DB nomination updates conflict surfacing, pre-pagination status filtering.
   - Cycle 2 (Commits `cf35b04`, `8f4135e`): Dashboard active faculty metrics binding, ADR-01/06 outage policy harmonization, schema and allowlist synchronization.
-  - Cycle 3:
-    - Finding 1 (`backend/app/db.py`, `backend/app/repositories/supabase_repository.py`): Propagated configured database failures (`SupabaseRepositoryError`) and ValueError on missing trainer updates, preserving cache fallback strictly for unconfigured offline dev (`SupabaseConnectionError`) and explicit demo mode.
-    - Finding 2 (`backend/app/routers/trainers.py`): Enforced `require_roles(["GOVERNMENT", "ADMIN"])` on `/api/trainers/analytics/statewide`, rejecting unauthorized institute/student/employer access.
-    - Finding 3 (`backend/app/services/trainer_service.py`): Passed `limit=None` in statewide analytics loaders for full aggregation across all records.
-    - Finding 4 (`backend/app/services/trainer_service.py`): Configured database failures propagate from analytics loaders rather than swallowing into stale cache.
-    - Finding 5 (`memory.md`): Documented trainer-service cache invariants in ADR-06.
-    - Finding 6 (`frontend/src/pages/InstituteDashboard.jsx`): Normalized upgrade catalog to flatten category-to-program mappings and match modal fields while supporting flat arrays.
-  - Validation: 26 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (52 total backend tests); Ruff clean; Oxlint 0 errors; Vite build succeeded.
-- **Next Step:** Commit validated Cycle 3 remediation changes.
+  - Cycle 3 (Commits `a01f3a4`, `c8e384b`): Propagate configured DB failures across trainer/nomination helpers, statewide analytics authorization enforcement (`GOVERNMENT`, `ADMIN`), unlimited analytics queries (`limit=None`), and InstituteDashboard catalog normalization.
+  - Cycle 4:
+    - Finding 1 (`backend/app/services/trainer_service.py`): Propagated configured database failures (`SupabaseRepositoryError`) in `list_institution_trainers_service` and `list_faculty_nominations_service`, restricting cache fallback to `ImportError` and `SupabaseConnectionError`.
+    - Finding 2 (`frontend/src/pages/GovernmentDashboard.jsx`): Bound Pending and Sanctioned Grants KPI calculations to authoritative `statewideTrainers.nomination_summary` counts with fallback to list-derived counts only when analytics is unavailable.
+  - Validation: 29 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (55 total backend tests); Ruff clean; Oxlint 0 errors; Vite build succeeded.
+- **Next Step:** Commit and push validated Cycle 4 remediation changes.
 
 ---
 
@@ -30,7 +27,7 @@
   - Finding 1 (`frontend/src/pages/GovernmentDashboard.jsx`): Replaced total trainer count with `active_trainers` for statewide active faculty KPI, and replaced `trainer_count` with `active_faculty` in district table cell.
   - Finding 2 (`memory.md`): Harmonized ADR-01 and ADR-06 to explicitly define production outage policy: production requests when Supabase is configured never silently fall back to `_cache` on database errors/outages (surfacing HTTP 503/409); `_cache` fallback is strictly restricted to unconfigured offline dev (`SupabaseConnectionError`) and explicit demo mode.
   - Finding 3 (`data/schema.sql`, `data/migrations/20260923_phase18_trainer_capacity.sql`, `backend/test_phase18_trainer_capacity.py`): Harmonized schema and migration definitions with repository allowlists (`VALID_INSTITUTION_TRAINER_COLUMNS`, `VALID_FACULTY_NOMINATION_COLUMNS`) and router write payloads; added mock client regression test confirming unallowlisted keys are stripped before reaching Supabase.
-- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 3:**
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 3 (`a01f3a4`, `c8e384b`):**
   - Finding 1 (`backend/app/db.py`, `backend/app/repositories/supabase_repository.py`): Re-raise `SupabaseRepositoryError` in trainer/nomination db helpers, raise `ValueError` for missing trainer updates, and ensure `_enrich_trainer_record` normalizes `certifications` as a list.
   - Finding 2 (`backend/app/routers/trainers.py`): Role-restricted `/api/trainers/analytics/statewide` to `GOVERNMENT` and `ADMIN` personas.
   - Finding 3 (`backend/app/services/trainer_service.py`): Set `limit=None` in statewide analytics loaders for full aggregation.
@@ -38,7 +35,11 @@
   - Finding 5 (`memory.md`): Documented trainer-service cache invariants in ADR-06.
   - Finding 6 (`frontend/src/pages/InstituteDashboard.jsx`): Normalized catalog category-to-program mapping in `InstituteDashboard.jsx` to flat array with required modal fields.
   - Regression Tests (`backend/test_phase18_trainer_capacity.py`): Added focused tests for analytics role enforcement and configured DB error propagation.
-  - Validation: 26 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (52 total); Ruff clean; Oxlint 0 errors; Vite build succeeded.
+- [x] **Phase 18 CodeRabbit Finding Remediation — Cycle 4:**
+  - Finding 1 (`backend/app/services/trainer_service.py`): Re-raise `SupabaseRepositoryError` in `list_institution_trainers_service` and `list_faculty_nominations_service`, allowing cache fallback only for `ImportError` and `SupabaseConnectionError`.
+  - Finding 2 (`frontend/src/pages/GovernmentDashboard.jsx`): Prefer authoritative `statewideTrainers.nomination_summary` counts for Pending and Sanctioned Grants KPIs with fallback to list-derived counts when analytics is unavailable.
+  - Regression Tests (`backend/test_phase18_trainer_capacity.py`): Added 3 focused tests for list service DB error propagation, SupabaseConnectionError fallback, and ImportError fallback.
+  - Validation: 29 Phase 18 tests, 7 Phase 18 E2E tests, 19 Phase 17 regression tests passed (55 total); Ruff clean; Oxlint 0 errors; Vite build succeeded.
 
 ---
 

@@ -114,8 +114,14 @@ def list_institution_trainers_service(
                 limit=limit,
                 offset=offset,
             )
-        except Exception:
+        except ImportError:
             trainers = None
+        except Exception as e:
+            from app.repositories.supabase_repository import SupabaseConnectionError
+            if isinstance(e, SupabaseConnectionError):
+                trainers = None
+            else:
+                raise
 
     if trainers is None:
         cached = _cache.get("institution_trainers", [])
@@ -158,8 +164,14 @@ def list_faculty_nominations_service(
                 limit=limit,
                 offset=offset,
             )
-        except Exception:
+        except ImportError:
             noms = None
+        except Exception as e:
+            from app.repositories.supabase_repository import SupabaseConnectionError
+            if isinstance(e, SupabaseConnectionError):
+                noms = None
+            else:
+                raise
 
     if noms is None:
         cached = _cache.get("faculty_upskilling_nominations", [])
