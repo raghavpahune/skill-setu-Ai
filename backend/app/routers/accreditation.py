@@ -93,21 +93,9 @@ async def list_accredited_institutes(
                 limit=None,
                 offset=0,
             ) or []
-            if not accreditations:
-                accreditations = [
-                    a for a in _cache.get("institution_accreditations", [])
-                    if a.get("is_demo") is False and a.get("source") != "DEMO_SYNTHETIC"
-                    and (not district or district.lower() in (a.get("district") or "").lower())
-                    and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
-                ]
         except Exception as e:
-            logger.warning("[AccreditationRouter] Repo query fallback: %s", e)
-            accreditations = [
-                a for a in _cache.get("institution_accreditations", [])
-                if a.get("is_demo") is False and a.get("source") != "DEMO_SYNTHETIC"
-                and (not district or district.lower() in (a.get("district") or "").lower())
-                and (not tier or (a.get("accreditation_tier") or "").upper() == tier.upper())
-            ]
+            logger.error("[AccreditationRouter] Failed listing accreditations: %s", e)
+            accreditations = []
 
     known_ids = {a.get("institute_id") for a in accreditations if a.get("institute_id")}
 
@@ -127,16 +115,9 @@ async def list_accredited_institutes(
     else:
         try:
             courses = list_courses(is_demo=False) or []
-            if not courses:
-                courses = [
-                    c for c in _cache.get("courses", [])
-                    if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
-                ]
-        except Exception:
-            courses = [
-                c for c in _cache.get("courses", [])
-                if c.get("is_demo") is False and c.get("source") != "DEMO_SYNTHETIC"
-            ]
+        except Exception as e:
+            logger.error("[AccreditationRouter] Failed listing courses for accreditation: %s", e)
+            courses = []
 
     seen_insts: dict[str, dict[str, str]] = {}
     for c in courses:
@@ -314,25 +295,9 @@ async def list_institute_audit_notices_endpoint(
                 is_demo=False,
                 limit=500,
             ) or []
-            if not notices:
-                all_cached = _cache.get("institution_audit_notices", [])
-                notices = [
-                    n for n in all_cached
-                    if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
-                    and (n.get("is_demo") is False and n.get("source") != "DEMO_SYNTHETIC")
-                    and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
-                    and (not severity or (n.get("severity") or "").upper() == severity.upper())
-                ]
         except Exception as e:
-            logger.warning("[AccreditationRouter] Notice list fallback: %s", e)
-            all_cached = _cache.get("institution_audit_notices", [])
-            notices = [
-                n for n in all_cached
-                if (institute_id.lower() in ("all", "*") or n.get("institute_id", "").lower() == institute_id.lower())
-                and (n.get("is_demo") is False and n.get("source") != "DEMO_SYNTHETIC")
-                and (not status_filter or (n.get("status") or "").upper() == status_filter.upper())
-                and (not severity or (n.get("severity") or "").upper() == severity.upper())
-            ]
+            logger.error("[AccreditationRouter] Notice list query failed: %s", e)
+            notices = []
 
     return {
         "status": "success",

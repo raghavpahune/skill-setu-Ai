@@ -605,3 +605,54 @@ def test_retention_lifecycle_enforcement_rules(client, coep_headers):
         headers=coep_headers,
     )
     assert res_incompatible_status.status_code == 400
+
+
+def test_non_demo_accreditation_endpoints_do_not_fallback_to_cache(client, gov_headers):
+    from app.db import _cache
+    cached_notice = {
+        "id": "not-cache-fallback-test",
+        "institute_id": "inst-fallback-test",
+        "notice_type": "AUDIT_WARNING",
+        "severity": "HIGH",
+        "title": "Cache Leak Check",
+        "status": "OPEN",
+        "is_demo": False,
+        "source": "GOVERNMENT_OFFICIAL",
+    }
+    cached_accreditation = {
+        "id": "acc-cache-fallback-test",
+        "institute_id": "inst-fallback-test",
+        "accreditation_tier": "TIER_1_EXCELLENCE",
+        "composite_score": 90.0,
+        "is_demo": False,
+        "source": "GOVERNMENT_OFFICIAL",
+    }
+    _cache.setdefault("institution_audit_notices", []).append(cached_notice)
+    _cache.setdefault("institution_accreditations", []).append(cached_accreditation)
+    try:
+        res_notices = client.get(
+            "/api/accreditation/institutes/inst-fallback-test/notices?is_demo=false",
+            headers=gov_headers,
+        )
+        assert res_notices.status_code == 200
+        assert not any(
+            n.get("id") == "not-cache-fallback-test"
+            for n in res_notices.json().get("audit_notices", [])
+        )
+
+        res_institutes = client.get("/api/accreditation/institutes?is_demo=false")
+        assert res_institutes.status_code == 200
+        assert not any(
+            a.get("institute_id") == "inst-fallback-test"
+            for a in res_institutes.json().get("accreditations", [])
+        )
+    finally:
+        _cache["institution_audit_notices"] = [
+            n for n in _cache.get("institution_audit_notices", [])
+            if n.get("id") != "not-cache-fallback-test"
+        ]
+        _cache["institution_accreditations"] = [
+            a for a in _cache.get("institution_accreditations", [])
+            if a.get("id") != "acc-cache-fallback-test"
+        ]
+

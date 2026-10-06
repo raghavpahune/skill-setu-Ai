@@ -1,9 +1,9 @@
 # SkillSetuAI — Project Task Board & Roadmap
 
 ## Current Status Overview
-- **Active Phase:** PHASE 1 — Safe Git Reconnection & Documentation Restart Layer
-- **Current Milestone:** Phase 1 Complete (Reconnected to `origin/main` on `feature/project-documentation-restart`; documentation layer established).
-- **Next Task:** P0 — Remove non-demo accreditation in-memory fallback in `backend/app/routers/accreditation.py`.
+- **Active Phase:** PHASE 2 — Backlog Remediation
+- **Current Milestone:** P0 Remediation Complete (Removed non-demo accreditation in-memory cache fallbacks in `backend/app/routers/accreditation.py`; verified 20/20 tests passing).
+- **Next Task:** P1 — Fix Profile Validation Discrepancy in `frontend/src/utils/profileValidator.js`.
 
 ---
 
@@ -18,13 +18,12 @@
 - [x] **Current Architecture Audit:** Verified live integration across Frontend (Vercel) → Backend (Render) → Supabase PostgreSQL.
 - [x] **Safe Git Reconnection (Phase 1A):** Safely initialized Git, connected remote `origin` (`https://github.com/raghavpahune/skill-setu-Ai.git`), fetched history, synchronized with commit `ba106b2` on `origin/main`, created branch `feature/project-documentation-restart`.
 - [x] **Documentation Layer Establishment (Phase 1B):** Established canonical documentation files (`prd.md`, `architecture.md`, `rules.md`, `instructions.md`, `design.md`, `tasks.md`, `memory.md`, `AGENTS.md`, `CLAUDE.md`).
+- [x] **Remove Non-Demo Accreditation In-Memory Fallback (P0):** Eliminated `_cache` fallback in `backend/app/routers/accreditation.py` for non-demo institute list, courses list, and audit notice queries. Added regression test in `backend/test_phase17_accreditation_roi.py` (20/20 passed).
 
 ---
 
-### P0 — Critical Correctness & Data Integrity (Upcoming)
-- [ ] **Remove Non-Demo Accreditation In-Memory Fallback (`backend/app/routers/accreditation.py`):**
-  - *Issue:* Lines 73–86, 97–109 in `accreditation.py` query `_cache.get("institution_accreditations", [])` in production non-demo mode when Supabase queries return empty or throw exceptions.
-  - *Requirement:* Ensure non-demo requests return truthful empty results or propagate explicit HTTP errors. Never fall back to in-memory demo cache in non-demo mode.
+### P0 — Critical Correctness & Data Integrity
+*All identified P0 issues resolved.*
 
 ---
 
