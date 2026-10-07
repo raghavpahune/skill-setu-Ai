@@ -459,6 +459,31 @@ export default function GovernmentDashboard() {
         setAllFacultyNominations((prev) =>
           prev.map((n) => (n.id === nominationId ? res : n))
         );
+        setStatewideTrainers((prev) => {
+          if (!prev?.nomination_summary) return prev;
+          return {
+            ...prev,
+            nomination_summary: {
+              ...prev.nomination_summary,
+              NOMINATED: typeof prev.nomination_summary.NOMINATED === 'number'
+                ? Math.max(0, prev.nomination_summary.NOMINATED - 1)
+                : prev.nomination_summary.NOMINATED,
+              SANCTIONED: typeof prev.nomination_summary.SANCTIONED === 'number'
+                ? prev.nomination_summary.SANCTIONED + 1
+                : prev.nomination_summary.SANCTIONED,
+            },
+          };
+        });
+        if (typeof api.getStatewideTrainerAnalytics === 'function') {
+          try {
+            const freshAnalytics = await api.getStatewideTrainerAnalytics();
+            if (freshAnalytics) {
+              setStatewideTrainers(freshAnalytics);
+            }
+          } catch (refreshErr) {
+            void refreshErr;
+          }
+        }
         setToastMessage({ type: 'success', text: `FDP grant sanctioned: ${res.sanction_reference || 'Sanctioned'}` });
       }
     } catch (err) {
@@ -478,6 +503,31 @@ export default function GovernmentDashboard() {
         setAllFacultyNominations((prev) =>
           prev.map((n) => (n.id === nominationId ? res : n))
         );
+        setStatewideTrainers((prev) => {
+          if (!prev?.nomination_summary) return prev;
+          return {
+            ...prev,
+            nomination_summary: {
+              ...prev.nomination_summary,
+              NOMINATED: typeof prev.nomination_summary.NOMINATED === 'number'
+                ? Math.max(0, prev.nomination_summary.NOMINATED - 1)
+                : prev.nomination_summary.NOMINATED,
+              REJECTED: typeof prev.nomination_summary.REJECTED === 'number'
+                ? prev.nomination_summary.REJECTED + 1
+                : prev.nomination_summary.REJECTED,
+            },
+          };
+        });
+        if (typeof api.getStatewideTrainerAnalytics === 'function') {
+          try {
+            const freshAnalytics = await api.getStatewideTrainerAnalytics();
+            if (freshAnalytics) {
+              setStatewideTrainers(freshAnalytics);
+            }
+          } catch (refreshErr) {
+            void refreshErr;
+          }
+        }
         setToastMessage({ type: 'info', text: 'Nomination marked as rejected.' });
       }
     } catch (err) {
@@ -1987,7 +2037,7 @@ export default function GovernmentDashboard() {
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
-              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Modernized Instructors</div>
+              <div className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Emerging-Trade Faculty</div>
               <div className="text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">
                 {loading && !statewideTrainers ? (
                   <span className="text-sm font-medium text-slate-400 animate-pulse">Loading...</span>
@@ -1997,7 +2047,7 @@ export default function GovernmentDashboard() {
                   statewideTrainers?.summary?.certified_trainers_count ?? 0
                 )}
               </div>
-              <div className="text-[10px] text-indigo-500 font-medium">Industry 4.0 Certified</div>
+              <div className="text-[10px] text-indigo-500 font-medium">Industry 4.0 & Emerging Trades</div>
             </div>
 
             <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-700">
@@ -2030,7 +2080,7 @@ export default function GovernmentDashboard() {
                     <tr>
                       <th className="py-2.5 px-3">District</th>
                       <th className="py-2.5 px-3">Active Faculty</th>
-                      <th className="py-2.5 px-3">Certified Modern</th>
+                      <th className="py-2.5 px-3">Emerging-Trade Faculty</th>
                       <th className="py-2.5 px-3">Enrolled Intake</th>
                       <th className="py-2.5 px-3">Faculty Required</th>
                       <th className="py-2.5 px-3">Deficit / Gap</th>

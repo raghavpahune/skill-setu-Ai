@@ -2081,6 +2081,13 @@ export default function InstituteDashboard() {
                         </td>
                       </tr>
                     ))}
+                    {trainers.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="py-6 text-center text-slate-400 text-xs">
+                          No vocational instructors registered yet. Please register an instructor to track faculty capacity.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
