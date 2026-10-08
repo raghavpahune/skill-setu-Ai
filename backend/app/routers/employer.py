@@ -172,7 +172,10 @@ async def submit_feedback(
         ) from e
 
     if not matched:
-        return {"error": "feedback not found"}
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Employer feedback record '{submission.feedback_id}' not found.",
+        )
 
     if user_role == "EMPLOYER":
         user_org = current_user.get("organization_id")

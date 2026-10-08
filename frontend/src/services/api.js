@@ -692,6 +692,52 @@ export const api = {
     const query = new URLSearchParams(params).toString();
     return fetchJSON(`/analytics/roi/statewide${query ? `?${query}` : ''}`);
   },
+  getTrainers: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/trainers${query ? `?${query}` : ''}`);
+  },
+  getTrainerDetail: (trainerId) => {
+    return fetchJSON(`/trainers/${encodeURIComponent(trainerId)}`);
+  },
+  registerTrainer: (data) => {
+    return fetchJSON('/trainers', {
+      method: 'POST',
+      body: data,
+    });
+  },
+  updateTrainer: (trainerId, data) => {
+    return fetchJSON(`/trainers/${encodeURIComponent(trainerId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  getInstituteFacultyScorecard: (instituteId, params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/trainers/institutes/${encodeURIComponent(instituteId)}/scorecard${query ? `?${query}` : ''}`);
+  },
+  getFacultyNominations: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/trainers/nominations${query ? `?${query}` : ''}`);
+  },
+  createFacultyNomination: (data) => {
+    return fetchJSON('/trainers/nominations', {
+      method: 'POST',
+      body: data,
+    });
+  },
+  updateFacultyNomination: (nominationId, data) => {
+    return fetchJSON(`/trainers/nominations/${encodeURIComponent(nominationId)}`, {
+      method: 'PATCH',
+      body: data,
+    });
+  },
+  getStatewideTrainerAnalytics: (params = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return fetchJSON(`/trainers/analytics/statewide${query ? `?${query}` : ''}`);
+  },
+  getTrainerUpgradeCatalog: () => {
+    return fetchJSON('/trainers/catalog/programs');
+  },
 };
 
 

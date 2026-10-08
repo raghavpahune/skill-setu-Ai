@@ -193,11 +193,11 @@ export default function EmployerDashboard() {
     }, 4000);
   };
 
-  // Actions
   const handleAction = async (feedbackId, status, notes = null, prof = null) => {
-    // Optimistic UI update
-    setValidations((prev) =>
-      prev.map((v) =>
+    let previousValidations;
+    setValidations((prev) => {
+      previousValidations = prev;
+      return prev.map((v) =>
         v.id === feedbackId
           ? {
               ...v,
@@ -206,43 +206,59 @@ export default function EmployerDashboard() {
               proficiency_required: prof !== null ? prof : v.proficiency_required,
             }
           : v
-      )
-    );
-
+      );
+    });
 
     try {
       await api.submitEmployerFeedback(feedbackId, status, notes, prof);
       showToast('success', `Signal calibrated as ${status.toUpperCase()}`);
       setActiveFeedback(null);
     } catch (err) {
-      console.warn('Backend feedback update fallback handled:', err);
-      showToast('success', `Signal recorded locally as ${status.toUpperCase()} (Offline Ready)`);
-      setActiveFeedback(null);
+      if (previousValidations) {
+        setValidations(previousValidations);
+      }
+      showToast('error', `Failed to calibrate signal: ${err?.message || 'Server error'}`);
     }
   };
 
-  const handleBatchConfirmFiltered = () => {
+  const handleBatchConfirmFiltered = async () => {
     const pendingFiltered = filteredValidations.filter((v) => v.status === 'pending');
     if (pendingFiltered.length === 0) {
       showToast('info', 'No pending signals in current filtered view.');
       return;
     }
 
-    setValidations((prev) =>
-      prev.map((v) => {
-        const isTarget = pendingFiltered.some((pf) => pf.id === v.id);
-        return isTarget ? { ...v, status: 'confirmed' } : v;
-      })
+    const results = await Promise.allSettled(
+      pendingFiltered.map((item) => api.submitEmployerFeedback(item.id, 'confirmed'))
     );
 
-    // Trigger async updates in background
-    Promise.all(
-      pendingFiltered.map((item) =>
-        api.submitEmployerFeedback(item.id, 'confirmed').catch(() => null)
-      )
-    );
+    const succeededIds = new Set();
+    let failureCount = 0;
 
-    showToast('success', `Batch confirmed ${pendingFiltered.length} industry skill signals!`);
+    results.forEach((res, idx) => {
+      if (res.status === 'fulfilled') {
+        succeededIds.add(pendingFiltered[idx].id);
+      } else {
+        failureCount += 1;
+      }
+    });
+
+    if (succeededIds.size > 0) {
+      setValidations((prev) =>
+        prev.map((v) => (succeededIds.has(v.id) ? { ...v, status: 'confirmed' } : v))
+      );
+    }
+
+    if (failureCount === 0) {
+      showToast('success', `Batch confirmed ${succeededIds.size} industry skill signals!`);
+    } else if (succeededIds.size > 0) {
+      showToast(
+        'error',
+        `Confirmed ${succeededIds.size} signals, but ${failureCount} failed to update.`
+      );
+    } else {
+      showToast('error', `Failed to update ${failureCount} skill signals.`);
+    }
   };
 
   const handleDemandSubmit = async (e) => {
@@ -1919,9 +1935,11 @@ export default function EmployerDashboard() {
                       )
                     );
                     setActiveFeedbackCandidate(null);
+                  } else {
+                    showToast('error', res?.message || 'Server returned an invalid feedback response.');
                   }
                 } catch (err) {
-                  showToast('error', `Failed submitting feedback: ${err.message}`);
+                  showToast('error', `Failed submitting feedback: ${err?.message || 'Network error'}`);
                 } finally {
                   setSubmittingFeedback(false);
                 }

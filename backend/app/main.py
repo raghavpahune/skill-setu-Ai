@@ -70,7 +70,7 @@ from app.routers import (
     auth, skills, jobs, gaps, courses, signals, forecast,
     districts, student, copilot, employer, schemes, opportunities, sync,
     simulator, admin, gov_opportunities, institute, curriculum, profile,
-    placements, accreditation,
+    placements, accreditation, trainers,
 )
 
 app.include_router(auth.router, prefix="/api", tags=["Authentication"])
@@ -83,6 +83,7 @@ app.include_router(courses.router, prefix="/api", tags=["Courses"])
 app.include_router(curriculum.router, prefix="/api", tags=["Curriculum Modernization"])
 app.include_router(placements.router, prefix="/api", tags=["Placement Outcomes & Workforce Feedback"])
 app.include_router(accreditation.router, prefix="/api", tags=["Accreditation & ROI"])
+app.include_router(trainers.router, prefix="/api", tags=["Faculty & Trainer Capacity"])
 app.include_router(institute.router, prefix="/api", tags=["Institute"])
 app.include_router(signals.router, prefix="/api", tags=["Industry Signals"])
 app.include_router(forecast.router, prefix="/api", tags=["Forecast"])
