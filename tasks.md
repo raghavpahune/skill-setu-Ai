@@ -1,32 +1,46 @@
 # SkillSetuAI — Project Task Board & Roadmap
 
 ## Current Status Overview
-- **Active Phase:** PHASE 18 COMPLETE — Vocational Faculty Competency & State Trainer Development Pipeline (Awaiting Phase 19 Scope Definition)
-- **Current Milestone:** Phase 18 Functionally Complete, Validated & Closed:
-  - Cycle 1 (Commit `051446c`): DB nomination updates conflict surfacing, pre-pagination status filtering.
-  - Cycle 2 (Commits `cf35b04`, `8f4135e`): Dashboard active faculty metrics binding, ADR-01/06 outage policy harmonization, schema and allowlist synchronization.
-  - Cycle 3 (Commits `a01f3a4`, `c8e384b`): Propagate configured DB failures across trainer/nomination helpers, statewide analytics authorization enforcement (`GOVERNMENT`, `ADMIN`), unlimited analytics queries (`limit=None`), and InstituteDashboard catalog normalization.
-  - Cycle 4 (Commit `4681d4a`): Propagate configured DB failures in trainer/nomination list services, and bind GovernmentDashboard FDP grant KPIs to authoritative analytics.
-  - Cycle 5 (Commit `c78f57c`): Display active loading state (`loading && !statewideTrainers`) on initial load for statewide trainer KPI cards, display `Unavailable` on error, and retain previously loaded values during background refresh.
-  - Cycle 6 (Commit `ba05116`):
-    - Finding 1 (`frontend/src/pages/GovernmentDashboard.jsx`): Update statewide trainer analytics state immediately after confirmed sanction/rejection transitions so Pending and Sanctioned Grants KPIs reflect the transition without reload, and refresh authoritative statewide analytics.
-    - Finding 2 (`frontend/src/pages/GovernmentDashboard.jsx`): Relabel `certified_trainers_count` and district `certified_count` metrics to emerging-trade faculty without certified instructor misrepresentation.
-    - Finding 3 (`frontend/src/pages/InstituteDashboard.jsx`): Render a 5-column empty state row prompting instructor registration when the trainer roster is empty.
-    - Nitpick (`frontend/test_government_trainer_kpis.test.js`): Preserved focused test suite without unnecessary production abstraction; added 7 focused tests covering sanction/rejection transitions, zero count bounds, terminology labels, and empty/populated roster states.
-  - CodeRabbit Final Review: Validated with zero actionable security, correctness, IDOR, or data-integrity findings. Exactly 1 cosmetic nitpick remains (extracting test state transition helpers from `frontend/test_government_trainer_kpis.test.js` into a shared module), which is intentionally tolerated because it is non-functional and would create unnecessary production/test coupling and unrelated refactoring.
-  - Final Validation Suite Results:
-    - Phase 18 Backend Tests (`backend/test_phase18_trainer_capacity.py`): 29/29 PASSED
-    - Phase 18 E2E Tests (`backend/test_e2e_phase18.py`): 7/7 PASSED
-    - Phase 17 Regression Tests (`backend/test_phase17_accreditation_roi.py`): 19/19 PASSED
-    - Frontend Trainer/KPI Tests (`frontend/test_government_trainer_kpis.test.js`): 11/11 PASSED
+- **Active Phase:** PHASE 18 COMPLETE — Vocational Faculty Competency & State Trainer Development Pipeline (Platform Readiness Audit Remediated; Awaiting Phase 19 Scope Definition)
+- **Current Milestone:** Platform Readiness Audit Remediation Complete & Validated:
+  - Finding 1: Backend employer feedback endpoint returns HTTP 404 for non-existent feedback records instead of HTTP 200.
+  - Finding 2: EmployerDashboard signal feedback rollback on failure with truthful error toasts; batch confirms utilize `Promise.allSettled` without swallowing errors.
+  - Finding 3: Candidate feedback modal explicitly validates response payload, prevents UI freeze on unexpected 2xx/network errors, and preserves retryable state.
+  - Finding 4: Aligned certification validator requiring both `name` and `issuer`; integrated standardized `"test": "node --test test_*.test.js"` script in `frontend/package.json`.
+  - Validation Results:
+    - Employer Backend Tests (`backend/test_employer_phase8.py`, `backend/test_employer_phase14.py`): 10/10 PASSED
+    - Phase 17 & 18 Regression / E2E Tests (`backend/test_phase17_accreditation_roi.py`, `backend/test_phase18_trainer_capacity.py`, `backend/test_e2e_phase18.py`): 55/55 PASSED
+    - Student & Employee Integration Tests (`backend/test_student_journey_integration.py`, `backend/test_employee_journey_integration.py`, `backend/test_student_portal_persistence.py`): 29/29 PASSED
+    - Security & Hardening Tests (`backend/test_copilot_grounding.py`, `backend/test_phase6_security_hardening.py`, `backend/test_real_data_hardening.py`, `backend/test_migration_integrity_phase11.py`): 28/28 PASSED
+    - Frontend Automated Suites (`npm test`): 44/44 PASSED (0 failures)
     - Backend Linter (`ruff check backend`): CLEAN (All checks passed)
     - Frontend Linter (`oxlint` via `npm run lint`): CLEAN (0 errors, 78 warnings)
-    - Production Bundle (`npm run build`): CLEAN (Vite build succeeded in 570ms)
+    - Production Bundle (`npm run build`): CLEAN (Vite build succeeded)
+  - CodeRabbit Nitpick: 1 cosmetic test-helper extraction nitpick intentionally tolerated.
 - **Next Step:** Define Phase 19 scope (no Phase 19 specifications currently exist in repository roadmap).
 
 ---
 
 ## 1. Task Board
+
+### COMPLETED / VERIFIED (Platform Readiness Audit Remediation)
+- [x] **Finding 1 — Backend Employer Feedback Status Code (`backend/app/routers/employer.py`):**
+  - Raised `HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=f"Employer feedback record '{submission.feedback_id}' not found.")` when feedback ID does not match an existing record instead of returning HTTP 200 with an error object.
+  - Preserved role verification (`EMPLOYER`, `ADMIN`), cross-tenant authorization checks, and success payload.
+  - Regression tested in `backend/test_employer_phase8.py` verifying missing ID returns 404, valid submissions succeed with 200, and unauthorized roles return 403.
+- [x] **Finding 2 — Employer Signal Feedback Failure & Batch Handling (`frontend/src/pages/EmployerDashboard.jsx`):**
+  - In `handleAction`, reverted optimistic state on API/network failure and surfaced truthful error toast (`Failed to calibrate signal: ...`), eliminating false-success / offline messages.
+  - In `handleBatchConfirmFiltered`, replaced swallowed `catch(() => null)` background dispatch with `Promise.allSettled`, updated state only for confirmed signals, and displayed truthful toasts (full success, partial success with error count, or complete failure error).
+  - Preserved legitimate explicit demo-mode isolation.
+- [x] **Finding 3 — Candidate Feedback Modal Response Handling (`frontend/src/pages/EmployerDashboard.jsx`):**
+  - Added explicit validation for expected response shape (`if (res?.feedback)`).
+  - Handled unexpected 2xx responses missing feedback and network errors with explicit error toasts and reset `submittingFeedback` loading state so the modal does not become stuck.
+  - Retained candidate selection state for retry.
+  - Added comprehensive frontend test coverage in `frontend/test_employer_feedback_handling.test.js` (8 tests: single failure rollback, single success, batch full success, batch partial failure, batch complete failure, candidate feedback success, candidate feedback unexpected payload, candidate feedback network exception).
+- [x] **Finding 4 — Profile Certification Validation Alignment & Test Command (`frontend/src/utils/profileValidator.js`, `frontend/package.json`):**
+  - Updated `formatStudentProfilePayload` and `formatEmployeeProfilePayload` to require `c.name && c.issuer` when filtering certifications, resolving the mismatch where empty issuers previously defaulted to synthetic self-certification and failed `frontend/test_profile_validation.test.js`.
+  - Added standardized `"test": "node --test test_*.test.js"` script to `frontend/package.json`.
+  - Verified 44/44 frontend test assertions pass with 0 failures via `npm test`.
 
 ### COMPLETED / VERIFIED (Phase 18 Milestones)
 - [x] **Faculty Competency Scorecard Engine (`backend/app/services/trainer_service.py`):** Deterministic NSQF student-to-trainer ratio, competency matching, and capacity ratio calculation.
@@ -65,6 +79,7 @@
 ---
 
 ### P1 — High Priority / Review & Verification
+- [x] **Platform Readiness Audit Remediation:** All 4 verified audit findings resolved and verified.
 - [x] **Phase 18 CodeRabbit Re-Review & Validation:** Completed across Cycles 1–6. All actionable findings resolved and verified; 1 cosmetic test-helper extraction nitpick intentionally tolerated.
 - [x] **Phase 18 Final Validation & Closure:** Validated full test suite (29 backend + 7 E2E + 19 regression + 11 frontend tests passed, Ruff clean, Oxlint 0 errors, Vite build clean). Phase 18 cleanly closed.
 - [ ] **Phase 19 Scope Definition & Planning:** Define formal Phase 19 requirements and acceptance criteria (currently undefined in repository roadmap).
@@ -72,12 +87,10 @@
 ---
 
 ### P2 — Medium Priority / Backlog
-- [ ] **EmployerDashboard Silent Feedback Failure Handling (`frontend/src/pages/EmployerDashboard.jsx`):**
-  - *Issue:* Submitting candidate feedback in `EmployerDashboard.jsx` swallows API errors silently without displaying user feedback.
-  - *Requirement:* Add descriptive error notifications and retry states upon submission failure.
-- [ ] **Frontend Test Command & CI Integration:**
-  - *Issue:* `frontend/package.json` scripts lack a standardized `"test"` command for running node test suites (`test_*.test.js`).
-  - *Requirement:* Add `"test": "node --test test_*.test.js"` script to `package.json` and ensure test automation runs seamlessly.
+- [x] **EmployerDashboard Silent Feedback Failure Handling (`frontend/src/pages/EmployerDashboard.jsx`):**
+  - *Completed:* Added error toasts, optimistic rollback, `Promise.allSettled` batch tracking, and modal error handling for unexpected or failing responses.
+- [x] **Frontend Test Command & CI Integration:**
+  - *Completed:* Standardized `"test": "node --test test_*.test.js"` in `frontend/package.json`. All 44 tests pass.
 
 ---
 

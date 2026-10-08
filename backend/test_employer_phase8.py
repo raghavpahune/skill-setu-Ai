@@ -73,14 +73,21 @@ def test_employer_feedback_submission():
     assert data_correct.get("feedback", {}).get("status") == "corrected"
     assert data_correct.get("feedback", {}).get("proficiency_required") == "advanced"
 
-    # 3. Test non-existent ID
     res_404 = client.post(
         "/api/employer/feedback",
         json={"feedback_id": "non-existent-999", "status": "confirmed"},
         headers=AUTH_HEADERS,
     )
-    assert res_404.status_code == 200
-    assert "error" in res_404.json()
+    assert res_404.status_code == 404
+    assert "not found" in res_404.json().get("detail", "").lower()
+
+    student_token = create_access_token({"sub": "usr-student-001", "email": "student@skillsetu.gov.in", "role": "STUDENT"})
+    res_forbidden = client.post(
+        "/api/employer/feedback",
+        json={"feedback_id": target_id, "status": "confirmed"},
+        headers={"Authorization": f"Bearer {student_token}"},
+    )
+    assert res_forbidden.status_code == 403
 
 
 def test_employer_demand_submission_and_retrieval():
